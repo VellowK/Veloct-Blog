@@ -1,0 +1,140 @@
+---
+// The left sidebar.
+//
+// handoff.md section 6.5: collapsible; when collapsed it keeps the system navigation icons, and
+// when expanded it shows the personal card, bio, username, social entries and the system
+// navigation.
+//
+// The collapsed/expanded preference is stored in `localStorage` and applied by an inline script
+// BEFORE the first paint, so a returning visitor does not see the sidebar animate from the wrong
+// state on every navigation. That script is deliberately tiny and inline for that reason.
+
+import { readNavigation, readSiteConfig } from '../lib/site-config.mjs';
+
+const site = readSiteConfig();
+const nav = readNavigation();
+
+const social = site.social ?? [];
+const avatar = site.author?.avatar ?? '';
+const name = site.author?.name ?? site.name;
+const bio = site.author?.bio ?? '';
+
+const current = Astro.url.pathname;
+function isActive(href: string) {
+  if (href === '/') return current === '/';
+  return current.startsWith(href);
+}
+---
+
+<aside
+  id="veloct-left-sidebar"
+  class="card sticky top-4 hidden h-[calc(100vh-2rem)] shrink-0 flex-col overflow-hidden transition-[width] duration-200 md:flex"
+  data-sidebar
+  aria-label="站点导航"
+>
+  <div class="flex items-center justify-between gap-2 p-3">
+    <a href="/" class="flex min-w-0 items-center gap-2" data-sidebar-expanded-only>
+      {avatar ? (
+        <img src={avatar} alt="" width="32" height="32" class="h-8 w-8 shrink-0 rounded-lg object-cover" />
+      ) : (
+        <span class="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-ink-800 font-serif text-accent-400">
+          {name.slice(0, 1)}
+        </span>
+      )}
+      <span class="truncate font-serif text-lg">{name}</span>
+    </a>
+    <button
+      type="button"
+      id="veloct-sidebar-toggle"
+      class="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-ink-400 hover:bg-ink-800 hover:text-ink-100"
+      aria-expanded="true"
+      aria-controls="veloct-left-sidebar"
+      title="折叠 / 展开侧边栏"
+    >
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+        <path d="M2 4h12M2 8h12M2 12h12" />
+      </svg>
+      <span class="visually-hidden">折叠或展开侧边栏</span>
+    </button>
+  </div>
+
+  {bio && (
+    <p class="px-3 pb-3 text-sm muted" data-sidebar-expanded-only>{bio}</p>
+  )}
+
+  <nav class="flex-1 overflow-y-auto p-2">
+    <ul class="space-y-1">
+      {nav.map((item) => (
+        <li>
+          <a
+            href={item.href}
+            class:list={[
+              'flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors',
+              isActive(item.href)
+                ? 'bg-ink-800 text-ink-100'
+                : 'text-ink-300 hover:bg-ink-850 hover:text-ink-100',
+            ]}
+            aria-current={isActive(item.href) ? 'page' : undefined}
+            title={item.label}
+          >
+            <span class="grid h-5 w-5 shrink-0 place-items-center" aria-hidden="true">
+              {item.icon === 'home' && <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 7l6-5 6 5v7H2z" /></svg>}
+              {item.icon === 'article' && <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 2h7l3 3v9H3z" /><path d="M10 2v3h3" /></svg>}
+              {item.icon === 'docs' && <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3h5v10H2zM9 3h5v10H9z" /></svg>}
+              {item.icon === 'works' && <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="3" width="12" height="10" rx="1" /><path d="M2 6h12" /></svg>}
+              {item.icon === 'archive' && <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="3" width="12" height="3" /><path d="M3 6v7h10V6" /></svg>}
+              {item.icon === 'links' && <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 10l4-4M5 7l-1 1a3 3 0 004 4l1-1M11 9l1-1a3 3 0 00-4-4L7 5" /></svg>}
+              {item.icon === 'about' && <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6" /><path d="M8 7v4M8 5h.01" /></svg>}
+            </span>
+            <span class="truncate" data-sidebar-expanded-only>{item.label}</span>
+          </a>
+        </li>
+      ))}
+    </ul>
+  </nav>
+
+  {social.length > 0 && (
+    <div class="flex flex-wrap gap-2 border-t border-ink-800 p-3" data-sidebar-expanded-only>
+      {social.map((entry) => (
+        <a
+          href={entry.url}
+          class="rounded-lg px-2 py-1 text-xs text-ink-400 hover:bg-ink-850 hover:text-accent-400"
+          rel="me noopener noreferrer"
+          target="_blank"
+        >{entry.label}</a>
+      ))}
+    </div>
+  )}
+</aside>
+
+<script>
+  // Applied before paint by the inline head script in the layout; this only wires the toggle.
+  (function () {
+    const KEY = 'veloct.sidebar.collapsed';
+    const sidebar = document.getElementById('veloct-left-sidebar');
+    const toggle = document.getElementById('veloct-sidebar-toggle');
+    if (!sidebar || !toggle) return;
+
+    function apply(collapsed: boolean) {
+      sidebar!.classList.toggle('w-16', collapsed);
+      sidebar!.classList.toggle('w-64', !collapsed);
+      sidebar!.querySelectorAll('[data-sidebar-expanded-only]').forEach((element) => {
+        (element as HTMLElement).classList.toggle('hidden', collapsed);
+      });
+      toggle!.setAttribute('aria-expanded', String(!collapsed));
+    }
+
+    let collapsed = sidebar.classList.contains('w-16');
+    apply(collapsed);
+
+    toggle.addEventListener('click', () => {
+      collapsed = !collapsed;
+      apply(collapsed);
+      try {
+        localStorage.setItem(KEY, collapsed ? '1' : '0');
+      } catch {
+        // A storage-denied context (private mode) must not break the toggle.
+      }
+    });
+  })();
+</script>

@@ -1,0 +1,69 @@
+---
+// The archive.
+//
+// handoff.md section 6.4 lists 归档 among the required templates. It groups published articles by
+// year and month. A WIP never appears here: the archive is a record of what was published.
+
+import { getCollection } from 'astro:content';
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import { readSiteConfig } from '../../lib/site-config.mjs';
+import { byNewest, formatDate, readingStats, isProduction, yearOf } from '../../lib/format.ts';
+import { articleRoute, WipRoute } from '../../lib/content.ts';
+
+const site = readSiteConfig();
+
+const articles = (await getCollection('articles'))
+  .filter((entry) => articleRoute(entry, { isProduction }).kind === WipRoute.Article)
+  .sort(byNewest);
+
+// year -> month -> entries, so the template can render a nested list without recomputing anything.
+const byYear = new Map();
+for (const entry of articles) {
+  const stamp = String(entry.data.published_at ?? entry.data.created_at);
+  const year = yearOf(stamp);
+  const month = stamp.slice(5, 7) || '00';
+  if (!byYear.has(year)) byYear.set(year, new Map());
+  const months = byYear.get(year);
+  if (!months.has(month)) months.set(month, []);
+  months.get(month).push(entry);
+}
+
+const years = [...byYear.keys()].sort((a, b) => b.localeCompare(a));
+const total = articles.length;
+---
+
+<BaseLayout
+  title={`归档 · ${site.name}`}
+  description={`${site.name} 的文章归档`}
+  canonical="/archive/"
+>
+  <h1 class="font-serif text-2xl">归档</h1>
+  <p class="mt-2 muted">{total} 篇文章</p>
+
+  {total === 0 && <p class="card mt-6 p-6 muted">还没有已发布的文章。</p>}
+
+  {years.map((year) => (
+    <section class="mt-8" aria-labelledby={`veloct-archive-${year}`}>
+      <h2 id={`veloct-archive-${year}`} class="font-serif text-xl">{year}</h2>
+      {[...byYear.get(year).keys()].sort((a, b) => b.localeCompare(a)).map((month) => (
+        <div class="mt-4">
+          <h3 class="text-sm muted">{year}-{month}</h3>
+          <ul class="mt-2 space-y-2">
+            {byYear.get(year).get(month).map((entry) => {
+              const stats = readingStats(entry.body);
+              return (
+                <li class="flex flex-wrap items-baseline gap-x-3">
+                  <time class="w-24 shrink-0 text-xs muted" datetime={entry.data.published_at ?? entry.data.created_at}>
+                    {formatDate(entry.data.published_at ?? entry.data.created_at).slice(5)}
+                  </time>
+                  <a href={`/article/${entry.data.slug}/`}>{entry.data.title}</a>
+                  <span class="text-xs muted">{stats.words} 字</span>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      ))}
+    </section>
+  ))}
+</BaseLayout>

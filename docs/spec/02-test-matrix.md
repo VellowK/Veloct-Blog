@@ -18,9 +18,9 @@ Legend: **P** = planned, **I** = implemented, **F** = failing (regression).
 | A5 | Two rebuilds of one Release produce the same fingerprint | `release::double_rebuild_fingerprint_stable` | veloct-release | **I** |
 | A6 | Normalised route/page/asset/sitemap/RSS/WIP/Works manifests compare stably | `release::normalised_manifest_equal` | veloct-release | **I** |
 | A7 | No content change ⇒ publish creates no empty commit | `release::no_change_no_commit` | veloct-git | **I** |
-| A8 | `wip_publish=false` never reaches `dist` | `wip::unpublished_wip_absent_from_dist` | veloct-release | P |
-| A9 | `wip_publish=true` produces `/wip/<stable-id>` | `wip::published_wip_route_emitted` | veloct-release | P |
-| A10 | A previously-public WIP, once finished, emits a permanent redirect to `/article/<slug>` | `wip::finished_wip_redirects` | veloct-release | P |
+| A8 | `wip_publish=false` never reaches `dist` | `wip::unpublished_wip_absent_from_dist` | veloct-release | **I** |
+| A9 | `wip_publish=true` produces `/wip/<stable-id>` | `wip::published_wip_route_emitted` | veloct-release | **I** |
+| A10 | A previously-public WIP, once finished, emits a permanent redirect to `/article/<slug>` | `wip::finished_wip_redirects` | veloct-release | **I** |
 | A11 | Works shell and Works origin share the same Release fingerprint | `release::works_and_site_same_fingerprint` | veloct-deploy | **I** |
 | A12 | `build_inputs_hash` excludes `commit_sha` | `release::inputs_hash_excludes_commit` | veloct-release | **I** |
 | A13 | `build_env_hash` hashes only allow-listed vars | `release::env_hash_whitelist_only` | veloct-release | **I** |
@@ -163,6 +163,8 @@ a live endpoint stays marked `UNVERIFIED` in the matrix and in the UI.
 | 2026-09-28 · git | `powershell -ExecutionPolicy Bypass -File scripts/cargo.ps1 test --workspace --exclude veloct-desktop` | **239 passed, 0 failed** (58 `veloct-core`, 9 `veloct-app`, 110 `veloct-markdown`, 38 `veloct-storage`, 24 `veloct-git`) |
 | 2026-09-28 · release | `powershell -ExecutionPolicy Bypass -File scripts/cargo.ps1 test --workspace --exclude veloct-desktop` | **279 passed, 0 failed** (58 `veloct-core`, 9 `veloct-app`, 110 `veloct-markdown`, 38 `veloct-storage`, 24 `veloct-git`, 40 `veloct-release`) |
 | 2026-09-28 · lints | `powershell -ExecutionPolicy Bypass -File scripts/cargo.ps1 clippy --workspace --exclude veloct-desktop --all-targets` | no warnings |
+| 2026-09-28 · site build | `npm.cmd run build` in `site/` then `node scripts/verify-build.mjs` | exit 0; **41/41 build checks passed** |
+| 2026-09-28 · workspace | `powershell -ExecutionPolicy Bypass -File scripts/cargo.ps1 test --workspace --exclude veloct-desktop` | **279 passed, 0 failed** |
 
 Rows at **I** as a result of these runs:
 
@@ -189,6 +191,7 @@ Rows at **I** as a result of these runs:
 | A12 | `manifest::the_inputs_hash_excludes_the_commit_sha` |
 | A13 | `manifest::the_environment_hash_covers_only_the_allow_list` |
 | A14 | `pipeline::only_one_dist_is_kept_across_repeated_builds` |
+| A8, A9, A10 | `site/scripts/verify-build.mjs`, run against a real `dist/`: `wip_publish=false produces no production URL`, `wip_publish=true emits /wip/<stable-id>/`, `a published WIP page is noindex`, `a published WIP is NOT also emitted at /article/<slug>/`, `a once-public WIP address still exists after finishing`, `the old WIP address redirects permanently to /article/<slug>/`. The script exits non-zero and names the failure, so a wrong build cannot be mistaken for a good one. |
 | — | `manifest::the_manifest_never_contains_its_own_commit_sha`, `pipeline::a_failed_build_is_reported_and_leaves_no_usable_dist`, `pipeline::a_runner_that_forgets_a_publish_root_is_rejected`, `pipeline::a_secret_in_the_configuration_is_redacted_before_it_reaches_disk`, `pipeline::the_frozen_site_template_is_used_for_a_rebuild`, `manifest::the_host_operating_system_does_not_affect_the_fingerprint` |
 | — | `app::create_materialises_the_documented_scaffold`, `app::creating_over_an_existing_project_is_rejected`, `app::opening_a_foreign_directory_fails_instead_of_guessing`, `app::open_then_reopen_detects_the_project_and_updates_last_opened`, `app::creating_a_project_takes_an_exclusive_lock_against_publish` |
 

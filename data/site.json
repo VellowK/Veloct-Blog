@@ -1,0 +1,31 @@
+{
+  "name": "Veloct",
+  "description": "一个使用 Veloct 构建的个人站点。",
+  "url": "https://example.com",
+  "base": "/",
+  "language": "zh-CN",
+  "author": {
+    "name": "Vellow",
+    "bio": "写一点东西，做一点东西。",
+    "avatar": ""
+  },
+  "social": [
+    { "label": "GitHub", "url": "https://github.com/" },
+    { "label": "RSS", "url": "/rss.xml" }
+  ],
+  "hero": {
+    "title": "Veloct",
+    "subtitle": "本地优先的个人网站工作台：Markdown 是正文真相，Astro 是渲染来源。",
+    "ctaLabel": "看看文章",
+    "ctaHref": "/article/"
+  },
+  "worksOrigin": "https://works.example.com",
+  "comments": {
+    "enabled": false
+  },
+  "seo": {
+    "allowIndexing": true,
+    "engines": []
+  },
+  "filing": {}
+}

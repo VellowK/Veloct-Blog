@@ -1,0 +1,210 @@
+---
+// The right sidebar.
+//
+// handoff.md section 6.5: expanded by default, with tabs. On the article list it can show a
+// calendar, a word cloud, tags and a publishing heat map; on an article page it can show the
+// outline, comments and knowledge references. Clicking a knowledge reference opens that knowledge
+// location in the right sidebar. Tab state is explicitly NOT persisted across pages, which is
+// simpler and matches the requirement.
+//
+// Every tab is optional: a page passes only the slots it has, and an empty tab is not rendered at
+// all rather than showing an empty panel.
+
+interface Heading {
+  depth: number;
+  slug: string;
+  text: string;
+}
+
+interface Props {
+  headings?: Heading[];
+  tags?: { tag: string; count: number; weight: number }[];
+  /** A simple date -> count map for the publishing heat map. */
+  heatmap?: Record<string, number>;
+  /** Whether comments are enabled for this page. Comments are a published-site-only feature. */
+  commentsEnabled?: boolean;
+  /** Whether the build is a production build. The local preview must say comments are unavailable. */
+  isProduction?: boolean;
+}
+
+const {
+  headings = [],
+  tags = [],
+  heatmap = {},
+  commentsEnabled = false,
+  isProduction = false,
+} = Astro.props;
+
+const hasOutline = headings.length > 0;
+const hasTags = tags.length > 0;
+const hasHeatmap = Object.keys(heatmap).length > 0;
+const hasComments = commentsEnabled;
+
+// Build the tab list from what is actually available, and never render an empty shell.
+const tabs = [
+  hasOutline ? { id: 'outline', label: '大纲' } : null,
+  hasTags ? { id: 'tags', label: '标签' } : null,
+  hasHeatmap ? { id: 'activity', label: '动态' } : null,
+  hasComments ? { id: 'comments', label: '评论' } : null,
+].filter((tab): tab is { id: string; label: string } => tab !== null);
+
+const firstTab = tabs[0]?.id ?? 'outline';
+---
+
+<aside
+  id="veloct-right-sidebar"
+  class="card sticky top-4 hidden h-[calc(100vh-2rem)] w-72 shrink-0 flex-col overflow-hidden lg:flex"
+  aria-label="页面辅助信息"
+  data-right-sidebar
+>
+  {tabs.length === 0 ? (
+    <p class="p-4 text-sm muted">此页面没有需要展示的辅助信息。</p>
+  ) : (
+    <>
+      <div class="flex gap-1 border-b border-ink-800 p-2" role="tablist">
+        {tabs.map((tab, index) => (
+          <button
+            type="button"
+            role="tab"
+            id={`veloct-tab-${tab.id}`}
+            aria-controls={`veloct-panel-${tab.id}`}
+            aria-selected={index === 0 ? 'true' : 'false'}
+            tabindex={index === 0 ? 0 : -1}
+            data-veloct-tab={tab.id}
+            class:list={[
+              'flex-1 rounded-lg px-3 py-1.5 text-sm transition-colors',
+              index === 0 ? 'bg-ink-800 text-ink-100' : 'text-ink-400 hover:bg-ink-850',
+            ]}
+          >{tab.label}</button>
+        ))}
+      </div>
+
+      <div class="flex-1 overflow-y-auto p-3 text-sm">
+        {hasOutline && (
+          <div
+            role="tabpanel"
+            id="veloct-panel-outline"
+            aria-labelledby="veloct-tab-outline"
+            data-veloct-panel="outline"
+          >
+            <nav aria-label="文章大纲">
+              <ul class="space-y-1">
+                {headings.map((heading) => (
+                  <li style={`padding-inline-start: ${(heading.depth - 2) * 0.75}rem`}>
+                    <a href={`#${heading.slug}`} class="block truncate py-0.5 text-ink-300 hover:text-accent-400">
+                      {heading.text}
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </nav>
+          </div>
+        )}
+
+        {hasTags && (
+          <div
+            role="tabpanel"
+            id="veloct-panel-tags"
+            aria-labelledby="veloct-tab-tags"
+            data-veloct-panel="tags"
+            class="hidden"
+          >
+            <div class="flex flex-wrap gap-2">
+              {tags.map((entry) => (
+                <a
+                  href={`/tags/${encodeURIComponent(entry.tag)}/`}
+                  class="rounded-lg border border-ink-700 px-2 py-1 text-ink-300 hover:border-accent-600 hover:text-accent-400"
+                  style={`font-size: ${0.8 + entry.weight * 0.35}rem`}
+                >{entry.tag} <span class="muted">{entry.count}</span></a>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {hasHeatmap && (
+          <div
+            role="tabpanel"
+            id="veloct-panel-activity"
+            aria-labelledby="veloct-tab-activity"
+            data-veloct-panel="activity"
+            class="hidden"
+          >
+            <!-- A publishing heat map. Rendered as a plain grid of divs so it needs no script and
+                 stays identical between two builds of the same content. -->
+            <div class="grid grid-flow-col grid-rows-7 gap-1" role="img" aria-label="发布热力图">
+              {Object.entries(heatmap).sort(([a], [b]) => a.localeCompare(b)).map(([date, count]) => (
+                <div
+                  class="h-3 w-3 rounded-sm"
+                  style={`background-color: color-mix(in oklch, var(--color-accent-500) ${Math.min(100, count * 25)}%, var(--color-ink-800));`}
+                  title={`${date}: ${count}`}
+                ></div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {hasComments && (
+          <div
+            role="tabpanel"
+            id="veloct-panel-comments"
+            aria-labelledby="veloct-tab-comments"
+            data-veloct-panel="comments"
+            class="hidden"
+          >
+            {isProduction ? (
+              <p class="muted">
+                评论存储在 GitHub Discussions。请在已发布的站点上查看评论区。
+              </p>
+            ) : (
+              <p class="muted">
+                本地预览中评论不可用。评论依赖 GitHub SSO 与已发布站点，这里不会提供本地替代实现。
+              </p>
+            )}
+          </div>
+        )}
+      </div>
+    </>
+  )}
+</aside>
+
+<script>
+  // Tabs are plain buttons with ARIA state. No persistence across pages, by design: the requirement
+  // explicitly says tab state does not need to survive navigation.
+  (function () {
+    const sidebar = document.getElementById('veloct-right-sidebar');
+    if (!sidebar) return;
+
+    const tabs = Array.from(sidebar.querySelectorAll<HTMLButtonElement>('[data-veloct-tab]'));
+    const panels = Array.from(sidebar.querySelectorAll<HTMLElement>('[data-veloct-panel]'));
+
+    function select(id: string) {
+      for (const tab of tabs) {
+        const selected = tab.dataset.veloctTab === id;
+        tab.setAttribute('aria-selected', String(selected));
+        tab.tabIndex = selected ? 0 : -1;
+        tab.classList.toggle('bg-ink-800', selected);
+        tab.classList.toggle('text-ink-100', selected);
+        tab.classList.toggle('text-ink-400', !selected);
+      }
+      for (const panel of panels) {
+        panel.classList.toggle('hidden', panel.dataset.veloctPanel !== id);
+      }
+    }
+
+    tabs.forEach((tab, index) => {
+      tab.addEventListener('click', () => select(tab.dataset.veloctTab!));
+      tab.addEventListener('keydown', (event) => {
+        if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') return;
+        event.preventDefault();
+        const offset = event.key === 'ArrowRight' ? 1 : -1;
+        const next = tabs[(index + offset + tabs.length) % tabs.length];
+        next.focus();
+        select(next.dataset.veloctTab!);
+      });
+    });
+
+    // A knowledge reference anywhere on the page opens the outline panel, which is where the
+    // referenced location is shown. `handoff.md` section 6.5 and 9.1.
+    document.addEventListener('veloct:open-knowledge', () => select('outline'));
+  })();
+</script>

@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>计数器 Demo</title>
+    <link rel="stylesheet" href="assets/style.css" />
+  </head>
+  <body>
+    <main>
+      <h1>计数器 Demo</h1>
+      <p>这是一个静态作品本体，由 Veloct 从 <code>works/&lt;stable-id&gt;/site/</code> 复制到
+        <code>dist/works/demo-counter/</code>，并部署到独立的 Works Origin。</p>
+      <p>计数值：<output id="count">0</output></p>
+      <button id="increment" type="button">加一</button>
+      <p class="note">
+        这段脚本运行在独立 Origin 上，通过 sandbox iframe 嵌入主站，因此拿不到主站的 Cookie、
+        localStorage 或 Tauri bridge。
+      </p>
+    </main>
+    <script src="assets/app.js"></script>
+  </body>
+</html>

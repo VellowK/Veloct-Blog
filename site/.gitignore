@@ -1,0 +1,9 @@
+# The site template's local state.
+#
+# `.veloct-generated/` holds the knowledge index the config step writes before Astro loads, so it is
+# derived data and must not be committed. `node_modules` and the Astro cache are build output.
+node_modules/
+dist/
+.astro/
+.veloct-generated/
+*.log

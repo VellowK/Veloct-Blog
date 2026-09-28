@@ -1,0 +1,32 @@
+{
+  "name": "veloct-site",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "comment": [
+    "The Veloct site template. This one project is BOTH the live preview the desktop app renders",
+    "and the release build, which is what handoff.md section 5 requires: there is no second",
+    "renderer. Versions are pinned from docs/spec/03-upstream-facts.md; see that file before",
+    "changing any of them."
+  ],
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "check": "astro check",
+    "verify": "node scripts/verify-build.mjs"
+  },
+  "dependencies": {
+    "@astrojs/markdown-remark": "7.3.1",
+    "@astrojs/rss": "4.0.19",
+    "@astrojs/sitemap": "3.7.4",
+    "@tailwindcss/vite": "4.3.3",
+    "astro": "7.3.5",
+    "remark-directive": "4.0.0",
+    "tailwindcss": "4.3.3",
+    "unist-util-visit": "5.0.0"
+  }
+}

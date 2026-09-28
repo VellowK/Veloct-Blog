@@ -1,0 +1,134 @@
+---
+// A WIP article's fixed-address page.
+//
+// handoff.md section 7.1 and 7.3 define this page precisely:
+//
+//   * The URL is `/wip/<stable-id>/`, derived from the INTERNAL id, never the slug. A draft's slug
+//     can change while someone holds the link.
+//   * It is always `noindex`, it never enters the sitemap, and its canonical points at itself.
+//   * When `wip_publish = true` it is emitted into a production build; when false it exists only in
+//     the local preview.
+//   * A WIP is never also emitted at `/article/<slug>`.
+//   * A FINISHED article whose WIP URL was once public emits a permanent redirect from here
+//     (section 7.2), which is handled in the same route because the two sets are disjoint by state.
+
+import { getCollection, render } from 'astro:content';
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import { readSiteConfig } from '../../lib/site-config.mjs';
+import { formatDate, readingStats } from '../../lib/format.ts';
+import { articleRoute, WipRoute } from '../../lib/content.ts';
+
+/** Only the published WIP set is prerendered; the preview-only set is filtered out by the route. */
+export const prerender = true;
+
+export async function getStaticPaths() {
+  const articles = await getCollection('articles');
+  const options = { isProduction: import.meta.env.PROD };
+
+  // Two disjoint groups share this route.
+  //
+  //  * An active WIP emits its fixed-address page here.
+  //  * A FINISHED article whose WIP URL was once published emits a permanent redirect from here to
+  //    its current /article/<slug>/ (handoff.md section 7.2). A WIP that was never public gets no
+  //    redirect entry at all, because nothing ever linked to it.
+  //
+  // They cannot collide: a document is either finished or a WIP, never both.
+  const paths = [];
+
+  for (const entry of articles) {
+    const route = articleRoute(entry, options);
+    if (route.kind === WipRoute.Wip) {
+      paths.push({ params: { id: route.id }, props: { entry, redirectTo: null } });
+    } else if (route.redirectFrom) {
+      // `redirectFrom` is `/wip/<id>/`; the route parameter is the bare id.
+      const id = route.redirectFrom.replace(/^\/wip\//, '').replace(/\/$/, '');
+      paths.push({ params: { id }, props: { entry: null, redirectTo: `/article/${route.slug}/` } });
+    }
+  }
+
+  return paths;
+}
+
+const { entry, redirectTo } = Astro.props;
+
+/** Whether this path is the permanent-redirect entry for a finished article. */
+const isRedirect = typeof redirectTo === 'string' && redirectTo.length > 0;
+
+// A static build cannot send a 301, so the redirect is a page. This mirrors exactly what Astro's own
+// `redirects` map emits for a static site: a meta refresh, a canonical, and noindex.
+const redirectUrl = isRedirect
+  ? new URL(redirectTo, Astro.site ?? 'https://example.com').toString()
+  : '';
+
+const site = readSiteConfig();
+
+// A WIP page is private by nature, so it is never previewed by a crawler even when it is emitted.
+const noindex = true;
+
+// `entry` is null only for a redirect path, which renders before any of this is needed.
+const rendered = entry ? await render(entry) : null;
+const Content = rendered?.Content ?? null;
+const headings = rendered?.headings ?? [];
+const stats = entry ? readingStats(entry.body) : { words: 0, minutes: 0 };
+
+const updatedAt = entry?.data.updated_at ?? '';
+---
+
+{isRedirect ? (
+  // The permanent-redirect entry for a finished article whose WIP URL was once public
+  // (handoff.md section 7.2). A static build cannot send a 301, so this mirrors what Astro's own
+  // static `redirects` emit: a meta refresh, a canonical, noindex, and a visible link.
+  <html lang="zh-CN">
+    <head>
+      <meta charset="utf-8" />
+      <meta name="viewport" content="width=device-width, initial-scale=1" />
+      <title>已迁移</title>
+      <meta http-equiv="refresh" content={`0;url=${redirectTo}`} />
+      <link rel="canonical" href={redirectUrl} />
+      <meta name="robots" content="noindex, follow" />
+    </head>
+    <body>
+      <p>该 WIP 地址已迁移到 <a href={redirectTo}>{redirectTo}</a>。</p>
+    </body>
+  </html>
+) : (
+  <BaseLayout
+    title={`${entry.data.title} · WIP`}
+    description={entry.data.summary}
+    canonical={`/wip/${entry.id}/`}
+    noindex={noindex}
+    type="article"
+    updatedAt={updatedAt}
+    headings={headings.map((heading) => ({ depth: heading.depth, slug: heading.slug, text: heading.text }))}
+    commentsEnabled={false}
+  >
+    <article>
+      <div class="card mt-4 border-accent-600/50 p-4">
+        <p class="text-sm text-accent-400">
+          这是一篇 WIP（未完成）文章。
+          {entry.data.wip_publish
+            ? '它已选择跟随静态生成，因此线上通过固定链接访问；不会被搜索引擎索引。'
+            : '它只在本地预览中可见，不会进入正式构建产物。'}
+        </p>
+        <p class="mt-2 font-mono text-xs muted">
+          固定链接 /wip/{entry.id}/ · 当前 slug {entry.data.slug}
+        </p>
+      </div>
+
+      <header class="mt-6">
+        <h1 class="font-serif text-3xl leading-tight">{entry.data.title}</h1>
+        {entry.data.summary && <p class="mt-3 text-ink-300">{entry.data.summary}</p>}
+        <p class="mt-4 flex flex-wrap items-center gap-x-4 text-sm muted">
+          <time datetime={updatedAt}>{formatDate(updatedAt)}</time>
+          <span>{stats.words} 字</span>
+          <span>约 {stats.minutes} 分钟</span>
+        </p>
+      </header>
+
+      <div class="prose-veloct mt-8">
+        {Content && <Content />}
+      </div>
+    </article>
+  </BaseLayout>
+)}
+

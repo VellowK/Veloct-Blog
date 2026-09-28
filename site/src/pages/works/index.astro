@@ -1,0 +1,161 @@
+---
+// The works index.
+//
+// handoff.md section 10.3: `/works` supports a poster-wall view and a list view, the poster uses the
+// screenshot or a placeholder by default, hovering lazy-loads the work's iframe, and leaving the
+// hover destroys that dynamic preview.
+//
+// The hover preview points at the WORKS ORIGIN, not at a same-origin path, and the iframe is
+// sandboxed WITHOUT `allow-same-origin` (section 10.4). Loading a work same-origin would give its
+// script access to the main site's storage, which is exactly what the contract forbids.
+
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import { readSiteConfig } from '../../lib/site-config.mjs';
+import { formatDate } from '../../lib/format.ts';
+import { readWorks } from '../../lib/works.mjs';
+
+const site = readSiteConfig();
+
+// The work truth is `works/<stable-id>/work.json` plus `site/` (handoff.md section 10.1). The reader
+// lives in `lib/works.mjs` so this page and the shell page cannot disagree about what a work is.
+const works = readWorks();
+
+const worksOrigin = (site.worksOrigin ?? '').replace(/\/$/, '');
+const view = Astro.url.searchParams.get('view') === 'list' ? 'list' : 'grid';
+---
+
+<BaseLayout
+  title={`作品 · ${site.name}`}
+  description={`${site.name} 的作品集`}
+  canonical="/works/"
+  wide
+>
+  <div class="flex flex-wrap items-baseline justify-between gap-3">
+    <h1 class="font-serif text-2xl">作品</h1>
+    <nav class="flex gap-2 text-sm" aria-label="视图切换">
+      <a href="/works/" class:list={['card px-3 py-1 no-underline', view === 'grid' ? 'text-accent-400' : 'muted']}>海报墙</a>
+      <a href="/works/?view=list" class:list={['card px-3 py-1 no-underline', view === 'list' ? 'text-accent-400' : 'muted']}>列表</a>
+    </nav>
+  </div>
+
+  {!worksOrigin && (
+    <p class="card mt-4 border-accent-600/50 p-4 text-sm text-accent-400">
+      尚未配置独立的 Works Origin。作品不会被以主站同源顶层文档的方式运行；在配置之前，
+      hover 预览与外壳页内嵌都不会启用。
+    </p>
+  )}
+
+  {works.length === 0 ? (
+    <p class="card mt-6 p-6 muted">还没有导入作品。</p>
+  ) : view === 'grid' ? (
+    <ul class="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      {works.map((work) => (
+        <li
+          class="card overflow-hidden"
+          data-veloct-work={work.slug}
+          data-works-origin={worksOrigin}
+        >
+          <a href={`/works/${work.slug}/`} class="block no-underline">
+            <span class="block aspect-video bg-ink-850" data-veloct-work-poster>
+              {work.screenshot ? (
+                <img
+                  src={`/work-previews/${work.slug}/screenshot.webp`}
+                  alt={`${work.title} 截图`}
+                  loading="lazy"
+                  decoding="async"
+                  class="h-full w-full object-cover"
+                />
+              ) : (
+                <span class="grid h-full place-items-center text-sm muted">暂无截图</span>
+              )}
+            </span>
+            <span class="block p-4">
+              <span class="block font-serif text-base text-ink-100">{work.title}</span>
+              {work.summary && <span class="mt-1 block text-sm text-ink-300">{work.summary}</span>}
+              <span class="mt-2 block text-xs muted">
+                {work.author}
+                {work.completedAt && <span> · {formatDate(work.completedAt)}</span>}
+              </span>
+            </span>
+          </a>
+
+          {worksOrigin && (
+            // The hover preview is created on demand and destroyed on leave, so an idle grid runs no
+            // work code at all (handoff.md section 10.3).
+            <button
+              type="button"
+              class="w-full border-t border-ink-800 px-4 py-2 text-left text-xs text-accent-400"
+              data-veloct-work-preview
+              data-work-url={`${worksOrigin}/${work.slug}/`}
+            >hover 预览（独立 Origin）</button>
+          )}
+        </li>
+      ))}
+    </ul>
+  ) : (
+    <ul class="mt-6 space-y-3">
+      {works.map((work) => (
+        <li class="card flex flex-wrap items-center justify-between gap-3 p-4">
+          <span class="min-w-0">
+            <a href={`/works/${work.slug}/`} class="font-serif text-base no-underline">{work.title}</a>
+            {work.summary && <span class="mt-1 block text-sm text-ink-300">{work.summary}</span>}
+          </span>
+          <span class="text-xs muted">
+            {work.author}
+            {work.completedAt && <span> · {formatDate(work.completedAt)}</span>}
+          </span>
+        </li>
+      ))}
+    </ul>
+  )}
+</BaseLayout>
+
+<script>
+  // A work preview is created on pointer-enter and destroyed on pointer-leave. The iframe is
+  // sandboxed with the minimum permissions the contract allows: `allow-scripts` for the work's own
+  // script, and deliberately NOT `allow-same-origin`, NOT `allow-top-navigation`, NOT
+  // `allow-popups` and NOT `allow-forms` (handoff.md section 10.4.3 and 10.4.4).
+  (function () {
+    const SANDBOX = 'allow-scripts';
+
+    function findTrigger(target: EventTarget | null) {
+      return (target as HTMLElement | null)?.closest<HTMLElement>('[data-veloct-work-preview]') ?? null;
+    }
+
+    function createPreview(trigger: HTMLElement) {
+      const url = trigger.dataset.workUrl;
+      const card = trigger.closest<HTMLElement>('[data-veloct-work]');
+      const poster = card?.querySelector<HTMLElement>('[data-veloct-work-poster]');
+      if (!url || !poster || poster.querySelector('iframe')) return;
+
+      const frame = document.createElement('iframe');
+      frame.src = url;
+      frame.setAttribute('sandbox', SANDBOX);
+      frame.setAttribute('loading', 'lazy');
+      frame.setAttribute('referrerpolicy', 'no-referrer');
+      frame.setAttribute('title', '作品预览');
+      frame.className = 'h-full w-full border-0';
+      poster.textContent = '';
+      poster.appendChild(frame);
+    }
+
+    function destroyPreview(trigger: HTMLElement) {
+      const card = trigger.closest<HTMLElement>('[data-veloct-work]');
+      const poster = card?.querySelector<HTMLElement>('[data-veloct-work-poster]');
+      const frame = poster?.querySelector('iframe');
+      // Removing the element is what actually unloads the work: clearing `src` alone can leave the
+      // document running in some engines.
+      frame?.remove();
+    }
+
+    document.addEventListener('pointerenter', (event) => {
+      const trigger = findTrigger(event.target);
+      if (trigger) createPreview(trigger);
+    }, true);
+
+    document.addEventListener('pointerleave', (event) => {
+      const trigger = findTrigger(event.target);
+      if (trigger) destroyPreview(trigger);
+    }, true);
+  })();
+</script>

@@ -1,0 +1,240 @@
+/* Veloct global styles.
+ *
+ * The visual direction is the confirmed Claude dark mode (handoff.md section 6.1): a warm charcoal
+ * background, a warm accent, layered dark cards, serif headings and a system-font body, with no
+ * light/dark toggle. There is exactly one template.
+ *
+ * Tailwind 4 is CSS-first: there is no `tailwind.config.js` and no PostCSS config. Theme values are
+ * declared here with `@theme`, which is what makes them available as utilities.
+ */
+
+@import "tailwindcss";
+
+@theme {
+  /* Warm charcoal, not a neutral grey: the warmth is what makes the palette read as Claude rather
+   * than as a generic dark theme. */
+  --color-ink-950: oklch(0.16 0.008 60);
+  --color-ink-900: oklch(0.20 0.010 60);
+  --color-ink-850: oklch(0.235 0.011 60);
+  --color-ink-800: oklch(0.27 0.012 60);
+  --color-ink-700: oklch(0.34 0.013 60);
+  --color-ink-600: oklch(0.45 0.012 60);
+  --color-ink-400: oklch(0.62 0.010 60);
+  --color-ink-300: oklch(0.72 0.008 60);
+  --color-ink-100: oklch(0.90 0.006 60);
+
+  /* The warm accent. A soft amber rather than a saturated orange, so it works on charcoal. */
+  --color-accent-300: oklch(0.84 0.075 70);
+  --color-accent-400: oklch(0.78 0.100 65);
+  --color-accent-500: oklch(0.72 0.115 60);
+  --color-accent-600: oklch(0.63 0.110 55);
+
+  --color-danger-400: oklch(0.70 0.14 25);
+  --color-success-400: oklch(0.75 0.10 150);
+
+  --font-serif: "Georgia", "Songti SC", "SimSun", "Noto Serif CJK SC", serif;
+  --font-sans: system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", "PingFang SC",
+    "Hiragino Sans GB", "Noto Sans CJK SC", sans-serif;
+  --font-mono: ui-monospace, "Cascadia Code", "SFMono-Regular", Consolas, "Liberation Mono",
+    monospace;
+
+  --radius-card: 0.75rem;
+  --radius-avatar: 1rem;
+}
+
+@layer base {
+  /* No theme toggle: one palette, applied unconditionally. */
+  :root {
+    color-scheme: dark;
+  }
+
+  html {
+    scroll-behavior: smooth;
+    /* A stable scrollbar avoids a layout shift when a page grows past the viewport, which
+     * otherwise changes rendered widths between two builds of the same content. */
+    scrollbar-gutter: stable;
+  }
+
+  body {
+    background-color: var(--color-ink-950);
+    color: var(--color-ink-100);
+    font-family: var(--font-sans);
+    line-height: 1.7;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-serif);
+    color: var(--color-ink-100);
+    line-height: 1.3;
+    text-wrap: balance;
+  }
+
+  a {
+    color: var(--color-accent-400);
+    text-decoration-color: color-mix(in oklch, var(--color-accent-400) 40%, transparent);
+    text-underline-offset: 0.2em;
+  }
+
+  a:hover {
+    color: var(--color-accent-300);
+    text-decoration-color: currentColor;
+  }
+
+  code, pre, kbd, samp {
+    font-family: var(--font-mono);
+  }
+
+  ::selection {
+    background-color: color-mix(in oklch, var(--color-accent-500) 35%, transparent);
+  }
+
+  /* A visible focus ring is required, not optional: this is the only affordance for keyboard
+   * navigation and the palette is low contrast by design. */
+  :focus-visible {
+    outline: 2px solid var(--color-accent-400);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+}
+
+@layer components {
+  /* Layered cards. Elevation is expressed by a slightly lighter surface plus a hairline border,
+   * because a drop shadow on a dark warm background reads as dirt rather than depth. */
+  .card {
+    background-color: var(--color-ink-900);
+    border: 1px solid color-mix(in oklch, var(--color-ink-700) 60%, transparent);
+    border-radius: var(--radius-card);
+  }
+
+  .card-raised {
+    background-color: var(--color-ink-850);
+    border: 1px solid color-mix(in oklch, var(--color-ink-700) 80%, transparent);
+    border-radius: var(--radius-card);
+  }
+
+  .muted {
+    color: var(--color-ink-400);
+  }
+
+  .prose-veloct {
+    max-width: 72ch;
+  }
+
+  .prose-veloct h2 {
+    margin-block: 2rem 0.75rem;
+    font-size: 1.5rem;
+  }
+
+  .prose-veloct h3 {
+    margin-block: 1.5rem 0.5rem;
+    font-size: 1.25rem;
+  }
+
+  .prose-veloct p,
+  .prose-veloct ul,
+  .prose-veloct ol,
+  .prose-veloct blockquote,
+  .prose-veloct table {
+    margin-block: 1rem;
+  }
+
+  .prose-veloct ul,
+  .prose-veloct ol {
+    padding-inline-start: 1.5rem;
+  }
+
+  .prose-veloct ul { list-style: disc; }
+  .prose-veloct ol { list-style: decimal; }
+
+  .prose-veloct blockquote {
+    border-inline-start: 3px solid var(--color-accent-600);
+    padding-inline-start: 1rem;
+    color: var(--color-ink-300);
+    font-style: italic;
+  }
+
+  .prose-veloct :not(pre) > code {
+    background-color: var(--color-ink-800);
+    border-radius: 0.25rem;
+    padding: 0.125rem 0.35rem;
+    font-size: 0.9em;
+  }
+
+  .prose-veloct pre {
+    background-color: var(--color-ink-900);
+    border: 1px solid color-mix(in oklch, var(--color-ink-700) 60%, transparent);
+    border-radius: var(--radius-card);
+    padding: 1rem;
+    overflow-x: auto;
+  }
+
+  .prose-veloct table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.925rem;
+  }
+
+  .prose-veloct th,
+  .prose-veloct td {
+    border: 1px solid color-mix(in oklch, var(--color-ink-700) 60%, transparent);
+    padding: 0.5rem 0.75rem;
+    text-align: start;
+  }
+
+  .prose-veloct th {
+    background-color: var(--color-ink-850);
+  }
+
+  /* Images are lazy-loaded with a blur-up placeholder (handoff.md section 6.2). */
+  .lazy-image {
+    position: relative;
+    overflow: hidden;
+    background-color: var(--color-ink-800);
+    border-radius: var(--radius-card);
+  }
+
+  .lazy-image img {
+    display: block;
+    width: 100%;
+    height: auto;
+    opacity: 0;
+    filter: blur(12px);
+    transition: opacity 400ms ease-out, filter 400ms ease-out;
+  }
+
+  .lazy-image img.is-loaded {
+    opacity: 1;
+    filter: blur(0);
+  }
+
+  /* A predictable placeholder shape prevents layout shift before the image loads. */
+  .lazy-image aspect-ratio-placeholder {
+    aspect-ratio: 16 / 9;
+  }
+}
+
+@layer utilities {
+  .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  /* Honour a reduced-motion preference rather than ignoring it. */
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}

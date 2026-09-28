@@ -1,0 +1,16 @@
+{
+  "id": "01J8Z5Q0K3W7M9V2B4N6P8R2AG",
+  "slug": "demo-counter",
+  "title": "计数器 Demo",
+  "author": "Vellow",
+  "summary": "一个用于验证作品系统的最小静态作品。",
+  "completed_at": "2026-02-14T00:00:00Z",
+  "imported_at": "2026-02-14T00:00:00Z",
+  "source": { "kind": "folder", "original_name": "demo-counter" },
+  "entry": "index.html",
+  "tags": ["demo"],
+  "cover": "preview/cover.webp",
+  "screenshot": "preview/screenshot.webp",
+  "size_bytes": 512,
+  "notes": "用于验证：作品本体进入 dist/works，主站只提供外壳页。"
+}

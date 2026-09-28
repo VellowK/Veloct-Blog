@@ -1,0 +1,150 @@
+---
+// An article reading page.
+//
+// handoff.md section 6.4 requires this template, section 4.4 requires a word count and reading time
+// at the top, section 9.4 requires a Harvard-style reference list at the end, and section 6.5 says
+// the right sidebar can show the outline and knowledge references here.
+//
+// The route is a REST parameter (`[...slug]`) because a public slug may contain a slash: the
+// frontmatter `slug` is user-editable and nothing constrains it to one segment.
+
+import { getCollection, render } from 'astro:content';
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import ReferenceList from '../../components/ReferenceList.astro';
+import { readSiteConfig } from '../../lib/site-config.mjs';
+import { formatDate, readingStats, isProduction } from '../../lib/format.ts';
+import { articleRoute, WipRoute } from '../../lib/content.ts';
+import { collectReferences, loadKnowledgeIndex, resolveReferences } from '../../lib/knowledge.ts';
+
+export async function getStaticPaths() {
+  const articles = await getCollection('articles');
+  const options = { isProduction: import.meta.env.PROD };
+
+  return articles
+    // A published WIP is emitted at /wip/<id>/ and NOT also here (handoff.md section 7.1), so it is
+    // filtered out rather than duplicated.
+    .filter((entry) => articleRoute(entry, options).kind === WipRoute.Article)
+    .map((entry) => ({
+      params: { slug: entry.data.slug },
+      props: { entry },
+    }));
+}
+
+const { entry } = Astro.props;
+const site = readSiteConfig();
+const isProd = isProduction;
+
+const { Content, headings } = await render(entry);
+const stats = readingStats(entry.body);
+
+// The reference list and the resolved card data both come from the document's own directives
+// resolved against the CURRENT knowledge content, which is handoff.md section 9.4's "a knowledge
+// edit flows into every article that cites it".
+const { index } = await loadKnowledgeIndex();
+const references = collectReferences(entry.body);
+const resolved = resolveReferences(index, references);
+const citations = resolved.citations;
+
+/**
+ * The resolved reference payload.
+ *
+ * Astro 7 does not apply the `components` prop to plain Markdown (ADR-0011), so the cards are built
+ * on the client from this build-time payload. Keyed by `content\u001fparagraph` to match the
+ * attributes the remark plugin emitted.
+ */
+const referencePayload = Object.fromEntries(
+  resolved.cards.map((card) => [`${card.contentId}\u001f${card.paragraphId}`, card]),
+);
+
+const publishedAt = entry.data.published_at ?? entry.data.created_at;
+
+const jsonLd = {
+  '@context': 'https://schema.org',
+  '@type': 'BlogPosting',
+  headline: entry.data.title,
+  description: entry.data.summary ?? '',
+  datePublished: publishedAt,
+  dateModified: entry.data.updated_at,
+  ...(entry.data.tags?.length ? { keywords: entry.data.tags.join(', ') } : {}),
+  ...(site.author?.name ? { author: { '@type': 'Person', name: site.author.name } } : {}),
+  mainEntityOfPage: {
+    '@type': 'WebPage',
+    '@id': new URL(`/article/${entry.data.slug}/`, site.url).toString(),
+  },
+};
+---
+
+<BaseLayout
+  title={`${entry.data.title} · ${site.name}`}
+  description={entry.data.summary}
+  canonical={`/article/${entry.data.slug}/`}
+  type="article"
+  publishedAt={publishedAt}
+  updatedAt={entry.data.updated_at}
+  tags={entry.data.tags}
+  image={entry.data.cover}
+  jsonLd={jsonLd}
+  headings={headings.map((heading) => ({ depth: heading.depth, slug: heading.slug, text: heading.text }))}
+  commentsEnabled={site.comments?.enabled === true}
+  isProduction={isProd}
+>
+  <article>
+    <header class="mt-4">
+      <h1 class="font-serif text-3xl leading-tight">{entry.data.title}</h1>
+
+      {entry.data.summary && (
+        <p class="mt-3 text-ink-300">{entry.data.summary}</p>
+      )}
+
+      <!-- handoff.md section 4.4: word count and estimated reading time at the top. -->
+      <p class="mt-4 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm muted">
+        <time datetime={publishedAt}>{formatDate(publishedAt)}</time>
+        {entry.data.updated_at !== publishedAt && (
+          <span>更新于 <time datetime={entry.data.updated_at}>{formatDate(entry.data.updated_at)}</time></span>
+        )}
+        <span>{stats.words} 字</span>
+        <span>约 {stats.minutes} 分钟</span>
+        {entry.data.category && (
+          <a href={`/category/${encodeURIComponent(entry.data.category)}/`} class="no-underline">
+            {entry.data.category}
+          </a>
+        )}
+      </p>
+
+      {entry.data.tags?.length > 0 && (
+        <p class="mt-3 flex flex-wrap gap-2">
+          {entry.data.tags.map((tag) => (
+            <a
+              href={`/tags/${encodeURIComponent(tag)}/`}
+              class="card px-2 py-0.5 text-xs no-underline"
+            >#{tag}</a>
+          ))}
+        </p>
+      )}
+    </header>
+
+    <div class="prose-veloct mt-8" data-veloct-article-body>
+      <Content />
+    </div>
+
+    <!-- The resolved reference data, emitted at build time. The card script reads it; see
+         src/scripts/knowledge-cards.js for why the cards are built on the client. -->
+    {resolved.cards.length > 0 && (
+      <script
+        type="application/json"
+        id="veloct-knowledge-refs"
+        set:html={JSON.stringify(referencePayload)}
+      />
+    )}
+
+    <!-- handoff.md section 9.4: the article's Harvard-style reference list is generated from the
+         knowledge entries it cites. -->
+    <ReferenceList citations={citations} />
+  </article>
+
+  <script>
+    // Resolves the directive elements into cards from the build-time payload above. See
+    // src/scripts/knowledge-cards.js for why this runs on the client (ADR-0011).
+    import '../../scripts/knowledge-cards.js';
+  </script>
+</BaseLayout>

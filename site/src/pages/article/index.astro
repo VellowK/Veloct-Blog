@@ -1,0 +1,111 @@
+---
+// The article index.
+//
+// handoff.md section 6.5: this page can show a calendar, a word cloud, tags and a publishing heat
+// map in the right sidebar, and the WIP waterfall is a separate concern (section 7.1) shown here as
+// a clearly separated section that only lists WIP actually present in the current output.
+
+import { getCollection } from 'astro:content';
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import { readSiteConfig } from '../../lib/site-config.mjs';
+import { byNewest, formatDate, readingStats, wordCloud, isProduction, yearOf } from '../../lib/format.ts';
+import { articleRoute, waterfallWips, WipRoute } from '../../lib/content.ts';
+
+const site = readSiteConfig();
+const isProd = isProduction;
+const options = { isProduction: isProd };
+
+const all = await getCollection('articles');
+const articles = all
+  .filter((entry) => articleRoute(entry, options).kind === WipRoute.Article)
+  .sort(byNewest);
+
+// Only WIP that is actually in this static output (handoff.md section 7.1).
+const wips = waterfallWips(all, options);
+
+const tags = wordCloud(articles);
+
+const heatmap = {};
+for (const entry of articles) {
+  const day = String(entry.data.published_at ?? entry.data.created_at).slice(0, 10);
+  if (day) heatmap[day] = (heatmap[day] ?? 0) + 1;
+}
+
+// A year -> articles calendar view.
+const byYear = new Map();
+for (const entry of articles) {
+  const year = yearOf(entry.data.published_at ?? entry.data.created_at);
+  if (!byYear.has(year)) byYear.set(year, []);
+  byYear.get(year).push(entry);
+}
+const years = [...byYear.keys()].sort((a, b) => b.localeCompare(a));
+---
+
+<BaseLayout
+  title={`文章 · ${site.name}`}
+  description={`${site.name} 的全部文章`}
+  canonical="/article/"
+  wordCloud={tags}
+  heatmap={heatmap}
+>
+  <h1 class="font-serif text-2xl">文章</h1>
+  <p class="mt-2 muted">共 {articles.length} 篇</p>
+
+  {wips.length > 0 && (
+    <section class="mt-8" aria-labelledby="veloct-wip">
+      <h2 id="veloct-wip" class="font-serif text-xl">WIP</h2>
+      <p class="mt-1 text-sm muted">
+        以下未完成文章已选择跟随静态生成，固定链接不会随 slug 变化。WIP 页面不会被搜索引擎索引。
+      </p>
+      <ul class="mt-4 grid gap-4 sm:grid-cols-2">
+        {wips.map((entry) => (
+          <li class="card p-4">
+            <a href={`/wip/${entry.id}/`} class="no-underline">
+              <h3 class="font-serif text-base text-ink-100">{entry.data.title}</h3>
+            </a>
+            <p class="mt-2 text-xs muted">
+              固定链接 /wip/{entry.id}/ · 当前 slug 为 {entry.data.slug}
+            </p>
+          </li>
+        ))}
+      </ul>
+    </section>
+  )}
+
+  {years.map((year) => (
+    <section class="mt-10" aria-labelledby={`veloct-year-${year}`}>
+      <h2 id={`veloct-year-${year}`} class="mb-4 font-serif text-xl">{year}</h2>
+      <ul class="space-y-3">
+        {byYear.get(year).map((entry) => {
+          const stats = readingStats(entry.body);
+          return (
+            <li class="card p-4">
+              <div class="flex flex-wrap items-baseline justify-between gap-2">
+                <a href={`/article/${entry.data.slug}/`} class="no-underline">
+                  <h3 class="font-serif text-base text-ink-100">{entry.data.title}</h3>
+                </a>
+                <time class="text-xs muted" datetime={entry.data.published_at ?? entry.data.created_at}>
+                  {formatDate(entry.data.published_at ?? entry.data.created_at)}
+                </time>
+              </div>
+              {entry.data.summary && (
+                <p class="mt-2 text-sm text-ink-300">{entry.data.summary}</p>
+              )}
+              <p class="mt-2 flex flex-wrap gap-x-3 text-xs muted">
+                <span>{stats.words} 字</span>
+                <span>约 {stats.minutes} 分钟</span>
+                {entry.data.tags?.length > 0 && (
+                  <span>{entry.data.tags.map((tag) => `#${tag}`).join(' ')}</span>
+                )}
+              </p>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  ))}
+
+  {articles.length === 0 && (
+    <p class="card mt-8 p-6 muted">还没有已发布的文章。</p>
+  )}
+</BaseLayout>

@@ -1,0 +1,113 @@
+---
+// A lazy-loaded image with a blur-up placeholder and an original-image swap on load.
+//
+// handoff.md section 6.2: every image on the site is lazy, shows a placeholder, and is replaced by
+// the original once it has loaded.
+//
+// The swap is done in ONE place here rather than at every call site, and the placeholder is an
+// inline data URI so the first paint never waits on a network request.
+
+interface Props {
+  src: string;
+  alt: string;
+  /** A tiny inline placeholder, ideally a base64 LQIP. Defaults to a flat warm swatch. */
+  placeholder?: string;
+  width?: number;
+  height?: number;
+  loading?: 'lazy' | 'eager';
+  class?: string;
+  /** Aspect ratio for the reserved box, e.g. "16 / 9". Prevents layout shift. */
+  ratio?: string;
+}
+
+const {
+  src,
+  alt,
+  placeholder,
+  width,
+  height,
+  loading = 'lazy',
+  class: className = '',
+  ratio,
+} = Astro.props;
+
+// A warm neutral swatch in the site palette, so the placeholder looks intentional rather than
+// broken.
+const PLACEHOLDER =
+  placeholder ??
+  'data:image/svg+xml;utf8,' +
+    encodeURIComponent(
+      '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="9"><rect width="16" height="9" fill="#2c2823"/></svg>',
+    );
+
+const ratioStyle = ratio ? `aspect-ratio: ${ratio};` : '';
+---
+
+<div class={`lazy-image ${className}`} style={ratioStyle} data-veloct-lazy-image>
+  <img
+    src={PLACEHOLDER}
+    data-src={src}
+    alt={alt}
+    width={width}
+    height={height}
+    loading={loading}
+    decoding="async"
+    /* No `srcset` is emitted: Veloct does not transform user images at build time, so inventing
+       variants would produce URLs that do not exist. */
+  />
+</div>
+
+<script>
+  // One delegated listener for the whole page, so a page with fifty images still has one handler.
+  // The image element keeps its placeholder as `src` until the real data arrives, which is what
+  // makes the blur-up transition meaningful.
+  function loadImage(image: HTMLImageElement) {
+    const source = image.dataset.src;
+    if (!source) return;
+
+    const preload = new Image();
+    preload.decoding = 'async';
+    preload.onload = () => {
+      image.src = source;
+      image.classList.add('is-loaded');
+      delete image.dataset.src;
+    };
+    preload.onerror = () => {
+      // Leave the placeholder in place rather than showing a broken-image icon. A missing image is
+      // a content problem, and the alt text still describes the intent.
+      image.classList.add('is-loaded');
+    };
+    preload.src = source;
+  }
+
+  function start() {
+    const images = document.querySelectorAll<HTMLImageElement>('img[data-src]');
+    if (images.length === 0) return;
+
+    if (!('IntersectionObserver' in window)) {
+      images.forEach(loadImage);
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue;
+          observer.unobserve(entry.target);
+          loadImage(entry.target as HTMLImageElement);
+        }
+      },
+      // Start fetching slightly before the image scrolls into view so it is usually ready.
+      { rootMargin: '200px 0px' },
+    );
+
+    images.forEach((image) => observer.observe(image));
+  }
+
+  // The script is injected into the body, so the images above it already exist.
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', start);
+  } else {
+    start();
+  }
+</script>

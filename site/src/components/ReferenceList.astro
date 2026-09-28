@@ -1,0 +1,42 @@
+---
+// The Harvard-style reference list generated at the end of an article.
+//
+// handoff.md section 9.4: "文章末尾自动生成 Harvard style Reference List" and every cited knowledge
+// entry is included automatically. Section 9.4 also says a knowledge page does NOT show which
+// articles cite it, so this list is one-directional by design.
+//
+// The list is emitted only when there is something to cite. An empty "References" heading would be
+// worse than none.
+
+interface Citation {
+  contentId: string;
+  author: string;
+  year: string;
+  title: string;
+  url?: string | null;
+}
+
+interface Props {
+  citations: Citation[];
+}
+
+const { citations = [] } = Astro.props;
+
+function text(citation: Citation) {
+  const base = `${citation.author} (${citation.year}) ${citation.title}.`;
+  return citation.url ? `${base} Available at: ${citation.url}` : base;
+}
+---
+
+{citations.length > 0 && (
+  <section class="mt-12 border-t border-ink-800 pt-6" aria-labelledby="veloct-references">
+    <h2 id="veloct-references" class="font-serif text-xl">References</h2>
+    <ol class="mt-4 space-y-2 text-sm text-ink-300">
+      {citations.map((citation) => (
+        <li>
+          {text(citation)}
+        </li>
+      ))}
+    </ol>
+  </section>
+)}

@@ -1,0 +1,54 @@
+---
+// Friend links.
+//
+// handoff.md section 6.4 lists 友情链接 among the required templates. The data comes from
+// `data/links.json`, which the application exports from SQLite (the configuration truth source).
+
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import { readFriendLinks, readSiteConfig } from '../../lib/site-config.mjs';
+
+const site = readSiteConfig();
+const links = readFriendLinks();
+---
+
+<BaseLayout
+  title={`友情链接 · ${site.name}`}
+  description={`${site.name} 的友情链接`}
+  canonical="/links/"
+>
+  <h1 class="font-serif text-2xl">友情链接</h1>
+
+  {links.length === 0 ? (
+    <p class="card mt-6 p-6 muted">还没有添加友情链接。</p>
+  ) : (
+    <ul class="mt-6 grid gap-4 sm:grid-cols-2">
+      {links.map((link) => (
+        <li class="card p-4">
+          <a href={link.url} class="flex items-center gap-3 no-underline" target="_blank" rel="noopener noreferrer">
+            {link.avatar ? (
+              <img
+                src={link.avatar}
+                alt=""
+                width="40"
+                height="40"
+                loading="lazy"
+                decoding="async"
+                class="h-10 w-10 shrink-0 rounded-lg object-cover"
+              />
+            ) : (
+              <span class="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-ink-800 text-accent-400" aria-hidden="true">
+                {(link.name ?? '?').slice(0, 1)}
+              </span>
+            )}
+            <span class="min-w-0">
+              <span class="block truncate font-medium text-ink-100">{link.name}</span>
+              {link.description && (
+                <span class="mt-0.5 block truncate text-xs muted">{link.description}</span>
+              )}
+            </span>
+          </a>
+        </li>
+      ))}
+    </ul>
+  )}
+</BaseLayout>

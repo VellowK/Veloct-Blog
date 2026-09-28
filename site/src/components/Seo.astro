@@ -1,0 +1,95 @@
+---
+// Search engine metadata, Open Graph, structured data and the robots switch.
+//
+// handoff.md section 15 requires: a robots.txt / meta noindex switch that moves together, automatic
+// OG images, structured data and a sitemap. This component owns the per-page half; robots.txt is a
+// route.
+//
+// Two rules are load-bearing:
+//   * A WIP page is ALWAYS noindex, whatever the site-wide switch says (handoff.md section 7.3).
+//   * The site-wide switch must turn everything off together. A page that says `index` while
+//     robots.txt says `Disallow` is a contradiction support questions are made of.
+
+import { siteConfig } from '../lib/format.ts';
+
+interface Props {
+  title: string;
+  description?: string;
+  /** Absolute or root-relative canonical path. */
+  canonical?: string | null;
+  /** Force noindex regardless of the site switch. WIP pages pass true. */
+  noindex?: boolean;
+  /** `article` for an article page, `website` otherwise. */
+  type?: 'website' | 'article' | 'profile';
+  publishedAt?: string | null;
+  updatedAt?: string | null;
+  tags?: string[];
+  /** A root-relative or absolute image URL for the OG image. */
+  image?: string | null;
+  /** Structured data to emit as JSON-LD. */
+  jsonLd?: Record<string, unknown> | Record<string, unknown>[] | null;
+}
+
+const {
+  title,
+  description = siteConfig.description,
+  canonical = null,
+  noindex = false,
+  type = 'website',
+  publishedAt = null,
+  updatedAt = null,
+  tags = [],
+  image = null,
+  jsonLd = null,
+} = Astro.props;
+
+const allowIndexing = siteConfig.seo?.allowIndexing !== false;
+// The WIP rule wins over the site switch: a draft is never indexable.
+const robots = noindex || !allowIndexing ? 'noindex, nofollow' : 'index, follow';
+
+const base = siteConfig.url?.replace(/\/$/, '') ?? '';
+const canonicalUrl = canonical ? new URL(canonical, `${base}/`).toString() : null;
+const ogImage = image ? new URL(image, `${base}/`).toString() : null;
+
+const jsonLdBlocks = jsonLd ? (Array.isArray(jsonLd) ? jsonLd : [jsonLd]) : [];
+---
+
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="generator" content={Astro.generator} />
+
+<title>{title}</title>
+{description && <meta name="description" content={description} />}
+<meta name="robots" content={robots} />
+{canonicalUrl && <link rel="canonical" href={canonicalUrl} />}
+
+<!-- Open Graph. The image is generated at build time by the application, never fetched from the
+     network, so a build works offline (handoff.md section 15.1). -->
+<meta property="og:type" content={type} />
+<meta property="og:title" content={title} />
+{description && <meta property="og:description" content={description} />}
+{canonicalUrl && <meta property="og:url" content={canonicalUrl} />}
+{ogImage && <meta property="og:image" content={ogImage} />}
+<meta property="og:site_name" content={siteConfig.name} />
+<meta property="og:locale" content={(siteConfig.language ?? 'zh-CN').replace('-', '_')} />
+
+<meta name="twitter:card" content={ogImage ? 'summary_large_image' : 'summary'} />
+<meta name="twitter:title" content={title} />
+{description && <meta name="twitter:description" content={description} />}
+{ogImage && <meta name="twitter:image" content={ogImage} />}
+
+{type === 'article' && publishedAt && (
+  <meta property="article:published_time" content={publishedAt} />
+)}
+{type === 'article' && updatedAt && (
+  <meta property="article:modified_time" content={updatedAt} />
+)}
+{type === 'article' && tags.map((tag) => <meta property="article:tag" content={tag} />)}
+
+<!-- Structured data, so a search engine does not have to infer the page's nature. -->
+{jsonLdBlocks.map((block) => (
+  <script type="application/ld+json" set:html={JSON.stringify(block)} />
+))}
+
+<link rel="alternate" type="application/rss+xml" title={siteConfig.name} href="/rss.xml" />
+<link rel="sitemap" type="application/xml" href="/sitemap-index.xml" />

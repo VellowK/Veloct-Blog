@@ -1,0 +1,109 @@
+---
+// The one layout every page uses.
+//
+// handoff.md section 6.1 says there is exactly ONE template, so there is exactly one layout. It
+// owns the document shell, the three-column workbench (left navigation, main content, right
+// sidebar), and the pre-paint sidebar state restore.
+//
+// The inline head script is deliberate: the sidebar's collapsed state must be applied BEFORE the
+// first paint, otherwise every navigation flashes the expanded sidebar at a user who collapsed it.
+
+import Seo from '../components/Seo.astro';
+import LeftSidebar from '../components/LeftSidebar.astro';
+import RightSidebar from '../components/RightSidebar.astro';
+import SiteFooter from '../components/SiteFooter.astro';
+import '../styles/global.css';
+
+interface Props {
+  title: string;
+  description?: string;
+  canonical?: string | null;
+  noindex?: boolean;
+  type?: 'website' | 'article' | 'profile';
+  publishedAt?: string | null;
+  updatedAt?: string | null;
+  tags?: string[];
+  image?: string | null;
+  jsonLd?: Record<string, unknown> | Record<string, unknown>[] | null;
+  headings?: { depth: number; slug: string; text: string }[];
+  wordCloud?: { tag: string; count: number; weight: number }[];
+  heatmap?: Record<string, number>;
+  commentsEnabled?: boolean;
+  isProduction?: boolean;
+  /** Widen the main column for a gallery-style page such as the works index. */
+  wide?: boolean;
+}
+
+const {
+  title,
+  description,
+  canonical = null,
+  noindex = false,
+  type = 'website',
+  publishedAt = null,
+  updatedAt = null,
+  tags = [],
+  image = null,
+  jsonLd = null,
+  headings = [],
+  wordCloud = [],
+  heatmap = {},
+  commentsEnabled = false,
+  isProduction = import.meta.env.PROD,
+  wide = false,
+} = Astro.props;
+---
+
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <Seo
+      title={title}
+      description={description}
+      canonical={canonical}
+      noindex={noindex}
+      type={type}
+      publishedAt={publishedAt}
+      updatedAt={updatedAt}
+      tags={tags}
+      image={image}
+      jsonLd={jsonLd}
+    />
+    <script is:inline>
+      // Restore the sidebar state before paint. Kept inline and tiny on purpose.
+      (function () {
+        try {
+          if (localStorage.getItem('veloct.sidebar.collapsed') === '1') {
+            document.documentElement.dataset.sidebarCollapsed = '1';
+          }
+        } catch (error) {
+          // A storage-denied context simply keeps the default expanded state.
+        }
+      })();
+    </script>
+  </head>
+
+  <body class="min-h-screen">
+    <a
+      href="#veloct-main"
+      class="visually-hidden focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-lg focus:bg-ink-800 focus:px-4 focus:py-2"
+    >跳到主要内容</a>
+
+    <div class="mx-auto flex w-full max-w-[100rem] gap-4 px-4 py-4">
+      <LeftSidebar />
+
+      <main id="veloct-main" class:list={['min-w-0 flex-1', wide ? '' : 'max-w-4xl']}>
+        <slot />
+        <SiteFooter />
+      </main>
+
+      <RightSidebar
+        headings={headings}
+        tags={wordCloud}
+        heatmap={heatmap}
+        commentsEnabled={commentsEnabled}
+        isProduction={isProduction}
+      />
+    </div>
+  </body>
+</html>

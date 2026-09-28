@@ -1,0 +1,14 @@
+[
+  {
+    "name": "Astro",
+    "url": "https://astro.build/",
+    "description": "本站的静态站点生成器",
+    "avatar": ""
+  },
+  {
+    "name": "Tauri",
+    "url": "https://tauri.app/",
+    "description": "桌面端外壳",
+    "avatar": ""
+  }
+]

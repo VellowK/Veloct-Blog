@@ -1,0 +1,46 @@
+---
+// The "about" page.
+//
+// handoff.md section 6.3 fixes the route `/about`. Its body is a managed `page` document when one
+// exists, so the author edits it like any other content rather than in the template; the fallback
+// below only applies to a bare template with no content yet.
+
+import { getCollection, render } from 'astro:content';
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import { readSiteConfig } from '../../lib/site-config.mjs';
+
+const site = readSiteConfig();
+
+// The managed page with slug `about`, if the project has one.
+const pages = await getCollection('pages');
+const entry = pages.find((page) => page.data.slug === 'about') ?? null;
+
+const rendered = entry ? await render(entry) : null;
+const Content = rendered?.Content ?? null;
+const headings = rendered?.headings ?? [];
+---
+
+<BaseLayout
+  title={`关于 · ${site.name}`}
+  description={entry?.data.summary ?? `关于 ${site.name}`}
+  canonical="/about/"
+  updatedAt={entry?.data.updated_at ?? null}
+  headings={headings.map((heading) => ({ depth: heading.depth, slug: heading.slug, text: heading.text }))}
+>
+  {Content ? (
+    <>
+      <h1 class="font-serif text-2xl">{entry.data.title}</h1>
+      <div class="prose-veloct mt-6">
+        <Content />
+      </div>
+    </>
+  ) : (
+    <>
+      <h1 class="font-serif text-2xl">关于</h1>
+      <p class="card mt-6 p-6 muted">
+        还没有创建「关于」页面。在 Veloct 里新建一个 slug 为 <span class="font-mono">about</span>
+        的普通页面后，这里会显示它的正文。
+      </p>
+    </>
+  )}
+</BaseLayout>

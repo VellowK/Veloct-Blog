@@ -210,3 +210,47 @@ Decision:
 This keeps handoff §26's locked "three logical deployment targets" intact while refusing to
 fabricate a vendor integration.
 
+## ADR-0013 — Knowledge reference cards are built on the client, from a build-time payload
+
+*Measured against the installed Astro 7.3.5, not assumed.*
+
+`handoff.md` §3.3 requires the knowledge reference card to be a structured construct, and the
+remark plugin does emit a real element for it. The natural next step would be Astro's
+`<Content components={{ ... }} />` prop to substitute a Veloct component for that element.
+
+**That prop does not work for plain Markdown on Astro 7.3.5.** Verified empirically on this
+checkout: overriding `h2` with a probe component, overriding a custom `aside` element with one,
+and passing a named slot into the rendered content all produced the unmodified Markdown output.
+The remark plugin's emitted elements and their `data-veloct-*` attributes DO survive, so the
+construct reaches the page; only the component substitution does not.
+
+Decision:
+
+- The remark plugin keeps emitting the structured element with its resolved target. That is the
+  part §3.3 actually mandates, and it is what makes the reference machine-readable.
+- The page resolves every reference at **build time**, against the current knowledge text (§9.4),
+  and emits the results as a JSON payload in the document.
+- One small script per page builds the card DOM from that payload. It is the only client-side
+  rendering in the template, and it exists solely because the documented server-side mechanism is
+  unavailable.
+- Degradation is visible rather than silent: without scripting the element and the payload are
+  still in the document, so a citation is never quietly lost; and a reference that did not resolve
+  renders as an explicit broken card rather than being hidden (§9.3).
+- The knowledge page tags each prose block with its paragraph ordinal (a rehype step, because a
+  remark paragraph's `hProperties` also do not survive Astro's rendering), so clicking a card opens
+  the *cited* paragraph. The match is positional, never textual: matching on text would move the
+  highlight the moment the author reworded the paragraph, which is the guessing §9.3 forbids.
+
+If a future Astro release makes `components` work for Markdown, the payload and the script can be
+deleted and the cards rendered server-side with no change to the Markdown or the contracts.
+
+## ADR-0014 — The main site is emitted to `dist/site`, the work bodies to `dist/works`
+
+`handoff.md` §10.5 and §14.1 name those two roots. This is not merely cosmetic: the shell page route
+is `/works/<slug>/` and the work body is copied to `dist/works/<slug>/`. When the main site was
+emitted straight into `dist/`, those two paths collided and the work body **overwrote the shell
+page**, destroying the very page that provides the sandboxed embed. Setting `outDir` to `dist/site`
+and telling the build integration the absolute `dist` root removes the collision, and a check in
+`scripts/verify-build.mjs` asserts the two roots stay separate.
+
+

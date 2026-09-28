@@ -1,0 +1,63 @@
+---
+// A category page.
+//
+// handoff.md section 6.4 lists 分类页 among the required templates. A category is a free-text field on
+// an article, not a fixed taxonomy, so this page exists for whatever categories the content uses.
+
+import { getCollection } from 'astro:content';
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import { readSiteConfig } from '../../lib/site-config.mjs';
+import { byNewest, formatDate, readingStats, isProduction } from '../../lib/format.ts';
+import { articleRoute, WipRoute } from '../../lib/content.ts';
+
+export async function getStaticPaths() {
+  const articles = await getCollection('articles');
+  const options = { isProduction: import.meta.env.PROD };
+
+  const categories = new Map();
+  for (const entry of articles) {
+    if (articleRoute(entry, options).kind !== WipRoute.Article) continue;
+    const category = entry.data.category;
+    if (!category) continue;
+    if (!categories.has(category)) categories.set(category, []);
+    categories.get(category).push(entry);
+  }
+
+  return [...categories.entries()].map(([category, entries]) => ({
+    params: { category },
+    props: { category, entries: entries.sort(byNewest) },
+  }));
+}
+
+const { category, entries } = Astro.props;
+const site = readSiteConfig();
+---
+
+<BaseLayout
+  title={`${category} · ${site.name}`}
+  description={`${site.name} 中分类为 ${category} 的文章`}
+  canonical={`/category/${encodeURIComponent(category)}/`}
+>
+  <h1 class="font-serif text-2xl">{category}</h1>
+  <p class="mt-2 muted">{entries.length} 篇文章</p>
+
+  <ul class="mt-6 space-y-3">
+    {entries.map((entry) => {
+      const stats = readingStats(entry.body);
+      return (
+        <li class="card p-4">
+          <div class="flex flex-wrap items-baseline justify-between gap-2">
+            <a href={`/article/${entry.data.slug}/`} class="no-underline">
+              <h2 class="font-serif text-base text-ink-100">{entry.data.title}</h2>
+            </a>
+            <time class="text-xs muted" datetime={entry.data.published_at ?? entry.data.created_at}>
+              {formatDate(entry.data.published_at ?? entry.data.created_at)}
+            </time>
+          </div>
+          {entry.data.summary && <p class="mt-2 text-sm text-ink-300">{entry.data.summary}</p>}
+          <p class="mt-2 text-xs muted">{stats.words} 字 · 约 {stats.minutes} 分钟</p>
+        </li>
+      );
+    })}
+  </ul>
+</BaseLayout>
