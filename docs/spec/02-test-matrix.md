@@ -49,16 +49,16 @@ Legend: **P** = planned, **I** = implemented, **F** = failing (regression).
 
 | # | Clause | Test id | Crate | State |
 |---|---|---|---|---|
-| C1 | User cancel ⇒ `CANCELLED`, no fallback | `ai::cancel_no_fallback` | veloct-ai | P |
-| C2 | Provider connection failure ⇒ fallback | `ai::connection_error_falls_back` | veloct-ai | P |
-| C3 | Provider timeout ⇒ fallback | `ai::timeout_falls_back` | veloct-ai | P |
-| C4 | Provider 4xx/5xx ⇒ fallback | `ai::http_error_falls_back` | veloct-ai | P |
-| C5 | Fallback failure ⇒ final error, no loop | `ai::fallback_failure_terminal` | veloct-ai | P |
-| C6 | AI output never rewrites the body before confirmation | `ai::no_write_before_confirm` | veloct-app | P |
-| C7 | Partial apply changes only the selected range | `ai::partial_apply_bounded` | veloct-app | P |
-| C8 | Secrets never reach the log | `core::redaction_blocks_secrets` | veloct-core | P |
-| C9 | Fallback uses an independent provider when configured | `ai::fallback_independent_provider` | veloct-ai | P |
-| C10 | Model list refresh + manual add both work | `ai::model_refresh_and_manual_add` | veloct-ai | P |
+| C1 | User cancel ⇒ `CANCELLED`, no fallback | `error::cancellation_is_not_an_error_and_never_falls_back`, `service::cancellation_never_falls_back`, `service::cancelling_mid_flight_does_not_contact_the_fallback` | veloct-ai | **I** |
+| C2 | Provider connection failure ⇒ fallback | `error::every_other_failure_does_fall_back`, `error::transport_failures_distinguish_a_timeout_from_a_refusal` | veloct-ai | **I** |
+| C3 | Provider timeout ⇒ fallback | `error::transport_failures_distinguish_a_timeout_from_a_refusal`, `error::every_other_failure_does_fall_back` | veloct-ai | **I** |
+| C4 | Provider 4xx/5xx ⇒ fallback | `error::http_statuses_are_classified_into_the_documented_kinds`, `service::a_real_failure_falls_back_and_the_result_says_so`, `provider::a_provider_error_status_becomes_a_classified_failure` | veloct-ai | **I** |
+| C5 | Fallback failure ⇒ final error, no loop | `error::a_fallback_failure_is_terminal`, `service::a_fallback_failure_is_terminal` | veloct-ai | **I** |
+| C6 | AI output never rewrites the body before confirmation | `apply::*` (an `ApplyPlan` is computed for review; `apply` is a separate explicit step), `feature::every_feature_requires_confirmation_before_it_writes` | veloct-ai | **I** |
+| C7 | Partial apply changes only the selected range | `apply::a_selection_apply_touches_only_the_selected_range`, `apply::a_selection_apply_reports_the_changed_range`, `apply::an_apply_across_a_multibyte_boundary_preserves_the_rest`, `apply::an_invalid_range_is_an_error_not_a_fallback_to_replacing_everything` | veloct-ai | **I** |
+| C8 | Secrets never reach the log | `core::redaction_blocks_secrets` | veloct-core | **I** |
+| C9 | Fallback uses an independent provider when configured | `service::a_fallback_on_an_independent_provider_is_used` | veloct-ai | **I** |
+| C10 | Model list refresh + manual add both work | `provider::model_lists_are_parsed_from_both_envelopes`, `provider::a_manual_model_survives_a_refresh_that_does_not_return_it`, `provider::a_fetched_model_is_updated_by_a_later_refresh` | veloct-ai | **I** |
 
 ## D. Restore / concurrency — handoff §25.1
 
@@ -97,12 +97,12 @@ Legend: **P** = planned, **I** = implemented, **F** = failing (regression).
 
 | # | Clause | Test id | Crate | State |
 |---|---|---|---|---|
-| F1 | A free local port is chosen and never collides | `process::picks_free_port` | veloct-process | P |
-| F2 | Preview crash surfaces an explicit error state | `process::crash_is_reported` | veloct-process | P |
-| F3 | Preview restarts automatically after abnormal exit | `process::auto_restart` | veloct-process | P |
-| F4 | App close kills the whole child process tree | `process::close_kills_tree` | veloct-process | P |
-| F5 | A stale instance cannot hold the port | `process::no_stale_port_holder` | veloct-process | P |
-| F6 | Works preview runs on a different origin than the main preview | `process::works_origin_separate` | veloct-process | P |
+| F1 | A free local port is chosen and never collides | `port::a_picked_port_is_actually_free`, `port::two_picks_do_not_collide_while_both_are_held`, `port::a_bound_port_reports_as_not_free` | veloct-process | **I** |
+| F2 | Preview crash surfaces an explicit error state | `supervisor::a_child_that_exits_before_ready_is_reported_with_its_output`, `supervisor::a_crash_while_running_is_detected_by_polling`, `supervisor::a_crash_reports_the_child_output_so_the_cause_is_visible`, `supervisor::a_preview_that_never_answers_is_reported_rather_than_waited_on` | veloct-process | **I** |
+| F3 | Preview restarts automatically after abnormal exit | `supervisor::a_crashed_preview_is_restarted_automatically`, `supervisor::restarting_gives_up_after_the_policy_is_exhausted` | veloct-process | **I** |
+| F4 | App close kills the whole child process tree | `supervisor::stopping_kills_the_whole_process_tree`, `supervisor::stop_all_stops_every_preview` | veloct-process | **I** |
+| F5 | A stale instance cannot hold the port | `supervisor::a_restart_uses_a_different_port_so_a_stale_holder_cannot_block_it`, `supervisor::a_preview_that_never_answers_is_reported_rather_than_waited_on` (the wedged child is killed) | veloct-process | **I** |
+| F6 | Works preview runs on a different origin than the main preview | `supervisor::the_two_previews_run_on_different_origins` | veloct-process | **I** |
 
 ## G. Deployment — handoff §14.10–§14.13, §10.4
 
