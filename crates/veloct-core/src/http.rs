@@ -67,6 +67,28 @@ impl HttpBody {
     pub fn is_empty(&self) -> bool {
         matches!(self, Self::None)
     }
+
+    /// The body as JSON, when it is one.
+    ///
+    /// Used by tests to assert what a provider actually sent, without making `HttpBody` itself
+    /// serialisable: a request body can be a file path, which has no meaningful JSON form.
+    pub fn as_json(&self) -> Option<&serde_json::Value> {
+        match self {
+            Self::Json(value) => Some(value),
+            _ => None,
+        }
+    }
+
+    /// The body as text, when it is text, bytes or JSON.
+    pub fn as_text(&self) -> Option<String> {
+        match self {
+            Self::None => Some(String::new()),
+            Self::Text(text) => Some(text.clone()),
+            Self::Bytes(bytes) => Some(String::from_utf8_lossy(bytes).to_string()),
+            Self::Json(value) => serde_json::to_string(value).ok(),
+            Self::File { .. } => None,
+        }
+    }
 }
 
 /// A pending HTTP request.

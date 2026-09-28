@@ -72,12 +72,18 @@ pub enum VeloctError {
     #[error("preview process error: {0}")]
     Preview(String),
 
-    #[error("{provider}: {message}")]
+    // The classification code is part of the message on purpose. It is the difference between a
+    // timeout and a bad model name, and a caller that only sees the Display form needs it to decide
+    // what to do next.
+    #[error("AI provider error {code} ({provider}): {message}")]
     AiProvider {
         provider: String,
         code: String,
         message: String,
         retryable: bool,
+        /// The HTTP status, when the provider returned one. Carried as a field rather than parsed
+        /// back out of the message, so a UI can show "429" without string matching.
+        status: Option<u16>,
     },
 
     #[error("AI request cancelled by the user")]
