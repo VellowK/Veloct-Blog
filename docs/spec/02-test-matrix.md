@@ -82,14 +82,14 @@ Legend: **P** = planned, **I** = implemented, **F** = failing (regression).
 | E1 | SQLite index can be dropped and rebuilt identically from Markdown | `storage::index_rebuild_is_identical` | veloct-storage | P |
 | E2 | `id` survives a `slug` change and the file does not move | `content::slug_change_keeps_id` | veloct-content | P |
 | E3 | External disk modification is detected by hash, never silently overwritten | `content::external_change_detected` | veloct-content | P |
-| E4 | Duplicate paragraph id produces a build error, not a guess | `markdown::duplicate_paragraph_id_fails` | veloct-markdown | P |
-| E5 | Missing reference id keeps a broken state | `markdown::broken_reference_stays_broken` | veloct-markdown | P |
-| E6 | Paragraph ids are invisible in rendered HTML | `markdown::paragraph_ids_invisible` | veloct-markdown | P |
-| E7 | Editing paragraph text preserves its id | `markdown::text_edit_keeps_id` | veloct-markdown | P |
-| E8 | Harvard-style reference list contains every referenced knowledge entry | `markdown::reference_list_complete` | veloct-markdown | P |
+| E4 | Duplicate paragraph id produces a build error, not a guess | `markdown::duplicate_paragraph_id_fails` | veloct-markdown | **I** |
+| E5 | Missing reference id keeps a broken state | `markdown::broken_reference_stays_broken` | veloct-markdown | **I** |
+| E6 | Paragraph ids are invisible in rendered HTML | `markdown::paragraph_ids_invisible` | veloct-markdown | **I** |
+| E7 | Editing paragraph text preserves its id | `markdown::text_edit_keeps_id` | veloct-markdown | **I** |
+| E8 | Harvard-style reference list contains every referenced knowledge entry | `markdown::reference_list_complete` | veloct-markdown | **I** |
 | E9 | Autosave never creates a Git commit | `git::autosave_no_commit` | veloct-git | P |
 | E10 | Unresolved merge conflicts block publishing | `git::conflict_blocks_publish` | veloct-git | P |
-| E11 | Word count / reading time are computed and stored | `markdown::word_count_and_reading_time` | veloct-markdown | P |
+| E11 | Word count / reading time are computed and stored | `markdown::word_count_and_reading_time` | veloct-markdown | **I** |
 | E12 | Work import (zip + folder) produces `work.json` + `site/` truth | `work::import_zip_and_folder` | veloct-content | P |
 | E13 | Works route set is derived from `work.json`, not from the DB as truth | `work::routes_from_truth` | veloct-release | P |
 
@@ -158,16 +158,22 @@ a live endpoint stays marked `UNVERIFIED` in the matrix and in the UI.
 |---|---|---|
 | 2026-09-28 · foundation | `powershell -ExecutionPolicy Bypass -File scripts/cargo.ps1 test --workspace --exclude veloct-desktop` | **67 passed, 0 failed** (58 in `veloct-core`, 9 in `veloct-app`) |
 | 2026-09-28 · shell | `powershell -ExecutionPolicy Bypass -File scripts/cargo.ps1 check -p veloct-desktop` | exit 0 |
+| 2026-09-28 · markdown | `powershell -ExecutionPolicy Bypass -File scripts/cargo.ps1 test --workspace --exclude veloct-desktop` | **172 passed, 0 failed** (58 `veloct-core`, 9 `veloct-app`, 105 `veloct-markdown`) |
+| 2026-09-28 · lints | `powershell -ExecutionPolicy Bypass -File scripts/cargo.ps1 clippy --workspace --exclude veloct-desktop --all-targets` | no warnings |
 
-Rows already at **I** as a direct result of that run (the tests live in
-`crates/veloct-core/src/{lock,secret,workdir,paths,http}.rs` and
-`crates/veloct-app/src/{error,project}.rs`):
+Rows at **I** as a result of these runs:
 
 | Row | Test |
 |---|---|
 | C8 | `secret::pattern_layer_catches_provider_keys`, `secret::known_value_layer_catches_arbitrary_secrets`, `secret::redact_json_keeps_credential_refs_but_removes_values`, `http::error_for_status_redacts_credentials_from_the_body`, `http::urls_are_redacted_before_logging` |
 | D4 | `lock::a_second_publish_cannot_start` |
 | D5 | `lock::restore_blocks_competing_autosave`, `lock::shared_operations_block_a_later_publish`, `app::shared_lock_mode_permits_concurrent_readers` |
+| E4 | `parse::duplicate_paragraph_ids_are_reported_as_errors`, `references::duplicate_paragraph_ids_in_one_document_are_errors` |
+| E5 | `references::a_reference_to_a_missing_paragraph_stays_broken_and_never_guesses`, `references::a_reference_to_an_unknown_document_reports_the_unknown_content_id`, `references::resolve_all_reports_every_broken_reference` |
+| E6 | `directives::paragraph_markers_are_read_and_removed_from_the_residual_body`, `directives::an_inline_marker_is_stripped_from_text_without_becoming_a_block_marker`, `parse::a_paragraph_marker_is_attached_to_the_paragraph_that_follows_it` |
+| E7 | `rewrite::assigning_ids_twice_adds_nothing_the_second_time`, `rewrite::replacing_a_paragraph_by_id_changes_only_that_paragraph`, `rewrite::replacing_a_paragraph_that_no_longer_exists_reports_that_it_was_not_found` |
+| E8 | `references::the_reference_list_contains_each_cited_entry_once_and_is_sorted`, `references::an_article_with_no_references_has_no_reference_section` |
+| E11 | `stats::stats_of_ast_counts_prose_and_headings_but_not_code`, `stats::stats_of_ast_includes_lists_and_tables`, `stats::counting_is_deterministic_for_the_same_input` |
 | — | `app::create_materialises_the_documented_scaffold`, `app::creating_over_an_existing_project_is_rejected`, `app::opening_a_foreign_directory_fails_instead_of_guessing`, `app::open_then_reopen_detects_the_project_and_updates_last_opened`, `app::creating_a_project_takes_an_exclusive_lock_against_publish` |
 
 Everything else remains **P**: the owning workstream has to land the test and record its command
