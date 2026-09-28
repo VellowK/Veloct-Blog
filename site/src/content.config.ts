@@ -136,7 +136,9 @@ const pages = defineCollection({
 
 const knowledge = defineCollection({
   loader: glob({
-    base: contentBase('knowledge'),
+    // `content/knowledge`, the layout docs/spec/01-data-model.md section 1 fixes and the same place
+    // `veloct-content` writes to, so the editor and the build cannot disagree about the truth source.
+    base: contentBase('content/knowledge'),
     pattern: '**/*.md',
     generateId: stableId,
   }),

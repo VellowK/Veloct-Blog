@@ -80,8 +80,8 @@ Legend: **P** = planned, **I** = implemented, **F** = failing (regression).
 | # | Clause | Test id | Crate | State |
 |---|---|---|---|---|
 | E1 | SQLite index can be dropped and rebuilt identically from Markdown | `storage::index_rebuild_is_identical` | veloct-storage | **I** |
-| E2 | `id` survives a `slug` change and the file does not move | `content::slug_change_keeps_id` | veloct-content | P |
-| E3 | External disk modification is detected by hash, never silently overwritten | `content::external_change_detected` | veloct-content | P |
+| E2 | `id` survives a `slug` change and the file does not move | `lifecycle::a_transition_preserves_the_stable_id_and_the_slug`, `service::renaming_a_slug_does_not_move_the_file_or_change_the_id`, `works::metadata::the_site_directory_is_derived_from_the_id_and_not_the_slug` | veloct-content | **I** |
+| E3 | External disk modification is detected by hash, never silently overwritten | `service::saving_after_an_external_edit_is_refused_and_returns_the_disk_text`, `service::a_transition_respects_an_external_edit`, `model::an_invalid_range_is_an_error_not_a_fallback_to_replacing_everything` | veloct-content | **I** |
 | E4 | Duplicate paragraph id produces a build error, not a guess | `markdown::duplicate_paragraph_id_fails` | veloct-markdown | **I** |
 | E5 | Missing reference id keeps a broken state | `markdown::broken_reference_stays_broken` | veloct-markdown | **I** |
 | E6 | Paragraph ids are invisible in rendered HTML | `markdown::paragraph_ids_invisible` | veloct-markdown | **I** |
@@ -90,8 +90,8 @@ Legend: **P** = planned, **I** = implemented, **F** = failing (regression).
 | E9 | Autosave never creates a Git commit | `git::autosave_no_commit` | veloct-git | **I** |
 | E10 | Unresolved merge conflicts block publishing | `git::conflict_blocks_publish` | veloct-git | **I** |
 | E11 | Word count / reading time are computed and stored | `markdown::word_count_and_reading_time` | veloct-markdown | **I** |
-| E12 | Work import (zip + folder) produces `work.json` + `site/` truth | `work::import_zip_and_folder` | veloct-content | P |
-| E13 | Works route set is derived from `work.json`, not from the DB as truth | `work::routes_from_truth` | veloct-release | P |
+| E12 | Work import (zip + folder) produces `work.json` + `site/` truth | `works::import::importing_a_folder_copies_the_body_and_writes_the_metadata`, `works::import::importing_a_zip_strips_the_wrapper_directory`, `works::import::exporting_produces_an_archive_that_re_imports_identically`, `works::import::the_metadata_is_written_after_the_body_so_a_half_copy_is_not_listed` | veloct-content | **I** |
+| E13 | Works route set is derived from `work.json`, not from the DB as truth | `site/scripts/verify-build.mjs`: `the work body is emitted into dist/works/<slug>/`, `the works shell page IS part of the main site`, `a frozen works manifest is written` — the integration reads `works/<stable-id>/work.json` and the sibling `site/` directly, with no database involved | veloct-release + site | **I** |
 
 ## F. Process / preview lifecycle — handoff §5.3, §20.4
 
@@ -164,7 +164,7 @@ a live endpoint stays marked `UNVERIFIED` in the matrix and in the UI.
 | 2026-09-28 · release | `powershell -ExecutionPolicy Bypass -File scripts/cargo.ps1 test --workspace --exclude veloct-desktop` | **279 passed, 0 failed** (58 `veloct-core`, 9 `veloct-app`, 110 `veloct-markdown`, 38 `veloct-storage`, 24 `veloct-git`, 40 `veloct-release`) |
 | 2026-09-28 · lints | `powershell -ExecutionPolicy Bypass -File scripts/cargo.ps1 clippy --workspace --exclude veloct-desktop --all-targets` | no warnings |
 | 2026-09-28 · site build | `npm.cmd run build` in `site/` then `node scripts/verify-build.mjs` | exit 0; **41/41 build checks passed** |
-| 2026-09-28 · workspace | `powershell -ExecutionPolicy Bypass -File scripts/cargo.ps1 test --workspace --exclude veloct-desktop` | **488 passed, 0 failed** (88 `veloct-ai`, 9 `veloct-app`, **96 `veloct-content`**, 58 `veloct-core`, 24 `veloct-git`, 110 `veloct-markdown`, 25 `veloct-process`, 40 `veloct-release`, 38 `veloct-storage`) |
+| 2026-09-28 · workspace | `powershell -ExecutionPolicy Bypass -File scripts/cargo.ps1 test --workspace --exclude veloct-desktop` | **536 passed, 0 failed** (88 `veloct-ai`, 9 `veloct-app`, **144 `veloct-content`**, 58 `veloct-core`, 24 `veloct-git`, 110 `veloct-markdown`, 25 `veloct-process`, 40 `veloct-release`, 38 `veloct-storage`) |
 
 Rows at **I** as a result of these runs:
 

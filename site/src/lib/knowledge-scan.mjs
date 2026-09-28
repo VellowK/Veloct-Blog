@@ -237,11 +237,18 @@ export function writeKnowledgeIndex({ knowledgeDir, outputPath }) {
   return { payload, diagnostics };
 }
 
-/** The default paths, relative to a site directory. */
+/**
+ * The default paths, relative to a site directory.
+ *
+ * Knowledge lives under `content/knowledge`, which is the layout `docs/spec/01-data-model.md` §1
+ * fixes and what `veloct-content` writes to. Reading a top-level `knowledge/` here would mean the
+ * editor and the build disagreed about where the truth source is — the failure
+ * `handoff.md` §3.4 exists to prevent.
+ */
 export function defaultPaths(siteDir) {
   const projectRoot = resolve(siteDir, '..');
   return {
-    knowledgeDir: resolve(projectRoot, 'knowledge'),
+    knowledgeDir: resolve(projectRoot, 'content', 'knowledge'),
     outputPath: resolve(siteDir, '.veloct-generated', 'knowledge-index.json'),
   };
 }

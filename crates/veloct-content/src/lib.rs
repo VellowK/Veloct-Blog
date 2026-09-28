@@ -24,6 +24,7 @@ pub mod model;
 pub mod paragraphs;
 pub mod service;
 pub mod store;
+pub mod works;
 
 pub use index::{ContentIndex, IndexEntry, IndexIssue, IssueSeverity};
 pub use lifecycle::{FinishWipOutcome, WipTransition};
@@ -34,3 +35,8 @@ pub use model::{
 pub use paragraphs::{excerpt, extract_paragraphs, ExtractedParagraph};
 pub use service::{ContentService, CreateOptions, ReferenceRepair, RibbonEntry};
 pub use store::{list_documents, read_document, write_document, DocumentPath};
+pub use works::{
+    detect_entry, export_work, import_from_directory, import_from_zip, import_work, list_works,
+    plan_import, read_work, write_work, ImportOptions, ImportOutcome, ImportPlan, ImportSource,
+    SizeWarning, SlugCollision, WorkMetadata, WorkRecord, WorkSource, WorkSourceKind, WORK_JSON,
+};
