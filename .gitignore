@@ -35,5 +35,8 @@ desktop.ini
 *.tmp
 *.part
 
+# Scratch commit-message files written while composing a commit.
+/commit-msg*.txt
+
 # --- temporary experiment left over from diagnosing Cargo registry access ---
 /.cargo/

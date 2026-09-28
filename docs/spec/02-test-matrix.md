@@ -87,8 +87,8 @@ Legend: **P** = planned, **I** = implemented, **F** = failing (regression).
 | E6 | Paragraph ids are invisible in rendered HTML | `markdown::paragraph_ids_invisible` | veloct-markdown | **I** |
 | E7 | Editing paragraph text preserves its id | `markdown::text_edit_keeps_id` | veloct-markdown | **I** |
 | E8 | Harvard-style reference list contains every referenced knowledge entry | `markdown::reference_list_complete` | veloct-markdown | **I** |
-| E9 | Autosave never creates a Git commit | `git::autosave_no_commit` | veloct-git | P |
-| E10 | Unresolved merge conflicts block publishing | `git::conflict_blocks_publish` | veloct-git | P |
+| E9 | Autosave never creates a Git commit | `git::autosave_no_commit` | veloct-git | **I** |
+| E10 | Unresolved merge conflicts block publishing | `git::conflict_blocks_publish` | veloct-git | **I** |
 | E11 | Word count / reading time are computed and stored | `markdown::word_count_and_reading_time` | veloct-markdown | **I** |
 | E12 | Work import (zip + folder) produces `work.json` + `site/` truth | `work::import_zip_and_folder` | veloct-content | P |
 | E13 | Works route set is derived from `work.json`, not from the DB as truth | `work::routes_from_truth` | veloct-release | P |
@@ -160,6 +160,7 @@ a live endpoint stays marked `UNVERIFIED` in the matrix and in the UI.
 | 2026-09-28 · shell | `powershell -ExecutionPolicy Bypass -File scripts/cargo.ps1 check -p veloct-desktop` | exit 0 |
 | 2026-09-28 · markdown | `powershell -ExecutionPolicy Bypass -File scripts/cargo.ps1 test --workspace --exclude veloct-desktop` | **177 passed, 0 failed** (58 `veloct-core`, 9 `veloct-app`, 110 `veloct-markdown`) |
 | 2026-09-28 · storage | `powershell -ExecutionPolicy Bypass -File scripts/cargo.ps1 test --workspace --exclude veloct-desktop` | **215 passed, 0 failed** (58 `veloct-core`, 9 `veloct-app`, 110 `veloct-markdown`, 38 `veloct-storage`) |
+| 2026-09-28 · git | `powershell -ExecutionPolicy Bypass -File scripts/cargo.ps1 test --workspace --exclude veloct-desktop` | **239 passed, 0 failed** (58 `veloct-core`, 9 `veloct-app`, 110 `veloct-markdown`, 38 `veloct-storage`, 24 `veloct-git`) |
 | 2026-09-28 · lints | `powershell -ExecutionPolicy Bypass -File scripts/cargo.ps1 clippy --workspace --exclude veloct-desktop --all-targets` | no warnings |
 
 Rows at **I** as a result of these runs:
@@ -174,7 +175,12 @@ Rows at **I** as a result of these runs:
 | E6 | `directives::paragraph_markers_are_read_and_removed_from_the_residual_body`, `directives::an_inline_marker_is_stripped_from_text_without_becoming_a_block_marker`, `parse::a_paragraph_marker_is_attached_to_the_paragraph_that_follows_it` |
 | E7 | `rewrite::assigning_ids_twice_adds_nothing_the_second_time`, `rewrite::replacing_a_paragraph_by_id_changes_only_that_paragraph`, `rewrite::replacing_a_paragraph_that_no_longer_exists_reports_that_it_was_not_found` |
 | E8 | `references::the_reference_list_contains_each_cited_entry_once_and_is_sorted`, `references::an_article_with_no_references_has_no_reference_section` |
-| E11 | `stats::stats_of_ast_counts_prose_and_headings_but_not_code`, `stats::stats_of_ast_includes_lists_and_tables`, `stats::counting_is_deterministic_for_the_same_input` |
+| E11 | Word count / reading time are computed and stored | `stats::stats_of_ast_counts_prose_and_headings_but_not_code`, `stats::stats_of_ast_includes_lists_and_tables`, `stats::counting_is_deterministic_for_the_same_input` |
+| E9 | `publish::publishing_with_no_change_creates_no_commit`, `publish::the_nothing_to_commit_path_leaves_the_index_and_tree_alone` |
+| E10 | `publish::a_publish_refuses_to_commit_with_an_unresolved_conflict`, `change::a_merge_conflict_is_detected_and_names_the_files` |
+| A7 | covered by the same two E9 tests: a publish with no change returns `NoChange` and the branch does not grow |
+| A1 | `publish::the_release_tag_points_at_the_publish_commit`, `publish::a_release_id_cannot_be_reused_for_a_different_commit` |
+| A3 | `publish::a_tag_can_be_created_at_an_older_commit_for_a_resend`, `publish::a_historical_worktree_can_be_created_for_a_rebuild` |
 | — | `app::create_materialises_the_documented_scaffold`, `app::creating_over_an_existing_project_is_rejected`, `app::opening_a_foreign_directory_fails_instead_of_guessing`, `app::open_then_reopen_detects_the_project_and_updates_last_opened`, `app::creating_a_project_takes_an_exclusive_lock_against_publish` |
 
 Everything else remains **P**: the owning workstream has to land the test and record its command
