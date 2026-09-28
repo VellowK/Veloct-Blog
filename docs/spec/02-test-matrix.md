@@ -164,7 +164,7 @@ a live endpoint stays marked `UNVERIFIED` in the matrix and in the UI.
 | 2026-09-28 · release | `powershell -ExecutionPolicy Bypass -File scripts/cargo.ps1 test --workspace --exclude veloct-desktop` | **279 passed, 0 failed** (58 `veloct-core`, 9 `veloct-app`, 110 `veloct-markdown`, 38 `veloct-storage`, 24 `veloct-git`, 40 `veloct-release`) |
 | 2026-09-28 · lints | `powershell -ExecutionPolicy Bypass -File scripts/cargo.ps1 clippy --workspace --exclude veloct-desktop --all-targets` | no warnings |
 | 2026-09-28 · site build | `npm.cmd run build` in `site/` then `node scripts/verify-build.mjs` | exit 0; **41/41 build checks passed** |
-| 2026-09-28 · workspace | `powershell -ExecutionPolicy Bypass -File scripts/cargo.ps1 test --workspace --exclude veloct-desktop` | **466 passed, 0 failed** (88 `veloct-ai`, 9 `veloct-app`, **96 `veloct-content`**, 58 `veloct-core`, 24 `veloct-git`, 110 `veloct-markdown`, 25 `veloct-process`, 40 `veloct-release`, 38 `veloct-storage`) |
+| 2026-09-28 · workspace | `powershell -ExecutionPolicy Bypass -File scripts/cargo.ps1 test --workspace --exclude veloct-desktop` | **488 passed, 0 failed** (88 `veloct-ai`, 9 `veloct-app`, **96 `veloct-content`**, 58 `veloct-core`, 24 `veloct-git`, 110 `veloct-markdown`, 25 `veloct-process`, 40 `veloct-release`, 38 `veloct-storage`) |
 
 Rows at **I** as a result of these runs:
 
