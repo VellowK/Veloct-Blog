@@ -158,7 +158,7 @@ a live endpoint stays marked `UNVERIFIED` in the matrix and in the UI.
 |---|---|---|
 | 2026-09-28 · foundation | `powershell -ExecutionPolicy Bypass -File scripts/cargo.ps1 test --workspace --exclude veloct-desktop` | **67 passed, 0 failed** (58 in `veloct-core`, 9 in `veloct-app`) |
 | 2026-09-28 · shell | `powershell -ExecutionPolicy Bypass -File scripts/cargo.ps1 check -p veloct-desktop` | exit 0 |
-| 2026-09-28 · markdown | `powershell -ExecutionPolicy Bypass -File scripts/cargo.ps1 test --workspace --exclude veloct-desktop` | **172 passed, 0 failed** (58 `veloct-core`, 9 `veloct-app`, 105 `veloct-markdown`) |
+| 2026-09-28 · markdown | `powershell -ExecutionPolicy Bypass -File scripts/cargo.ps1 test --workspace --exclude veloct-desktop` | **177 passed, 0 failed** (58 `veloct-core`, 9 `veloct-app`, 110 `veloct-markdown`) |
 | 2026-09-28 · lints | `powershell -ExecutionPolicy Bypass -File scripts/cargo.ps1 clippy --workspace --exclude veloct-desktop --all-targets` | no warnings |
 
 Rows at **I** as a result of these runs:

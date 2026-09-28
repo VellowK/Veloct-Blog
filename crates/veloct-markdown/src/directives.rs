@@ -165,6 +165,11 @@ pub struct Scan {
     pub lines: Vec<ScannedLine>,
     pub directives: Vec<Directive>,
     /// Body text with directive blocks and marker lines removed, ready for a CommonMark parser.
+    ///
+    /// The residual is shorter than the body by however many directive and marker lines were
+    /// removed, so the two line numberings diverge. A caller that needs to map a parse position
+    /// back to a source line must recompute which lines were kept, exactly as `veloct-markdown`'s
+    /// `residual_sources` helper does, and a test asserts the two agree.
     pub residual: String,
     pub diagnostics: Vec<Diagnostic>,
 }

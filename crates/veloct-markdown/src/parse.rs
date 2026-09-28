@@ -193,18 +193,23 @@ fn parse_body_with_offset(
     // 2. Build a byte-offset → original-line map over the residual text, so a diagnostic or a
     //    `SourceSpan` always refers to a line in the original file.
     //
-    //    Each residual line keeps its own embedded newlines, exactly as the scanner stored it, so
-    //    the residual text is the concatenation of the line raws. Advancing the source line by
-    //    the number of newlines in each raw keeps the two in step.
-    let mut line_starts: Vec<usize> = Vec::with_capacity(scan.lines.len());
-    let mut line_numbers: Vec<usize> = Vec::with_capacity(scan.lines.len());
-    let mut offset = 0usize;
-    let mut source_line = first_line;
-    for line in scan.lines.iter() {
-        line_starts.push(offset);
-        line_numbers.push(source_line);
-        offset += line.raw.len() + 1; // + the '\n' the residual adds
-        source_line += line.raw.split('\n').count();
+    //    The map must be built from the lines that were actually emitted: directive blocks and
+    //    marker lines are *dropped* from the residual, so deriving offsets from the body's own line
+    //    numbering would drift by however many lines were removed. `directives::scan` already
+    //    reports exactly which body lines produced residual lines, so its own residual is used
+    //    directly and the offsets are accumulated over those lines only.
+    let residual = &scan.residual;
+    let emitted = residual_sources(&scan);
+    let mut line_starts: Vec<usize> = Vec::with_capacity(emitted.len());
+    let mut line_numbers: Vec<usize> = Vec::with_capacity(emitted.len());
+    {
+        let mut offset = 0usize;
+        for index in emitted {
+            let line = &scan.lines[index];
+            line_starts.push(offset);
+            line_numbers.push(line.number + first_line - 1);
+            offset += line.raw.len() + 1;
+        }
     }
 
     let line_of = |byte_offset: usize| -> usize {
@@ -226,17 +231,21 @@ fn parse_body_with_offset(
     options.insert(Options::ENABLE_STRIKETHROUGH);
     options.insert(Options::ENABLE_TASKLISTS);
 
-    let parser = Parser::new_ext(&scan.residual, options);
+    let parser = Parser::new_ext(residual, options);
     let built = build_ast(parser, &line_of);
 
-    // 4. Attach paragraph ids: block markers in document order, then any inline markers found
+    // 4. Directives are scanned out of the body before CommonMark runs, so they have to be merged
+    //    back into the AST at their source position. Without this an article's `knowledgeref`
+    //    directives would never reach reference resolution.
+    let mut nodes = merge_directives(built.nodes, &scan.directives, first_line);
+
+    // 5. Attach paragraph ids: block markers in document order, then any inline markers found
     //    inside paragraphs. A marker belongs to the paragraph that follows it.
     let mut markers: Vec<ParagraphId> = scan
         .lines
         .iter()
         .filter_map(|line| line.paragraph_marker)
         .collect();
-    let mut nodes = built.nodes;
 
     let mut inline_markers = built.inline_markers;
     inline_markers.reverse();
@@ -336,8 +345,92 @@ fn assign_markers(
     }
 }
 
+/// Which scanned lines produced a line in the residual body.
+///
+/// This re-derives the same skipping rules `directives::scan` applies, and is asserted against the
+/// scanner's own record in the tests so the two cannot silently diverge. It exists so the residual
+/// offset map is built from the lines that are really there.
+fn residual_sources(scan: &directives::Scan) -> Vec<usize> {
+    let mut out = Vec::with_capacity(scan.lines.len());
+    for (index, line) in scan.lines.iter().enumerate() {
+        let skipped_as_marker = line.paragraph_marker.is_some() && line.eligible_for_construct();
+        let skipped_as_directive = scan.directives.iter().any(|directive| {
+            let start = directive.start_line - 1;
+            let end = directive.end_line - 1;
+            index >= start && index <= end
+        });
+        if !skipped_as_marker && !skipped_as_directive {
+            out.push(index);
+        }
+    }
+    out
+}
+
 fn marker_at(markers: &[ParagraphId], index: usize) -> Option<ParagraphId> {
     markers.get(index).copied()
+}
+
+/// Insert scanned directives into the AST at the position their source line implies.
+///
+/// Directives never come from the CommonMark walk, because the scanner removes them from the
+/// residual body. Merging by source line keeps document order intact, which matters because the
+/// article's reference list and the reference cards must appear where the author wrote them.
+///
+/// The scanner reports directive lines relative to the body, so `first_line` translates them into
+/// file lines: every other node's span is already a file line, and mixing the two would make a
+/// diagnostic point at the wrong place.
+fn merge_directives(
+    nodes: Vec<DocNode>,
+    directives: &[directives::Directive],
+    first_line: usize,
+) -> Vec<DocNode> {
+    if directives.is_empty() {
+        return nodes;
+    }
+
+    let to_file_line = |body_line: usize| body_line + first_line - 1;
+
+    let mut pending: Vec<&directives::Directive> = directives.iter().collect();
+    pending.sort_by_key(|directive| directive.start_line);
+
+    let mut out: Vec<DocNode> = Vec::with_capacity(nodes.len() + pending.len());
+    let mut next = 0usize;
+
+    for node in nodes {
+        let node_line = node.span().start_line;
+        // A directive belongs before this node when it ends strictly above where the node starts.
+        // Comparing against the directive's *end* line is what stops a directive from jumping ahead
+        // of the paragraph that follows it, because a directive always ends above the next block.
+        while next < pending.len() && to_file_line(pending[next].end_line) < node_line {
+            out.push(directive_node_at_file_line(pending[next], first_line));
+            next += 1;
+        }
+        out.push(node);
+    }
+    // Any directive that appears after the last block still belongs in the document.
+    while next < pending.len() {
+        out.push(directive_node_at_file_line(pending[next], first_line));
+        next += 1;
+    }
+
+    out
+}
+
+/// Convert a scanned directive into an AST node whose span is in file lines.
+fn directive_node_at_file_line(
+    directive: &directives::Directive,
+    first_line: usize,
+) -> DocNode {
+    let offset = first_line - 1;
+    DocNode::Directive {
+        kind: directive.name.clone(),
+        attributes: directive.attributes.clone(),
+        image_placeholder: directive.image_placeholder(),
+        span: SourceSpan::new(
+            directive.start_line + offset,
+            directive.end_line + offset,
+        ),
+    }
 }
 
 struct BuiltAst {
@@ -1122,6 +1215,66 @@ Second paragraph with **bold** and `code`.
     }
 
     #[test]
+    fn directives_are_merged_into_the_ast_in_source_order() {
+        // Without this merge an article's knowledge references never reach resolution, because the
+        // scanner removes them from the body before CommonMark runs.
+        let body = "Intro text.\n\n:::knowledgeref{content=\"01ABC\" paragraph=\"01DEF\"}\n:::\n\nAfter the card.\n\n::download{url=\"https://example.com/a.zip\"}\n";
+        let parsed = parse_body(body);
+
+        let shape: Vec<&str> = parsed
+            .ast
+            .nodes
+            .iter()
+            .map(|node| match node {
+                DocNode::Paragraph { .. } => "paragraph",
+                DocNode::Directive { .. } => "directive",
+                _ => "other",
+            })
+            .collect();
+        assert_eq!(
+            shape,
+            vec!["paragraph", "directive", "paragraph", "directive"],
+            "{:#?}",
+            parsed.ast.nodes
+        );
+
+        let directives = parsed.ast.directives();
+        assert_eq!(directives.len(), 2);
+        assert_eq!(directives[0].as_directive().unwrap().0, "knowledgeref");
+        assert_eq!(directives[1].as_directive().unwrap().0, "download");
+    }
+
+    #[test]
+    fn a_container_directive_keeps_its_source_span() {
+        let body = "Before.\n\n:::card{title=\"x\"}\nbody\n:::\n\nAfter.\n";
+        let parsed = parse_body(body);
+        let directive = parsed.ast.directives()[0];
+        let span = directive.span();
+        assert_eq!(span.start_line, 3);
+        assert_eq!(span.end_line, 5);
+    }
+
+    #[test]
+    fn an_image_directive_reaches_the_ast_as_a_placeholder() {
+        // handoff 8.1: the page-creating model emits placeholders, never image files.
+        let parsed = parse_body(":::image{alt=\"cover\" width=\"1200\"}\n:::\n");
+        let directive = parsed.ast.directives()[0];
+        match directive {
+            DocNode::Directive {
+                kind,
+                image_placeholder,
+                ..
+            } => {
+                assert_eq!(kind, "image");
+                let placeholder = image_placeholder.as_deref().unwrap();
+                assert!(placeholder.contains("cover"), "{placeholder}");
+                assert!(placeholder.contains("1200"), "{placeholder}");
+            }
+            other => panic!("expected a directive node, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn body_start_line_offsets_are_reported_for_diagnostics() {
         let body = "Line one.\n\n:::mycustom\nbody\n:::\n";
         let (_, extracted, start) =
@@ -1152,5 +1305,58 @@ Second paragraph with **bold** and `code`.
         let parsed = parse_body("## Only a heading\n");
         assert!(parsed.ast.paragraphs().is_empty());
         assert_eq!(parsed.ast.headings().len(), 1);
+    }
+
+    #[test]
+    fn the_residual_source_map_agrees_with_the_scanner() {
+        // The offset map is derived independently of the scanner, so if the two ever disagree a
+        // `SourceSpan` would silently point at the wrong source line. This test pins them together
+        // by reconstructing the residual from the computed source list.
+        let body = "Intro.\n\n:::knowledgeref{content=\"01ABC\" paragraph=\"01DEF\"}\n:::\n\nAfter.\n\n::download{url=\"https://example.com/a.zip\"}\n\nTail.\n";
+        let scanned = directives::scan(body);
+        let sources = residual_sources(&scanned);
+
+        let mut rebuilt = String::new();
+        for index in &sources {
+            rebuilt.push_str(&scanned.lines[*index].raw);
+            rebuilt.push('\n');
+        }
+        assert_eq!(rebuilt, scanned.residual);
+
+        // And every skipped line really is a directive or a marker line.
+        let skipped: Vec<usize> = (0..scanned.lines.len())
+            .filter(|index| !sources.contains(index))
+            .collect();
+        assert!(!skipped.is_empty(), "the fixture must actually skip something");
+        for index in skipped {
+            let line = &scanned.lines[index];
+            let is_marker = line.paragraph_marker.is_some() && line.eligible_for_construct();
+            // `ScannedLine::number` equals the index plus one, so compare line numbers directly
+            // rather than shifting the directive's 1-based range.
+            let is_directive = scanned
+                .directives
+                .iter()
+                .any(|directive| directive.start_line <= line.number && line.number <= directive.end_line);
+            assert!(
+                is_marker || is_directive,
+                "line {index} was skipped but is neither: {:?}",
+                line.raw
+            );
+        }
+    }
+
+    #[test]
+    fn source_spans_point_at_the_right_file_lines() {
+        // Body starts at file line 8 because of the seven frontmatter lines and the delimiter.
+        let source = "---\nid: 01J8Z5Q0K3W7M9V2B4N6P8R1TY\ntype: article\nslug: spans\ntitle: Spans\ncreated_at: 2026-01-01T00:00:00Z\nupdated_at: 2026-01-01T00:00:00Z\n---\n\nFirst.\n\n:::card{title=\"x\"}\nbody\n:::\n\nSecond.\n";
+        let document = parse(source).unwrap();
+        let lines: Vec<usize> = document
+            .ast
+            .nodes
+            .iter()
+            .map(|node| node.span().start_line)
+            .collect();
+        // `First.`, the directive, then `Second.`
+        assert_eq!(lines, vec![10, 12, 16], "{:#?}", document.ast.nodes);
     }
 }
