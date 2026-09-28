@@ -11,20 +11,20 @@ Legend: **P** = planned, **I** = implemented, **F** = failing (regression).
 
 | # | Clause | Test id | Crate / path | State |
 |---|---|---|---|---|
-| A1 | Release tag unique and always points at its publish commit | `release::tag_points_at_commit` | veloct-release | P |
-| A2 | All sub-targets of one Release receive an identical build fingerprint | `release::fingerprint_shared_across_subtargets` | veloct-release | P |
-| A3 | Re-publishing a failed sub-target never mixes in later working-tree changes | `release::resend_uses_original_commit` | veloct-release | P |
-| A4 | Rebuilding a historical Release never reads current SQLite config | `release::rebuild_ignores_current_db` | veloct-release | P |
-| A5 | Two rebuilds of one Release produce the same fingerprint | `release::double_rebuild_fingerprint_stable` | veloct-release | P |
-| A6 | Normalised route/page/asset/sitemap/RSS/WIP/Works manifests compare stably | `release::normalised_manifest_equal` | veloct-release | P |
-| A7 | No content change ⇒ publish creates no empty commit | `release::no_change_no_commit` | veloct-git | P |
+| A1 | Release tag unique and always points at its publish commit | `release::tag_points_at_commit` | veloct-release | **I** |
+| A2 | All sub-targets of one Release receive an identical build fingerprint | `release::fingerprint_shared_across_subtargets` | veloct-release | **I** |
+| A3 | Re-publishing a failed sub-target never mixes in later working-tree changes | `release::resend_uses_original_commit` | veloct-release | **I** |
+| A4 | Rebuilding a historical Release never reads current SQLite config | `release::rebuild_ignores_current_db` | veloct-release | **I** |
+| A5 | Two rebuilds of one Release produce the same fingerprint | `release::double_rebuild_fingerprint_stable` | veloct-release | **I** |
+| A6 | Normalised route/page/asset/sitemap/RSS/WIP/Works manifests compare stably | `release::normalised_manifest_equal` | veloct-release | **I** |
+| A7 | No content change ⇒ publish creates no empty commit | `release::no_change_no_commit` | veloct-git | **I** |
 | A8 | `wip_publish=false` never reaches `dist` | `wip::unpublished_wip_absent_from_dist` | veloct-release | P |
 | A9 | `wip_publish=true` produces `/wip/<stable-id>` | `wip::published_wip_route_emitted` | veloct-release | P |
 | A10 | A previously-public WIP, once finished, emits a permanent redirect to `/article/<slug>` | `wip::finished_wip_redirects` | veloct-release | P |
-| A11 | Works shell and Works origin share the same Release fingerprint | `release::works_and_site_same_fingerprint` | veloct-deploy | P |
-| A12 | `build_inputs_hash` excludes `commit_sha` | `release::inputs_hash_excludes_commit` | veloct-release | P |
-| A13 | `build_env_hash` hashes only allow-listed vars | `release::env_hash_whitelist_only` | veloct-release | P |
-| A14 | Only one `dist/` exists after repeated publishes | `release::single_dist_retained` | veloct-release | P |
+| A11 | Works shell and Works origin share the same Release fingerprint | `release::works_and_site_same_fingerprint` | veloct-deploy | **I** |
+| A12 | `build_inputs_hash` excludes `commit_sha` | `release::inputs_hash_excludes_commit` | veloct-release | **I** |
+| A13 | `build_env_hash` hashes only allow-listed vars | `release::env_hash_whitelist_only` | veloct-release | **I** |
+| A14 | Only one `dist/` exists after repeated publishes | `release::single_dist_retained` | veloct-release | **I** |
 
 ## B. Attachment consistency — handoff §24
 
@@ -161,6 +161,7 @@ a live endpoint stays marked `UNVERIFIED` in the matrix and in the UI.
 | 2026-09-28 · markdown | `powershell -ExecutionPolicy Bypass -File scripts/cargo.ps1 test --workspace --exclude veloct-desktop` | **177 passed, 0 failed** (58 `veloct-core`, 9 `veloct-app`, 110 `veloct-markdown`) |
 | 2026-09-28 · storage | `powershell -ExecutionPolicy Bypass -File scripts/cargo.ps1 test --workspace --exclude veloct-desktop` | **215 passed, 0 failed** (58 `veloct-core`, 9 `veloct-app`, 110 `veloct-markdown`, 38 `veloct-storage`) |
 | 2026-09-28 · git | `powershell -ExecutionPolicy Bypass -File scripts/cargo.ps1 test --workspace --exclude veloct-desktop` | **239 passed, 0 failed** (58 `veloct-core`, 9 `veloct-app`, 110 `veloct-markdown`, 38 `veloct-storage`, 24 `veloct-git`) |
+| 2026-09-28 · release | `powershell -ExecutionPolicy Bypass -File scripts/cargo.ps1 test --workspace --exclude veloct-desktop` | **279 passed, 0 failed** (58 `veloct-core`, 9 `veloct-app`, 110 `veloct-markdown`, 38 `veloct-storage`, 24 `veloct-git`, 40 `veloct-release`) |
 | 2026-09-28 · lints | `powershell -ExecutionPolicy Bypass -File scripts/cargo.ps1 clippy --workspace --exclude veloct-desktop --all-targets` | no warnings |
 
 Rows at **I** as a result of these runs:
@@ -181,6 +182,14 @@ Rows at **I** as a result of these runs:
 | A7 | covered by the same two E9 tests: a publish with no change returns `NoChange` and the branch does not grow |
 | A1 | `publish::the_release_tag_points_at_the_publish_commit`, `publish::a_release_id_cannot_be_reused_for_a_different_commit` |
 | A3 | `publish::a_tag_can_be_created_at_an_older_commit_for_a_resend`, `publish::a_historical_worktree_can_be_created_for_a_rebuild` |
+| A2, A11 | `pipeline::every_sub_target_of_one_release_receives_the_same_fingerprint` |
+| A4 | `pipeline::a_rebuild_reads_the_frozen_snapshot_and_not_current_configuration`, `pipeline::a_release_frozen_from_another_release_keeps_the_same_inputs_hash` |
+| A5 | `manifest::the_same_inputs_always_hash_the_same`, `pipeline::two_builds_of_one_release_produce_an_identical_normalised_manifest` |
+| A6 | `manifest::two_builds_of_one_release_have_no_differences`, `pipeline::a_build_that_varies_between_runs_is_detected` (the negative case, so the comparison can actually fail) |
+| A12 | `manifest::the_inputs_hash_excludes_the_commit_sha` |
+| A13 | `manifest::the_environment_hash_covers_only_the_allow_list` |
+| A14 | `pipeline::only_one_dist_is_kept_across_repeated_builds` |
+| — | `manifest::the_manifest_never_contains_its_own_commit_sha`, `pipeline::a_failed_build_is_reported_and_leaves_no_usable_dist`, `pipeline::a_runner_that_forgets_a_publish_root_is_rejected`, `pipeline::a_secret_in_the_configuration_is_redacted_before_it_reaches_disk`, `pipeline::the_frozen_site_template_is_used_for_a_rebuild`, `manifest::the_host_operating_system_does_not_affect_the_fingerprint` |
 | — | `app::create_materialises_the_documented_scaffold`, `app::creating_over_an_existing_project_is_rejected`, `app::opening_a_foreign_directory_fails_instead_of_guessing`, `app::open_then_reopen_detects_the_project_and_updates_last_opened`, `app::creating_a_project_takes_an_exclusive_lock_against_publish` |
 
 Everything else remains **P**: the owning workstream has to land the test and record its command
