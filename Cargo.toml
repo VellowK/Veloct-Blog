@@ -1,0 +1,126 @@
+[workspace]
+resolver = "2"
+members = [
+  "crates/veloct-core",
+  "crates/veloct-markdown",
+  "crates/veloct-storage",
+  "crates/veloct-content",
+  "crates/veloct-git",
+  "crates/veloct-process",
+  "crates/veloct-release",
+  "crates/veloct-deploy",
+  "crates/veloct-ai",
+  "crates/veloct-attach",
+  "crates/veloct-backup",
+  "crates/veloct-app",
+  "src-tauri",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+# Tauri 2.12's plugins declare rust_version = 1.90, so that is the floor for the workspace.
+rust-version = "1.90"
+license = "MIT"
+authors = ["Veloct"]
+
+[workspace.dependencies]
+# ---- internal crates ----
+veloct-core = { path = "crates/veloct-core" }
+veloct-markdown = { path = "crates/veloct-markdown" }
+veloct-storage = { path = "crates/veloct-storage" }
+veloct-content = { path = "crates/veloct-content" }
+veloct-git = { path = "crates/veloct-git" }
+veloct-process = { path = "crates/veloct-process" }
+veloct-release = { path = "crates/veloct-release" }
+veloct-deploy = { path = "crates/veloct-deploy" }
+veloct-ai = { path = "crates/veloct-ai" }
+veloct-attach = { path = "crates/veloct-attach" }
+veloct-backup = { path = "crates/veloct-backup" }
+veloct-app = { path = "crates/veloct-app" }
+
+# ---- serialization / errors / ids ----
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+thiserror = "2"
+ulid = { version = "1", features = ["serde"] }
+
+# ---- hashing / encoding / time / randomness ----
+sha2 = "0.10"
+hex = "0.4"
+time = { version = "0.3", features = ["formatting", "parsing", "macros", "serde"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+rand = "0.8"
+base64 = "0.22"
+
+# ---- concurrency / logging ----
+parking_lot = "0.12"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# ---- filesystem / process ----
+walkdir = "2"
+tempfile = "3"
+fs2 = "0.4"                    # cross-process advisory file locking
+zip = { version = "8", default-features = false, features = ["deflate"] }
+tar = "0.4"
+flate2 = "1"
+
+# ---- markdown ----
+pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
+regex = "1"
+
+# ---- storage ----
+# `bundled` compiles SQLite from source, so no system sqlite3.dll is required on Windows.
+rusqlite = { version = "0.40", features = ["bundled", "backup", "functions"] }
+rusqlite_migration = "2"
+
+# ---- git ----
+# No `https`/`ssh` features: on Windows/MSVC those pull in openssl-sys. Network git traffic,
+# if ever needed, goes through reqwest instead.
+git2 = { version = "0.21", default-features = false, features = ["vendored-libgit2"] }
+
+# ---- credentials (OS credential store; never a plaintext file) ----
+# keyring 4.x is a feature-gated facade over keyring-core; `v1` gives the platform-independent
+# Entry API and enables windows-native-keyring-store automatically on Windows.
+keyring = { version = "4", features = ["v1"] }
+
+# ---- http / cloud ----
+# `blocking` is used on purpose: Veloct's service layer is synchronous (Tauri commands run on
+# a worker thread), so a blocking client keeps cancellation and error handling simple and
+# avoids threading a runtime through every crate. Uploads stream; they do not buffer.
+reqwest = { version = "0.13", default-features = false, features = [
+  # reqwest 0.13 renamed the TLS features: it is `rustls` (not `rustls-tls`), plus an explicit
+  # certificate source. rustls avoids needing system OpenSSL on Windows.
+  "rustls",
+  "rustls-native-certs",
+  "webpki-roots",
+  "json",
+  "stream",
+  "multipart",
+  "blocking",
+] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "process"] }
+
+# ---- tauri ----
+# ALWAYS pin from crates.io `max_stable_version`: Tauri 3 is in alpha and `newest_version`
+# returns the prerelease.
+tauri = { version = "2.12", features = [] }
+tauri-build = { version = "2.7" }
+tauri-plugin-shell = "2.4"
+tauri-plugin-opener = "2.6"
+tauri-plugin-dialog = "2.8"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+# NOT panic = "abort": Tauri command handlers must be able to turn a panic into an error
+# response instead of taking the whole desktop app down with it.
+panic = "unwind"
+strip = true
+
+[profile.dev]
+# Dependencies are compiled once with optimisations; only our own code stays cheap to rebuild.
+opt-level = 0

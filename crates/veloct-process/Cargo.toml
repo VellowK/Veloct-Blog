@@ -1,0 +1,18 @@
+[package]
+name = "veloct-process"
+description = "Child-process supervision for the bundled Node/Astro sidecars"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+veloct-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+time = { workspace = true }
+parking_lot = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

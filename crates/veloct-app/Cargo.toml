@@ -1,0 +1,30 @@
+[package]
+name = "veloct-app"
+description = "Orchestration services, DTOs and Tauri command handlers"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+veloct-core = { workspace = true }
+veloct-markdown = { workspace = true }
+veloct-storage = { workspace = true }
+veloct-content = { workspace = true }
+veloct-git = { workspace = true }
+veloct-process = { workspace = true }
+veloct-release = { workspace = true }
+veloct-deploy = { workspace = true }
+veloct-ai = { workspace = true }
+veloct-attach = { workspace = true }
+veloct-backup = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+time = { workspace = true }
+tracing = { workspace = true }
+parking_lot = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+time = { workspace = true }

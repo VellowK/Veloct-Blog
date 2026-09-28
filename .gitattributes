@@ -1,0 +1,25 @@
+# Veloct is developed on Windows but its build inputs must hash identically anywhere.
+# `handoff.md` §14.9 requires a historical release to rebuild reproducibly, and the content
+# hash in `docs/spec/01-data-model.md` §3 is computed over normalised text. Normalising line
+# endings in the repository is what keeps a clone on another machine from looking modified.
+
+* text=auto eol=lf
+
+# Windows-only binary artefacts must never be line-ending-normalised.
+*.png binary
+*.ico binary
+*.webp binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.woff binary
+*.woff2 binary
+*.exe binary
+*.dll binary
+*.zip binary
+*.crate binary
+
+# Generated lockfiles are committed on purpose (a release freezes its lockfile hash) but should
+# not clutter diffs or be merged by hand.
+Cargo.lock -diff linguist-generated
+site/package-lock.json -diff linguist-generated

@@ -1,0 +1,22 @@
+[package]
+name = "veloct-deploy"
+description = "Logical deployment targets with main/works sub-targets, adapters and run records"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+veloct-core = { workspace = true }
+veloct-storage = { workspace = true }
+veloct-release = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+time = { workspace = true }
+walkdir = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

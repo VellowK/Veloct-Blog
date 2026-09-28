@@ -1,0 +1,17 @@
+[package]
+name = "veloct-git"
+description = "Git change detection, publish commits and release tags"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+veloct-core = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+git2 = { workspace = true }
+time = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

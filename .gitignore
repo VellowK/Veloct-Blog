@@ -1,0 +1,39 @@
+# --- Rust / Cargo ---
+/target/
+**/target/
+# Isolated Cargo home used because the user-level registry mirror is unreachable here.
+/.cargo-home/
+Cargo.lock.bak
+
+# --- Node / frontend ---
+node_modules/
+/site/node_modules/
+**/node_modules/
+/dist/
+/site/dist/
+/site/.astro/
+*.tsbuildinfo
+
+# --- Tauri build output ---
+/src-tauri/target/
+/src-tauri/gen/schemas/
+/src-tauri/binaries/*.exe
+
+# --- Veloct runtime artefacts (belong to a managed project, not to this repository) ---
+.attachments-cache/
+.veloct/logs/
+*.log
+
+# --- AgentTeams runtime state is not source ---
+/.agent-teams/
+
+# --- local editor / OS noise ---
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+*.tmp
+*.part
+
+# --- temporary experiment left over from diagnosing Cargo registry access ---
+/.cargo/

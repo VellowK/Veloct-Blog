@@ -1,0 +1,23 @@
+[package]
+name = "veloct-backup"
+description = "Consistent project snapshots, secret scanning, archive and cloud backup targets, restore"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+veloct-core = { workspace = true }
+veloct-git = { workspace = true }
+veloct-storage = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+time = { workspace = true }
+walkdir = { workspace = true }
+zip = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

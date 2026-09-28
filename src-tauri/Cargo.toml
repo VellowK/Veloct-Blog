@@ -1,0 +1,25 @@
+[package]
+name = "veloct-desktop"
+description = "Veloct desktop application shell (Tauri 2)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+# Tauri 2 expects a library target so mobile and desktop can share the app setup.
+name = "veloct_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { workspace = true }
+
+[dependencies]
+veloct-core = { workspace = true }
+veloct-app = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tauri = { workspace = true }
+tauri-plugin-shell = { workspace = true }
+tauri-plugin-opener = { workspace = true }
+tauri-plugin-dialog = { workspace = true }
