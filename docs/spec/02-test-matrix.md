@@ -67,8 +67,8 @@ Legend: **P** = planned, **I** = implemented, **F** = failing (regression).
 | D1 | Full restore leaves Git tags and Release metadata usable | `backup::full_restore_tags_intact` | veloct-backup | P |
 | D2 | Content-only restore marks the tree as changed but leaves Releases immutable | `backup::content_restore_marks_changed` | veloct-backup | P |
 | D3 | Editing during backup never yields a half-written file in the archive | `backup::snapshot_is_consistent` | veloct-backup | P |
-| D4 | Publish holds an exclusive lock; a second publish cannot start | `core::exclusive_lock_blocks_second_publish` | veloct-core | P |
-| D5 | Restore's exclusive lock blocks competing autosave/backup | `core::lock_blocks_competing_writers` | veloct-core | P |
+| D4 | Publish holds an exclusive lock; a second publish cannot start | `lock::a_second_publish_cannot_start` | veloct-core | **I** |
+| D5 | Restore's exclusive lock blocks competing autosave/backup | `lock::restore_blocks_competing_autosave`, `lock::shared_operations_block_a_later_publish`, `app::shared_lock_mode_permits_concurrent_readers` | veloct-core | **I** |
 | D6 | In-flight attachment uploads survive app close as recoverable state | `attach::close_leaves_recoverable_state` | veloct-attach | P |
 | D7 | Secret scan blocks silent upload and records the finding | `backup::secret_scan_blocks_upload` | veloct-backup | P |
 | D8 | Backup archives contain no secret value and no credential store data | `backup::archive_excludes_secrets` | veloct-backup | P |
@@ -164,7 +164,7 @@ a live endpoint stays marked `UNVERIFIED` in the matrix and in the UI.
 | 2026-09-28 · release | `powershell -ExecutionPolicy Bypass -File scripts/cargo.ps1 test --workspace --exclude veloct-desktop` | **279 passed, 0 failed** (58 `veloct-core`, 9 `veloct-app`, 110 `veloct-markdown`, 38 `veloct-storage`, 24 `veloct-git`, 40 `veloct-release`) |
 | 2026-09-28 · lints | `powershell -ExecutionPolicy Bypass -File scripts/cargo.ps1 clippy --workspace --exclude veloct-desktop --all-targets` | no warnings |
 | 2026-09-28 · site build | `npm.cmd run build` in `site/` then `node scripts/verify-build.mjs` | exit 0; **41/41 build checks passed** |
-| 2026-09-28 · workspace | `powershell -ExecutionPolicy Bypass -File scripts/cargo.ps1 test --workspace --exclude veloct-desktop` | **370 passed, 0 failed** (88 `veloct-ai`, 9 `veloct-app`, 58 `veloct-core`, 24 `veloct-git`, 110 `veloct-markdown`, 25 `veloct-process`, 40 `veloct-release`, 38 `veloct-storage`) |
+| 2026-09-28 · workspace | `powershell -ExecutionPolicy Bypass -File scripts/cargo.ps1 test --workspace --exclude veloct-desktop` | **466 passed, 0 failed** (88 `veloct-ai`, 9 `veloct-app`, **96 `veloct-content`**, 58 `veloct-core`, 24 `veloct-git`, 110 `veloct-markdown`, 25 `veloct-process`, 40 `veloct-release`, 38 `veloct-storage`) |
 
 Rows at **I** as a result of these runs:
 

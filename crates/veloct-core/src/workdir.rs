@@ -13,10 +13,12 @@ use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
+use serde::{Deserialize, Serialize};
+
 use crate::error::{Result, VeloctError};
 
 /// The observed state of one file: its content hash and, when available, its modification time.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FileRevision {
     pub hash: String,
     pub size: u64,
