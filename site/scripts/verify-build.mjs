@@ -339,6 +339,74 @@ if (articleHtml) {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Comments (handoff.md section 16)
+//
+// The contract is mostly a list of things that must NOT exist: no fake local comment system, and an
+// explicit unavailable state rather than an empty box. Both are asserted here, because "we did not build
+// the wrong thing" is exactly the claim that erodes silently.
+// ---------------------------------------------------------------------------------------------
+{
+  const article = join(siteRoot, 'article');
+  const candidates = [];
+  const walk = (directory) => {
+    let entries = [];
+    try {
+      entries = readdirSync(directory, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const full = join(directory, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.name === 'index.html') candidates.push(full);
+    }
+  };
+  walk(article);
+
+  // An article page is one that carries the reference block, rather than the article list.
+  const articleHtml = candidates
+    .map((file) => readFileSync(file, 'utf8'))
+    .find((html) => html.includes('data-veloct-article-body')) ?? '';
+
+  check(
+    'the article page has a comment section',
+    /<section class="comments"/.test(articleHtml),
+    'handoff.md section 16 asks for a comment area',
+  );
+
+  check(
+    'there is no fake local comment system',
+    // A textarea anywhere in the page would accept text the static site cannot store.
+    !articleHtml.includes('<textarea'),
+    'section 16 forbids a local comment system; anything accepting text here would lose it',
+  );
+
+  // The class name also appears in Astro's inlined <style>, so the ELEMENT is matched rather than the text.
+  const unavailableElement = /<div class="comments-unavailable"/.test(articleHtml);
+  const giscusElement = /class="giscus"/.test(articleHtml);
+
+  check(
+    'comments are either wired to giscus or explicitly unavailable',
+    unavailableElement || giscusElement,
+    'section 16 requires an explicit unavailable state rather than an empty box',
+  );
+
+  check(
+    'giscus is never loaded without a repository to load comments FROM',
+    // An iframe with an empty repo-id renders a blank frame and a console error, which is the
+    // broken-looking box the contract rules out.
+    !articleHtml.includes('giscus.app') || /data-repo="[^"]+"/.test(articleHtml),
+    'a partial giscus configuration must fall back to the unavailable state',
+  );
+
+  check(
+    'the comment section says where comments are stored when it renders one',
+    !giscusElement || articleHtml.includes('存储在 GitHub Discussions'),
+    'section 16 asks for a hint icon telling the reader the comments live in GitHub Discussions',
+  );
+}
+
+// ---------------------------------------------------------------------------------------------
 // Summary
 // ---------------------------------------------------------------------------------------------
 const failed = results.filter((result) => !result.passed);

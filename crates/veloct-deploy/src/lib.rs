@@ -25,11 +25,16 @@
 
 pub mod adapter;
 pub mod pipeline;
+pub mod seo;
 pub mod target;
 
 pub use adapter::{
     CloudflarePagesAdapter, DeployAdapter, DeployCapabilities, ExportManifest, ExportRoot,
     ManualExportAdapter, MemoryAdapter, PushFile, PushOutcome, PushPayload,
+};
+pub use seo::{
+    push, record_rows, rows_for, ConfigurationRequiredSubmitter, RecordingSubmitter, SeoEngine,
+    SeoEngineOutcome, SeoEngineRecord, SeoPushRequest, SeoPushRow, SeoPushRun, SeoSubmitter,
 };
 pub use pipeline::{
     Orchestrator, PublishPayloads, PublishResult, ResendContext, SeoTaskState, TargetAdapters,

@@ -10,8 +10,14 @@
     "avatar": ""
   },
   "social": [
-    { "label": "GitHub", "url": "https://github.com/" },
-    { "label": "RSS", "url": "/rss.xml" }
+    {
+      "label": "GitHub",
+      "url": "https://github.com/"
+    },
+    {
+      "label": "RSS",
+      "url": "/rss.xml"
+    }
   ],
   "hero": {
     "title": "Veloct",
@@ -21,7 +27,15 @@
   },
   "worksOrigin": "https://works.example.com",
   "comments": {
-    "enabled": false
+    "enabled": false,
+    "repo": "",
+    "repoId": "",
+    "category": "Announcements",
+    "categoryId": "",
+    "mapping": "pathname",
+    "reactionsEnabled": true,
+    "inputPosition": "bottom",
+    "theme": "preferred_color_scheme"
   },
   "seo": {
     "allowIndexing": true,

@@ -48,6 +48,19 @@ const DEFAULTS = {
   filing: {},
   comments: {
     enabled: false,
+    // handoff.md section 16: when comments are on they REQUIRE a GitHub connection and live in GitHub
+    // Discussions. These name the repository and the giscus identifiers for it.
+    //
+    // There is no token field, and that is the point: giscus authenticates the reader through GitHub's own
+    // window, so the static site holds no secret and cannot leak one.
+    repo: '',
+    repoId: '',
+    category: 'Announcements',
+    categoryId: '',
+    mapping: 'pathname',
+    reactionsEnabled: true,
+    inputPosition: 'bottom',
+    theme: 'preferred_color_scheme',
   },
   seo: {
     // A single switch that must be able to flip robots.txt AND every page's robots meta together

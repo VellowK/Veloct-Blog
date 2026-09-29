@@ -17,6 +17,8 @@ sha2 = { workspace = true }
 hex = { workspace = true }
 time = { workspace = true }
 walkdir = { workspace = true }
+# The SEO push lifecycle persists into the `seo_pushes` table (handoff.md section 15.2).
+rusqlite = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

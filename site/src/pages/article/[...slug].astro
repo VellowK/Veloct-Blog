@@ -10,6 +10,7 @@
 
 import { getCollection, render } from 'astro:content';
 import BaseLayout from '../../layouts/BaseLayout.astro';
+import Comments from '../../components/Comments.astro';
 import ReferenceList from '../../components/ReferenceList.astro';
 import { readSiteConfig } from '../../lib/site-config.mjs';
 import { formatDate, readingStats, isProduction } from '../../lib/format.ts';
@@ -140,6 +141,11 @@ const jsonLd = {
     <!-- handoff.md section 9.4: the article's Harvard-style reference list is generated from the
          knowledge entries it cites. -->
     <ReferenceList citations={citations} />
+
+    <!-- handoff.md section 16: the comment section. It renders giscus when the site is published AND the
+         GitHub repository is configured, and an explicit unavailable state otherwise. There is deliberately
+         no local comment form: a textarea that silently dropped a comment would be worse than none. -->
+    <Comments settings={site.comments} published={isProd} />
   </article>
 
   <script>

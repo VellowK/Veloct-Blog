@@ -1,0 +1,201 @@
+---
+/**
+ * The comment section.
+ *
+ * `handoff.md` §16 is locked, and four of its five requirements are constraints on what this component must
+ * NOT do:
+ *
+ *  * comments are optional, and when on they REQUIRE a GitHub connection;
+ *  * authentication is GitHub SSO/OAuth and the comments live in GitHub Discussions;
+ *  * the front end uses `giscus` — so this renders giscus and has no comment code of its own;
+ *  * an icon tells the user WHERE their comment is stored.
+ *
+ * And the fifth, which is why this file has a branch that ships a notice instead of a box:
+ *
+ * > In the local Astro preview: do not implement a fake local comment system. When comments are
+ * > unavailable, show an explicit unavailable state, or a note that only the published site can use them.
+ *
+ * So there are exactly three states and no fourth. A missing configuration renders an EXPLANATION, never an
+ * empty box that looks broken and never a local comment form that would discard whatever the user typed.
+ * The distinction matters because a textarea that silently drops a comment is worse than no textarea: the
+ * user believes they said something.
+ */
+
+interface CommentSettings {
+  enabled?: boolean;
+  /** The `owner/name` the discussions live in. */
+  repo?: string;
+  /** The giscus repository id, from giscus.app. */
+  repoId?: string;
+  category?: string;
+  categoryId?: string;
+  mapping?: string;
+  reactionsEnabled?: boolean;
+  inputPosition?: string;
+  theme?: string;
+}
+
+interface Props {
+  settings?: CommentSettings | undefined;
+  /** Whether this preview is the published site or the desktop dev server. */
+  published?: boolean;
+}
+
+const {
+  settings = {},
+  /*
+   * Defaults to false, so an unset flag produces the EXPLANATION rather than an iframe that would fail
+   * invisibly. `handoff.md` §16 wants the unavailable state to be explicit, and the safe default for an
+   * unknown environment is "not available".
+   */
+  published = false,
+} = Astro.props;
+
+const enabled = settings.enabled === true;
+const repo = (settings.repo ?? '').trim();
+const repoId = (settings.repoId ?? '').trim();
+
+/*
+ * Everything giscus needs. A partial configuration is treated as NOT configured: rendering the iframe with
+ * an empty `repo-id` produces a blank frame and a console error, which is the broken-looking box §16 rules
+ * out.
+ */
+const configured = enabled && repo.length > 0 && repoId.length > 0;
+
+/** Why comments are not showing, in the user's terms rather than the configuration's. */
+const reason =
+  !enabled
+    ? '这个站点没有开启评论。'
+    : !published
+      ? '评论使用 GitHub Discussions,只有已发布的站点可以评论。本地预览中不提供评论。'
+      : '评论还没有配置完成:缺少 GitHub 仓库信息,所以这里不会显示评论框。';
+
+/*
+ * The script URL is `giscus.app/client.js` and the theme is configurable, but neither is a place to put a
+ * token: giscus is unauthenticated at the client and the OAuth happens in GitHub's own window. So this
+ * component holds no secret, which is why it can live in a static build.
+ */
+const scriptSrc = 'https://giscus.app/client.js';
+---
+
+<section class="comments" aria-label="评论">
+  <header class="comments-header">
+    <h2>评论</h2>
+    {
+      configured && (
+        <span
+          class="comments-storage"
+          title={`评论存储在 GitHub Discussions(${repo})中,不在本站服务器上。`}
+        >
+          {/* The icon section 16 asks for, with the location in its tooltip and in the text below. */}
+          <span aria-hidden="true">◍</span>
+          <span>存储在 GitHub Discussions</span>
+        </span>
+      )
+    }
+  </header>
+
+  {
+    configured ? (
+      <>
+        <p class="comments-note">
+          评论使用 GitHub 账号登录,内容保存在 <code>{repo}</code> 的 Discussions 中。
+          本站不保存你的评论。
+        </p>
+        <div
+          class="giscus"
+          data-repo={repo}
+          data-repo-id={repoId}
+          data-category={settings.category ?? 'Announcements'}
+          data-category-id={settings.categoryId ?? ''}
+          data-mapping={settings.mapping ?? 'pathname'}
+          data-reactions-enabled={settings.reactionsEnabled === false ? '0' : '1'}
+          data-emit-metadata="0"
+          data-input-position={settings.inputPosition ?? 'bottom'}
+          data-theme={settings.theme ?? 'preferred_color_scheme'}
+          data-lang="zh-CN"
+          data-loading="lazy"
+        />
+        <script src={scriptSrc} data-repo={repo} data-repo-id={repoId} crossorigin="anonymous" async />
+      </>
+    ) : (
+      /*
+       * The explicit unavailable state. NOT a textarea, NOT a localStorage scratch pad: section 16 forbids a
+       * fake local comment system, and anything that accepted text here would lose it.
+       */
+      <div class="comments-unavailable" role="status">
+        <p>{reason}</p>
+        {
+          !published && enabled && (
+            <p class="comments-hint">
+              发布站点后,评论区会出现在这里。评论需要 GitHub 登录,所以必须在已发布的地址上使用。
+            </p>
+          )
+        }
+        {enabled && !configured && published && (
+          <p class="comments-hint">
+            在设置中填写 GitHub 仓库的 owner/name 与 giscus 的仓库 id 即可开启。
+          </p>
+        )}
+      </div>
+    )
+  }
+</section>
+
+<style>
+  .comments {
+    margin-top: 3rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--border, #e5e5e5);
+  }
+
+  .comments-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+  }
+
+  .comments-header h2 {
+    margin: 0;
+    font-size: 1.1rem;
+  }
+
+  .comments-storage {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.8rem;
+    opacity: 0.7;
+    cursor: help;
+  }
+
+  .comments-note {
+    font-size: 0.85rem;
+    opacity: 0.75;
+  }
+
+  .giscus {
+    margin-top: 1rem;
+    min-height: 8rem;
+  }
+
+  .comments-unavailable {
+    margin-top: 0.75rem;
+    padding: 0.9rem 1rem;
+    border: 1px dashed var(--border, #d4d4d4);
+    border-radius: 8px;
+    font-size: 0.9rem;
+  }
+
+  .comments-unavailable p {
+    margin: 0;
+  }
+
+  .comments-hint {
+    margin-top: 0.5rem !important;
+    opacity: 0.7;
+    font-size: 0.85rem;
+  }
+</style>

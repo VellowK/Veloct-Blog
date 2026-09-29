@@ -5223,6 +5223,7 @@ name = "veloct-deploy"
 version = "0.1.0"
 dependencies = [
  "hex",
+ "rusqlite",
  "serde",
  "serde_json",
  "sha2 0.10.9",
