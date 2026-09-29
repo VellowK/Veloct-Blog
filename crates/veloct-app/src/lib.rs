@@ -14,6 +14,7 @@
 #![forbid(unsafe_code)]
 
 pub mod attachments;
+pub mod autobackup;
 pub mod backup;
 pub mod deploy;
 pub mod error;
@@ -33,6 +34,11 @@ pub use deploy::{
     deploy, deploy_with_client, dist_decision, dist_of, is_manual, kind_label, parse_kind,
     read_payloads, resendable_sub_targets, status_name, CredentialLookup, DeployOutcomeView,
     StoredTarget, TargetListView, TargetList, TargetResultView, TargetView, TARGETS_FILE,
+};
+pub use autobackup::{
+    cloud_retention_from_settings, commit_sha_of, idle_seconds_from_settings,
+    manifest_needs_acknowledgement, AutoBackupOutcome, IdleDecision, IdleTracker, TargetUploadOutcome,
+    DEFAULT_CLOUD_RETENTION, DEFAULT_IDLE_SECONDS,
 };
 pub use error::CommandError;
 pub use project::{CreateProjectOptions, ProjectRecord, ProjectService};

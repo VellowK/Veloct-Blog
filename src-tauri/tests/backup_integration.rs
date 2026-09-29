@@ -205,6 +205,96 @@ fn a_real_backup_restores_the_real_project_and_an_unconfirmed_one_changes_nothin
     assert!(listed[0].file_count > 20);
 }
 
+/// The automatic backup rule (handoff.md section 17.5), end to end.
+///
+/// The rule is arithmetic and its unit tests cover the arithmetic. What this adds is the part that only a real
+/// project can show: that the tracker survives a restart, that the archive a due run produces is a real one, and
+/// that a change RESTARTS the timer rather than leaving the original deadline in place.
+#[test]
+#[ignore = "writes real archives for the real project; run explicitly with --ignored"]
+fn the_automatic_backup_rule_runs_once_the_content_has_been_idle() {
+    use veloct_app::{IdleDecision, IdleTracker};
+
+    let workspace = tempfile::TempDir::new().expect("a temp dir");
+    let project = workspace.path().join("project");
+    std::fs::create_dir_all(&project).unwrap();
+    let repo = repo_root();
+    for segment in ["content", "works", "data"] {
+        copy_tree(&repo.join(segment), &project.join(segment))
+            .unwrap_or_else(|error| panic!("could not copy {segment}: {error}"));
+    }
+    std::fs::create_dir_all(project.join(".veloct")).unwrap();
+
+    // ---- an untouched project does not back itself up ----
+    let now = 1_000_000u64;
+    let fresh = IdleTracker::new(now);
+    assert_eq!(
+        fresh.decide(now + 100_000),
+        IdleDecision::NoChange,
+        "section 17.5's first condition: without a change there is nothing to back up"
+    );
+
+    // ---- a change starts the ten-minute timer ----
+    let mut tracker = IdleTracker::new(now);
+    tracker.note_change(now);
+    assert!(matches!(
+        tracker.decide(now + 599),
+        IdleDecision::Waiting { .. }
+    ));
+    assert!(tracker.decide(now + 600).is_due());
+
+    // ---- another change RESTARTS it, which is section 17.5's last line ----
+    tracker.note_change(now + 900);
+    assert!(
+        !tracker.decide(now + 1_000).is_due(),
+        "a later edit restarts the timer rather than using the first deadline"
+    );
+    assert!(tracker.decide(now + 1_500).is_due());
+
+    // ---- and a due run produces a REAL archive ----
+    let clock = fixed_clock("2026-01-01T12:00:00Z");
+    let outcome = veloct_app::manual_backup(&project, &clock)
+        .unwrap_or_else(|error| panic!("the automatic backup failed: {error}"));
+    assert!(
+        Path::new(&outcome.archive_path).is_file(),
+        "the automatic run writes the same archive a manual one does"
+    );
+    assert!(outcome.file_count > 10, "{}", outcome.file_count);
+    assert_eq!(outcome.archive_sha256.len(), 64);
+
+    // The archive restores, so an automatic backup is not a different kind of artefact.
+    let staging = workspace.path().join("staging");
+    let (_staged, plan) = veloct_app::stage_restore(
+        Path::new(&outcome.archive_path),
+        veloct_backup::RestoreMode::Full,
+        &staging,
+    )
+    .unwrap_or_else(|error| panic!("the automatic archive did not stage: {error}"));
+    assert!(plan.file_count > 10);
+    eprintln!(
+        "[auto] archived {} files ({}, sha {}), staged {} files",
+        outcome.file_count,
+        outcome.archive_bytes,
+        &outcome.archive_sha256[..12],
+        plan.file_count
+    );
+
+    // ---- the tracker round trips, because it has to survive a restart ----
+    let json = serde_json::to_string(&tracker).unwrap();
+    let restored: IdleTracker = serde_json::from_str(&json).unwrap();
+    assert_eq!(restored, tracker, "the tracker is durable state, not memory");
+    assert!(restored.decide(now + 1_500).is_due());
+
+    // ---- and a backup clears the flag so it does not repeat forever ----
+    let mut after = restored.clone();
+    after.note_backup(now + 1_500);
+    assert_eq!(
+        after.decide(now + 9_999),
+        IdleDecision::NoChange,
+        "a backup with no later change must not run again"
+    );
+}
+
 #[test]
 #[ignore = "archives the real project twice; run explicitly with --ignored"]
 fn a_secret_in_the_real_project_blocks_the_upload_but_still_produces_an_archive() {

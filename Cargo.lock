@@ -5124,6 +5124,7 @@ dependencies = [
 name = "veloct-app"
 version = "0.1.0"
 dependencies = [
+ "git2",
  "parking_lot",
  "rusqlite",
  "serde",

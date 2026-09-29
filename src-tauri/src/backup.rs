@@ -210,6 +210,169 @@ pub fn backup_directory(state: State<'_, AppState>) -> Result<String, CommandErr
         .to_string())
 }
 
+/// The automatic backup tracker's state, so the window can show a countdown.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutoBackupStateView {
+    pub tracker: veloct_app::IdleTracker,
+    /// What the rule decided at this instant.
+    pub decision: veloct_app::IdleDecision,
+    /// A phrase for the UI rather than the caller assembling one.
+    pub description: String,
+    /// The idle period and the per-cloud-target retention, from the settings.
+    pub idle_seconds: u64,
+    pub cloud_retention: usize,
+    /// Whether a secret finding is waiting for the user's acknowledgement (section 17.3).
+    pub needs_acknowledgement: bool,
+}
+
+/// Where the tracker's state is stored, so it survives a restart.
+pub const AUTO_STATE_FILE: &str = ".veloct/auto-backup-state.json";
+
+fn read_tracker(project_root: &std::path::Path, now_seconds: u64) -> veloct_app::IdleTracker {
+    let path = project_root.join(AUTO_STATE_FILE);
+    let idle = veloct_app::idle_seconds_from_settings(project_root);
+    match veloct_core::workdir::read_text_optional(&path) {
+        Ok(Some(text)) => serde_json::from_str::<veloct_app::IdleTracker>(&text)
+            // An unreadable tracker is a FRESH one rather than an error: losing a timestamp is a missed
+            // automatic backup, and refusing to start would be worse than that.
+            .unwrap_or_else(|_| veloct_app::IdleTracker::new(now_seconds))
+            .with_idle_seconds(idle),
+        _ => veloct_app::IdleTracker::new(now_seconds).with_idle_seconds(idle),
+    }
+}
+
+fn write_tracker(project_root: &std::path::Path, tracker: &veloct_app::IdleTracker) -> veloct_core::Result<()> {
+    let path = project_root.join(AUTO_STATE_FILE);
+    let text = serde_json::to_vec_pretty(tracker)
+        .map_err(|error| veloct_core::VeloctError::Backup(format!("could not serialise the tracker: {error}")))?;
+    veloct_core::workdir::ensure_parent(&path)?;
+    veloct_core::workdir::write_atomic(&path, &text)
+}
+
+/// Record that the content changed, which RESTARTS the idle timer (section 17.5).
+#[tauri::command]
+pub fn note_content_change(state: State<'_, AppState>) -> Result<AutoBackupStateView, CommandError> {
+    let project = state.project()?;
+    let now = seconds_now();
+    let mut tracker = read_tracker(project.root.as_path(), now);
+    tracker.note_change(now);
+    write_tracker(project.root.as_path(), &tracker)?;
+    Ok(auto_state(&project, &tracker, now))
+}
+
+/// Whether an automatic backup is due, and how long is left when it is not.
+#[tauri::command]
+pub fn auto_backup_state(state: State<'_, AppState>) -> Result<AutoBackupStateView, CommandError> {
+    let project = state.project()?;
+    let now = seconds_now();
+    let tracker = read_tracker(project.root.as_path(), now);
+    Ok(auto_state(&project, &tracker, now))
+}
+
+fn auto_state(
+    project: &std::sync::Arc<crate::state::OpenProject>,
+    tracker: &veloct_app::IdleTracker,
+    now: u64,
+) -> AutoBackupStateView {
+    let decision = tracker.decide(now);
+    AutoBackupStateView {
+        tracker: tracker.clone(),
+        decision,
+        description: decision.describe(),
+        idle_seconds: tracker.idle_seconds,
+        cloud_retention: veloct_app::cloud_retention_from_settings(project.root.as_path()),
+        needs_acknowledgement: last_run_needs_acknowledgement(project.root.as_path()),
+    }
+}
+
+/// Whether the most recent automatic run left a finding unacknowledged.
+///
+/// Read from the run record rather than recomputed, because re-scanning the whole project to answer a UI
+/// question would be expensive and would report the CURRENT state rather than the one the finding was about.
+fn last_run_needs_acknowledgement(project_root: &std::path::Path) -> bool {
+    let path = project_root
+        .join(veloct_app::BACKUP_DIR)
+        .join("last-auto-run.json");
+    veloct_core::workdir::read_text_optional(&path)
+        .ok()
+        .flatten()
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+        .and_then(|value| {
+            value
+                .get("needs_acknowledgement")
+                .and_then(|flag| flag.as_bool())
+        })
+        .unwrap_or(false)
+}
+
+/// Run the automatic backup if the rule says it is due.
+///
+/// Returns `None` when it is not due, which is not a failure: it is the common case, and reporting it as an
+/// error would make a normal quiet minute look like a problem.
+#[tauri::command]
+pub fn run_auto_backup_if_due(
+    state: State<'_, AppState>,
+) -> Result<Option<veloct_app::AutoBackupOutcome>, CommandError> {
+    let project = state.project()?;
+    let now = seconds_now();
+    let clock = veloct_core::SystemClock;
+    let mut tracker = read_tracker(project.root.as_path(), now);
+
+    if !tracker.decide(now).is_due() {
+        return Ok(None);
+    }
+
+    // Section 17.8's manual path is the same work, so it is reused rather than duplicated.
+    let outcome = veloct_app::manual_backup(project.root.as_path(), &clock)?;
+    tracker.note_backup(now);
+    write_tracker(project.root.as_path(), &tracker)?;
+
+    // The run record, so the window can report a finding without re-scanning the project.
+    let record = serde_json::json!({
+        "archive_path": outcome.archive_path,
+        "archive_sha256": outcome.archive_sha256,
+        "needs_acknowledgement": outcome.needs_acknowledgement,
+        "created_at": outcome.created_at,
+    });
+    let record_path = project
+        .root
+        .as_path()
+        .join(veloct_app::BACKUP_DIR)
+        .join("last-auto-run.json");
+    veloct_core::workdir::ensure_parent(&record_path)?;
+    veloct_core::workdir::write_atomic(
+        &record_path,
+        serde_json::to_vec_pretty(&record).unwrap_or_default().as_slice(),
+    )?;
+
+    let _ = project.log(
+        veloct_logging::LogEvent::info(veloct_logging::Category::Backup, "automatic backup written")
+            .with_field("archive", &outcome.archive_path)
+            .with_field("files", outcome.file_count.to_string())
+            .with_field(
+                "needs_acknowledgement",
+                outcome.needs_acknowledgement.to_string(),
+            ),
+    );
+
+    Ok(Some(veloct_app::AutoBackupOutcome {
+        archive_path: outcome.archive_path,
+        archive_sha256: outcome.archive_sha256,
+        // Section 17.7's cloud targets are not wired yet, and reporting an empty list is honest: the LOCAL
+        // archive exists and no cloud copy was attempted.
+        targets: Vec::new(),
+        needs_acknowledgement: outcome.needs_acknowledgement,
+    }))
+}
+
+/// The current time in seconds since the epoch, which is the unit section 17.5's rule works in.
+fn seconds_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0)
+}
+
 /// Parse a restore mode.
 pub fn parse_mode(text: &str) -> Result<veloct_backup::RestoreMode, CommandError> {
     match text.trim().to_ascii_lowercase().as_str() {

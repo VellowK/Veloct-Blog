@@ -21,6 +21,7 @@ import {
   describeError,
   type ContentKind,
   type DocumentView,
+  type AutoBackupStateView,
   type AiSettingsView,
   type PreviewView,
   type ProjectView,
@@ -169,6 +170,8 @@ export default function App() {
   const [showAttachments, setShowAttachments] = useState(false);
   const [showBackups, setShowBackups] = useState(false);
   const [showDeploy, setShowDeploy] = useState(false);
+  // The automatic backup rule (handoff.md section 17.5).
+  const [autoBackup, setAutoBackup] = useState<AutoBackupStateView | null>(null);
   // The editor/preview split, draggable (handoff.md section 4.2). Stored as a percentage so it survives
   // a window resize, and clamped so a pane can never be dragged to nothing and become unrecoverable.
   const [splitPercent, setSplitPercent] = useState(50);
@@ -234,9 +237,43 @@ export default function App() {
     if (project) void reloadAiSettings();
   }, [project, reloadAiSettings]);
 
+  // The automatic backup poll. A MINUTE is the right granularity: the rule works in ten-minute spans, and a
+  // tighter loop would ask the same question sixty times for no benefit. The command returns whether anything
+  // happened, so the common case costs one IPC call and no work.
+  useEffect(() => {
+    if (!project) return;
+    const ask = () => {
+      void api
+        .autoBackupState()
+        .then(setAutoBackup)
+        .catch(() => undefined);
+    };
+    ask();
+    const timer = window.setInterval(ask, 60_000);
+    return () => window.clearInterval(timer);
+  }, [project]);
+
+  // Separate from the state poll because running a backup is not idempotent, so it must not be re-entered by a
+  // slow render. The interval is the same minute.
+  useEffect(() => {
+    if (!project) return;
+    const timer = window.setInterval(() => {
+      void api
+        .runAutoBackupIfDue()
+        .then((outcome) => {
+          if (outcome) setStatus(`自动备份已写入:${outcome.archive_path}`);
+        })
+        .catch(() => undefined);
+    }, 60_000);
+    return () => window.clearInterval(timer);
+  }, [project]);
+
   const onSaved = useCallback(
     (view: SaveView) => {
       if (view.saved) {
+        // Section 17.5's first condition: the content changed. The Rust side restarts its timer; the window
+        // does not keep a second one, because two timers would disagree.
+        void api.noteContentChange().then(setAutoBackup).catch(() => undefined);
         setConflict(null);
         setStatus(
           view.status === 'unchanged' ? '无改动' : `已保存 ${new Date().toLocaleTimeString()}`,
@@ -689,6 +726,18 @@ export default function App() {
         <span className="muted">
           {autosave.state.saving ? '保存中…' : autosave.hash === autosave.state.savedHash ? '已同步' : '有未保存的改动'}
         </span>
+        {autoBackup && (
+          <span
+            className={autoBackup.needs_acknowledgement ? 'issues' : 'muted'}
+            title={autoBackup.description}
+          >
+            {autoBackup.needs_acknowledgement
+              ? '自动备份待确认(发现疑似凭据)'
+              : autoBackup.decision.decision === 'due'
+                ? '自动备份即将执行'
+                : autoBackup.description}
+          </span>
+        )}
         {issues.length > 0 && (
           <span className="issues" title={issues.join('\n')}>
             {issues.length} 个索引问题

@@ -474,6 +474,24 @@ export interface ObjectView {
   bytes: number;
 }
 
+/** The automatic backup rule's state (handoff.md section 17.5). */
+export interface AutoBackupStateView {
+  tracker: {
+    last_change_seconds: number;
+    changed_since_backup: boolean;
+    idle_seconds: number;
+  };
+  /** `no_change`, `waiting` or `due`. */
+  decision: { decision: string; remaining_seconds?: number };
+  /** A phrase for the UI rather than the caller assembling one. */
+  description: string;
+  idle_seconds: number;
+  /** Section 17.6: three per cloud target by default. */
+  cloud_retention: number;
+  /** Whether a secret finding is waiting for acknowledgement (section 17.3). */
+  needs_acknowledgement: boolean;
+}
+
 export const api = {
   appInfo: () => invoke<AppInfo>('app_info'),
 
@@ -768,6 +786,24 @@ export const api = {
   /** The sub-targets a deployment can re-send. */
   deployResendable: (releaseId?: string) =>
     invoke<string[]>('deploy_resendable', { releaseId: releaseId ?? null }),
+
+  /** Record that the content changed, which RESTARTS the idle timer (section 17.5). */
+  noteContentChange: () => invoke<AutoBackupStateView>('note_content_change'),
+
+  /** Whether an automatic backup is due, and how long is left when it is not. */
+  autoBackupState: () => invoke<AutoBackupStateView>('auto_backup_state'),
+
+  /**
+   * Run the automatic backup if the rule says it is due.
+   *
+   * `null` when it is not due, which is the common case and not a failure.
+   */
+  runAutoBackupIfDue: () => invoke<{
+    archive_path: string;
+    archive_sha256: string;
+    targets: Array<{ target_id: string; succeeded: boolean; error: string | null; kept: number }>;
+    needs_acknowledgement: boolean;
+  } | null>('run_auto_backup_if_due'),
 
   /** The configured storage targets. Never carries a credential value (section 12.1). */
   storageTargets: () => invoke<StorageTargetView[]>('storage_targets'),
