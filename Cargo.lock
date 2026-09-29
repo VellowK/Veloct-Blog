@@ -4980,6 +4980,7 @@ dependencies = [
 name = "veloct-desktop"
 version = "0.1.0"
 dependencies = [
+ "parking_lot",
  "serde",
  "serde_json",
  "tauri",
@@ -4987,8 +4988,17 @@ dependencies = [
  "tauri-plugin-dialog",
  "tauri-plugin-opener",
  "tauri-plugin-shell",
+ "tempfile",
+ "time",
  "veloct-app",
+ "veloct-attach",
+ "veloct-backup",
+ "veloct-content",
  "veloct-core",
+ "veloct-deploy",
+ "veloct-markdown",
+ "veloct-process",
+ "veloct-storage",
 ]
 
 [[package]]

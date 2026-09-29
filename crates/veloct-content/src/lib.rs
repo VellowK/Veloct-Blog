@@ -27,7 +27,7 @@ pub mod store;
 pub mod works;
 
 pub use index::{ContentIndex, IndexEntry, IndexIssue, IssueSeverity};
-pub use lifecycle::{FinishWipOutcome, WipTransition};
+pub use lifecycle::{FinishWipOutcome, WipState, WipTransition};
 pub use model::{
     ConflictKind, ContentKind, ContentPaths, DocumentRef, ExistingFile, LoadedDocument,
     SaveConflict, SaveOutcome, SaveStatus, Workspace,

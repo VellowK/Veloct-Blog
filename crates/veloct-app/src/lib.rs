@@ -17,4 +17,4 @@ pub mod error;
 pub mod project;
 
 pub use error::CommandError;
-pub use project::ProjectService;
+pub use project::{CreateProjectOptions, ProjectRecord, ProjectService};

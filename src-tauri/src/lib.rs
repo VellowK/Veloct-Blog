@@ -1,65 +1,135 @@
 //! Veloct desktop shell.
 //!
-//! This crate is intentionally thin: it owns the Tauri window, the plugin set, the command
-//! registry and the process teardown on exit. All behaviour lives in the workspace crates so it
-//! can be tested without a WebView (ADR-0002).
+//! This crate is intentionally thin: it owns the Tauri window, the plugin set, the command registry
+//! and the process teardown on exit. All behaviour lives in the workspace crates so it can be tested
+//! without a WebView (ADR-0002), and [`commands`] and [`state`] are written so their logic is
+//! exercised by ordinary `cargo test`.
 //!
-//! Ownership: `ui-editor` (team `veloct-complete`). The command surface is filled in by
-//! `content-app` as `veloct-app` services land.
+//! Two facts about Tauri 2 shape the code here and are easy to get wrong:
+//!
+//! * The Rust-side `Shell::sidecar` takes the BARE file name, while the JavaScript side takes the full
+//!   configured string. The bundled binary is therefore addressed as `veloct-astro-sidecar`.
+//! * `CommandChild::kill()` terminates ONE process. A Node sidecar spawns Vite and esbuild workers, so
+//!   teardown must kill the whole tree — `veloct_process::kill_process_tree` does that with
+//!   `taskkill /T`, and it belongs in `RunEvent::Exit`, never in `on_window_event`, which fires per
+//!   window and would kill the preview while another window is still open.
 
-use veloct_app::CommandError;
-use veloct_core::{Clock, SystemClock};
+#![forbid(unsafe_code)]
 
-/// Health/version information the frontend can display on startup.
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct AppInfo {
-    pub name: String,
-    pub version: String,
-    /// Version of the bundled Astro site template, used to detect project template upgrades
-    /// (ADR-0001).
-    pub site_template_version: String,
-}
+pub mod commands;
+pub mod state;
 
-/// Report application identity. Also the simplest possible smoke test that the IPC bridge and
-/// the Rust error shape work end to end.
-#[tauri::command]
-fn app_info() -> Result<AppInfo, CommandError> {
-    Ok(AppInfo {
-        name: "Veloct".to_string(),
-        version: veloct_core::VERSION.to_string(),
-        site_template_version: veloct_core::VERSION.to_string(),
-    })
-}
+pub use commands::{AppInfo, DocumentView, PreviewView, ProjectView, SaveView};
+pub use state::{AppState, NullSpawner, OpenProject, ShellSpawner};
 
-/// Current time in the storage format, so the frontend never invents its own timestamp format.
-#[tauri::command]
-fn now_rfc3339() -> String {
-    veloct_core::clock::format_rfc3339(SystemClock.now())
-}
+use std::sync::Arc;
+
+use tauri::Manager;
 
 /// Build and run the desktop application.
 pub fn run() {
+    let spawner: Arc<dyn ShellSpawner> = Arc::new(NullSpawner);
+    let state = AppState::new(spawner);
+
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![app_info, now_rfc3339])
-        .setup(|_app| {
-            // The Astro preview supervisor is started lazily, when a project is opened, so a
-            // machine with no project does not pay for a Node process.
+        .manage(state)
+        .invoke_handler(tauri::generate_handler![
+            commands::app_info,
+            commands::now_rfc3339,
+            commands::open_project,
+            commands::create_project,
+            commands::current_project,
+            commands::list_documents,
+            commands::content_index,
+            commands::read_document,
+            commands::create_document,
+            commands::save_document,
+            commands::transition_wip,
+            commands::rename_slug,
+            commands::repair_reference,
+            commands::assign_paragraph_ids,
+            commands::delete_document,
+            commands::referencing_documents,
+            commands::start_preview,
+            commands::stop_preview,
+            commands::preview_status,
+        ])
+        .setup(|app| {
+            // The preview supervisor is started lazily, when a project is opened, so a machine with no
+            // project does not pay for a Node process.
+            //
+            // The sidecar's bare name is recorded here rather than in the command that starts a
+            // preview, so the resolution happens once and a missing binary is reported at startup
+            // instead of on the user's first preview attempt.
+            let state = app.state::<AppState>();
+            match app.path().resource_dir() {
+                Ok(resources) => {
+                    let candidate = resources
+                        .join("binaries")
+                        .join("veloct-astro-sidecar");
+                    state.set_sidecar(candidate.to_string_lossy().to_string());
+                }
+                Err(error) => {
+                    // Not fatal: the application is usable for editing without a preview, and the
+                    // preview command reports the missing sidecar with a hint when it is asked.
+                    eprintln!("[veloct] could not resolve the resource directory: {error}");
+                }
+            }
             Ok(())
         })
         .build(tauri::generate_context!())
         .expect("failed to build the Veloct application")
-        .run(|_app, event| {
+        .run(|app, event| {
             if let tauri::RunEvent::Exit = event {
-                // Teardown belongs here, NOT in `on_window_event`, which fires per window and
-                // would kill the preview while another window is still open. The supervisor's
-                // `stop_all` kills the whole process tree; `CommandChild::kill()` alone would
-                // orphan the Vite/esbuild workers.
-                //
-                // `veloct_process::PreviewSupervisor::stop_all` is wired in here once the
-                // process crate lands.
+                // Teardown belongs here. `stop_all` kills the whole process tree, so the Vite and
+                // esbuild workers a Node sidecar spawns do not outlive the window and keep the port.
+                let state = app.state::<AppState>();
+                if let Err(error) = state.shutdown() {
+                    eprintln!("[veloct] a preview process may still be running: {error}");
+                }
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use veloct_process::PreviewRole;
+
+    #[test]
+    fn a_headless_state_can_be_built_and_shut_down_without_a_webview() {
+        // The whole point of keeping behaviour out of this crate: the state is usable in a test.
+        let state = AppState::headless();
+        assert!(state.current().is_none());
+        assert!(state.preview_url(PreviewRole::Site).is_none());
+        state.shutdown().unwrap();
+    }
+
+    #[test]
+    fn the_default_spawner_is_the_one_that_reports_rather_than_pretending() {
+        // A packaged application replaces it during setup; until then a preview attempt is an explicit
+        // error rather than a silent no-op.
+        let spawner: Arc<dyn ShellSpawner> = Arc::new(NullSpawner);
+        let spec = veloct_process::PreviewSpec {
+            role: PreviewRole::Site,
+            program: "veloct-astro-sidecar".to_string(),
+            args: Vec::new(),
+            working_directory: std::path::PathBuf::from("."),
+            env: Default::default(),
+            port: 1,
+        };
+        assert!(spawner.spawn_preview(&spec).is_err());
+    }
+
+    #[test]
+    fn the_sidecar_is_addressed_by_its_bare_name_for_the_rust_side() {
+        // Tauri's Rust-side `Shell::sidecar` takes the bare file name; the JavaScript side takes the
+        // full configured string. Getting this wrong produces a "not found" at runtime only.
+        let name = "veloct-astro-sidecar";
+        assert!(!name.contains('/'), "the bare name has no path");
+        assert!(!name.ends_with(".exe"), "Tauri appends the platform suffix");
+    }
 }
