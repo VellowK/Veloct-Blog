@@ -20,8 +20,8 @@ pub mod error;
 pub mod project;
 
 pub use attachments::{
-    attachment_ids, mime_type_for, AddOutcome, AttachmentService, AttachmentView,
-    MAX_ATTACHMENT_BYTES,
+    attachment_ids, mime_type_for, AddOutcome, AttachmentService, AttachmentView, ObjectView,
+    UploadEligibility, UploadView, MAX_ATTACHMENT_BYTES,
 };
 pub use backup::{
     apply_restore, backup, backup_directory, describe_scan, export_to, list_archives, manual_backup,

@@ -97,6 +97,35 @@ impl AttachmentView {
     }
 }
 
+/// What an upload produced (`handoff.md` §13.3).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct UploadView {
+    /// The attachment after the upload: SUCCEEDED, with the reference not yet applied.
+    pub attachment: AttachmentView,
+    /// Whether the remote object already existed for this dedup key, so nothing new was written (§13.4).
+    pub reused: bool,
+    pub remote_url: String,
+    pub remote_key: String,
+}
+
+/// Whether an attachment may be uploaded.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct UploadEligibility {
+    pub can_upload: bool,
+    pub upload_status: String,
+    /// Why not, in the user's terms, when it may not.
+    pub reason: Option<String>,
+}
+
+/// One recorded remote object.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ObjectView {
+    pub dedup_key: String,
+    pub key: String,
+    pub url: String,
+    pub bytes: u64,
+}
+
 /// What an add produced.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -298,6 +327,86 @@ impl AttachmentService {
         let view = AttachmentView::of(&attachment, self.transaction.references());
         self.save()?;
         Ok((view, AddOutcome::Added))
+    }
+
+    /// Upload an attachment to a target.
+    ///
+    /// This is §13.3's SECOND step: the bytes reach the remote target and the object record is written, and the
+    /// Markdown is still untouched. The caller asks for the Markdown afterwards and decides when to apply it.
+    ///
+    /// The transaction refuses a second upload of an already-uploaded attachment (§13.2.2), so a retry cannot
+    /// silently create a second remote object.
+    pub fn upload(
+        &mut self,
+        id: &str,
+        target: &veloct_attach::StorageTarget,
+        now: &str,
+    ) -> Result<UploadView> {
+        let attachment_id = AttachmentId::new(id);
+        // The transaction needs the project root to find the cached bytes it is about to send. Setting it here
+        // rather than at construction means a restored transaction gets it too.
+        self.transaction = std::mem::replace(
+            &mut self.transaction,
+            AttachmentTransaction::new(),
+        )
+        .with_cache_root(self.project_root.clone());
+        let outcome = self.transaction.upload(&attachment_id, target, now)?;
+        // The state is durable BEFORE the caller sees the outcome, so a crash between the upload and the
+        // Markdown edit cannot lose the knowledge that the object exists.
+        self.save()?;
+
+        let attachment = self
+            .transaction
+            .pool()
+            .get(&attachment_id)
+            .cloned()
+            .ok_or_else(|| VeloctError::Invalid(format!("no attachment {id}")))?;
+        let view = AttachmentView::of(&attachment, self.transaction.references());
+        Ok(UploadView {
+            attachment: view,
+            reused: outcome.reused,
+            remote_url: outcome.object.public_url.clone(),
+            remote_key: outcome.object.key.clone(),
+        })
+    }
+
+    /// Whether an attachment may be uploaded, and why not when it may not.
+    ///
+    /// Exposed rather than left to the state machine inside the transaction, so a UI can disable the button
+    /// with a REASON instead of offering an action that will fail.
+    pub fn upload_eligibility(&self, id: &str) -> Result<UploadEligibility> {
+        let attachment = self
+            .transaction
+            .pool()
+            .get(&AttachmentId::new(id))
+            .ok_or_else(|| VeloctError::Invalid(format!("no attachment {id}")))?;
+        let status = attachment.state.upload_status;
+        Ok(UploadEligibility {
+            can_upload: status.can_start_upload(),
+            upload_status: status.as_str().to_string(),
+            reason: if status.can_start_upload() {
+                None
+            } else {
+                Some(format!(
+                    "该附件处于 {status:?} 状态,按第 13.2.2 节不允许再次上传;如需重新上传请先处理当前状态。",
+                    status = status
+                ))
+            },
+        })
+    }
+
+    /// The remote objects this pool has recorded, so a caller can see what is on the targets.
+    pub fn objects(&self) -> Vec<ObjectView> {
+        self.transaction
+            .objects()
+            .iter()
+            .map(|(key, record)| ObjectView {
+                dedup_key: key.clone(),
+                key: record.key.clone(),
+                url: record.public_url.clone(),
+                bytes: record.size_bytes,
+            })
+            .collect()
     }
 
     /// The Markdown for an attachment.
@@ -1053,5 +1162,259 @@ mod tests {
         let text = std::fs::read_to_string(dir.path().join(".veloct/attachments.json")).unwrap();
         assert_eq!(attachment_ids(&text).unwrap(), vec![view.id]);
         assert!(attachment_ids("{ not json").is_err());
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // The upload path (handoff.md section 13.3). These use the crate's LOCAL directory target, which is the
+    // one adapter that needs no credential and no network, so the whole sequence runs for real.
+    // ---------------------------------------------------------------------------------------------
+
+    /// A local directory target rooted in the fixture, with a public URL prefix so the URL is derivable.
+    fn local_target(dir: &Path) -> veloct_attach::StorageTarget {
+        let mut config =
+            veloct_attach::StorageConfig::new("local", "on this machine", veloct_attach::StorageKind::Sftp);
+        config.key_prefix = Some("uploads".to_string());
+        config.public_url_prefix = "https://example.com/files/".to_string();
+        veloct_attach::local_target(config, &dir.join("remote-root"))
+    }
+
+    fn local_config() -> veloct_attach::StorageConfig {
+        let mut config =
+            veloct_attach::StorageConfig::new("local", "on this machine", veloct_attach::StorageKind::Sftp);
+        config.key_prefix = Some("uploads".to_string());
+        config.public_url_prefix = "https://example.com/files/".to_string();
+        config
+    }
+
+    #[test]
+    fn uploading_an_attachment_writes_the_remote_object_and_records_it() {
+        // Section 13.3's second step: the bytes reach the target, the object record is durable, and the
+        // Markdown is STILL untouched.
+        let dir = project();
+        let article = dir.path().join("content/articles/01ABC.md");
+        let before = "---\nid: 01ABC\n---\n\nNo pictures yet.\n";
+        std::fs::write(&article, before).unwrap();
+
+        let source = write_file(dir.path(), "photo.png", b"BYTES");
+        let mut service = AttachmentService::open(dir.path()).unwrap();
+        let (view, _) = service
+            .add_file(&source, "local", "default", NOW, &[1, 2, 3, 4, 5, 6])
+            .unwrap();
+        assert_eq!(view.upload_status, "PENDING");
+
+        let target = local_target(dir.path());
+        let upload = service.upload(&view.id, &target, NOW).unwrap();
+
+        // The remote object exists on disk, under the configured prefix.
+        let remote = dir.path().join("remote-root").join(&upload.remote_key);
+        assert!(remote.is_file(), "{}", remote.display());
+        assert_eq!(std::fs::read(&remote).unwrap(), b"BYTES");
+        assert!(upload.remote_url.starts_with("https://example.com/files/"), "{}", upload.remote_url);
+
+        // The attachment's UPLOAD axis moved and the reference axis did not (section 13.1).
+        assert_eq!(upload.attachment.upload_status, "SUCCEEDED");
+        assert_eq!(upload.attachment.reference_status, "NOT_APPLIED");
+        assert_eq!(upload.attachment.remote_url.as_deref(), Some(upload.remote_url.as_str()));
+
+        // Adding a picture and uploading it must not rewrite an article.
+        assert_eq!(
+            std::fs::read_to_string(&article).unwrap(),
+            before,
+            "uploading must not touch the Markdown"
+        );
+
+        // And the object record is durable.
+        let reopened = AttachmentService::open(dir.path()).unwrap();
+        assert_eq!(reopened.objects().len(), 1);
+        assert_eq!(reopened.objects()[0].url, upload.remote_url);
+    }
+
+    #[test]
+    fn the_markdown_uses_the_remote_url_once_the_upload_succeeded() {
+        // The reader gets the published URL rather than a cache path, which is the whole point of uploading.
+        let dir = project();
+        let source = write_file(dir.path(), "photo.png", b"BYTES");
+        let mut service = AttachmentService::open(dir.path()).unwrap();
+        let (view, _) = service
+            .add_file(&source, "local", "default", NOW, &[1, 2, 3, 4, 5, 6])
+            .unwrap();
+
+        let before = service.markdown_for(&view.id).unwrap();
+        assert!(before.contains(CACHE_DIR), "before the upload: {before}");
+
+        let target = local_target(dir.path());
+        service.upload(&view.id, &target, NOW).unwrap();
+
+        let after = service.markdown_for(&view.id).unwrap();
+        assert!(after.starts_with("![photo.png](https://example.com/files/"), "{after}");
+        assert!(!after.contains(CACHE_DIR), "{after}");
+    }
+
+    #[test]
+    fn a_second_upload_of_an_uploaded_attachment_is_refused_by_the_state_machine() {
+        // Section 13.2.2: a succeeded upload must not be repeated, so a retry cannot silently create a second
+        // remote object.
+        let dir = project();
+        let source = write_file(dir.path(), "photo.png", b"BYTES");
+        let mut service = AttachmentService::open(dir.path()).unwrap();
+        let (view, _) = service
+            .add_file(&source, "local", "default", NOW, &[1, 2, 3, 4, 5, 6])
+            .unwrap();
+        let target = local_target(dir.path());
+        service.upload(&view.id, &target, NOW).unwrap();
+
+        let error = service.upload(&view.id, &target, NOW).unwrap_err();
+        assert!(
+            error.to_string().contains("must not be uploaded again"),
+            "{error}"
+        );
+
+        // The eligibility check says the same thing BEFORE a caller tries, with a reason.
+        let eligibility = service.upload_eligibility(&view.id).unwrap();
+        assert!(!eligibility.can_upload);
+        assert_eq!(eligibility.upload_status, "SUCCEEDED");
+        assert!(eligibility.reason.is_some());
+    }
+
+    #[test]
+    fn a_pending_attachment_reports_that_it_may_be_uploaded() {
+        let dir = project();
+        let source = write_file(dir.path(), "photo.png", b"BYTES");
+        let mut service = AttachmentService::open(dir.path()).unwrap();
+        let (view, _) = service
+            .add_file(&source, "local", "default", NOW, &[1, 2, 3, 4, 5, 6])
+            .unwrap();
+
+        let eligibility = service.upload_eligibility(&view.id).unwrap();
+        assert!(eligibility.can_upload);
+        assert_eq!(eligibility.upload_status, "PENDING");
+        assert!(eligibility.reason.is_none());
+
+        assert!(service.upload_eligibility("no-such-id").is_err());
+    }
+
+    #[test]
+    fn uploading_an_attachment_that_is_not_in_the_pool_is_refused() {
+        let dir = project();
+        let mut service = AttachmentService::open(dir.path()).unwrap();
+        let target = local_target(dir.path());
+        assert!(service.upload("no-such-id", &target, NOW).is_err());
+    }
+
+    #[test]
+    fn an_upload_through_a_target_with_no_adapter_reports_what_to_do() {
+        // S3, Lsky Pro and SFTP have no adapter in this build. The failure is a `NOT_CONFIGURED` carrying the
+        // reason, not a mysterious protocol error.
+        let dir = project();
+        let source = write_file(dir.path(), "photo.png", b"BYTES");
+        let mut service = AttachmentService::open(dir.path()).unwrap();
+        let (view, _) = service
+            .add_file(&source, "s3", "default", NOW, &[1, 2, 3, 4, 5, 6])
+            .unwrap();
+
+        let client = std::sync::Arc::new(veloct_core::http::FakeHttpClient::new())
+            as std::sync::Arc<dyn veloct_core::http::HttpClient>;
+        let config = veloct_attach::StorageConfig::new("s3", "my bucket", veloct_attach::StorageKind::S3);
+        let target = veloct_attach::target_from_config(config, None, client).unwrap();
+
+        let error = service.upload(&view.id, &target, NOW).unwrap_err();
+        assert_eq!(error.code(), "NOT_CONFIGURED");
+        assert!(error.hint().unwrap_or_default().contains("S3"), "{error} / {:?}", error.hint());
+        assert!(
+            !target.capabilities().verified,
+            "the capabilities say so before a caller tries"
+        );
+
+        // The attachment is FAILED, which section 13.2.2 makes RETRYABLE — the state machine distinguishes a
+        // failure from a success, and a failed upload is exactly the case a user retries. Asserting PENDING here
+        // was the first version of this test, and `state::tests::a_failed_upload_may_be_retried` already says
+        // which is right.
+        let status = service.get(&view.id).unwrap().upload_status.clone();
+        assert_eq!(status, "FAILED", "a failed upload is recorded as failed");
+        assert!(
+            service.upload_eligibility(&view.id).unwrap().can_upload,
+            "and a failed upload may be retried"
+        );
+    }
+
+    #[test]
+    fn a_github_target_upload_records_the_repository_url() {
+        // The GitHub adapter is the one remote target implemented (section 13.13). Its request shape is asserted
+        // in `veloct-attach`; what is asserted here is that the SERVICE records the object it returns.
+        let dir = project();
+        let source = write_file(dir.path(), "photo.png", b"PNG");
+        let mut service = AttachmentService::open(dir.path()).unwrap();
+        let (view, _) = service
+            .add_file(&source, "github", "default", NOW, &[1, 2, 3, 4, 5, 6])
+            .unwrap();
+
+        let client = std::sync::Arc::new(
+            veloct_core::http::FakeHttpClient::new().always(201, "{}"),
+        );
+        let mut config =
+            veloct_attach::StorageConfig::new("github", "my repo", veloct_attach::StorageKind::GitHub);
+        config.repository = Some("vellow/assets".to_string());
+        config.branch = Some("main".to_string());
+        let target = veloct_attach::target_from_config(
+            config,
+            Some("token".to_string()),
+            client as std::sync::Arc<dyn veloct_core::http::HttpClient>,
+        )
+        .unwrap();
+
+        let upload = service.upload(&view.id, &target, NOW).unwrap();
+        assert_eq!(upload.attachment.upload_status, "SUCCEEDED");
+        assert!(
+            upload
+                .remote_url
+                .starts_with("https://raw.githubusercontent.com/vellow/assets/main/"),
+            "{}",
+            upload.remote_url
+        );
+        assert!(service.objects().iter().any(|object| object.url == upload.remote_url));
+    }
+
+    #[test]
+    fn adding_and_uploading_two_copies_of_the_same_bytes_reuses_one_remote_object() {
+        // Section 13.4: the same bytes for the same target and namespace reuse the remote object, so a picture
+        // used twice does not exist twice on the server.
+        let dir = project();
+        let source = write_file(dir.path(), "photo.png", b"IDENTICAL");
+        let mut service = AttachmentService::open(dir.path()).unwrap();
+        let (first, _) = service
+            .add_file(&source, "local", "default", NOW, &[1, 1, 1, 1, 1, 1])
+            .unwrap();
+        // The second add is a REUSE of the same record, so there is only one attachment to upload.
+        let (second, outcome) = service
+            .add_file(&source, "local", "default", NOW, &[2, 2, 2, 2, 2, 2])
+            .unwrap();
+        assert_eq!(outcome, AddOutcome::Reused);
+        assert_eq!(first.id, second.id);
+
+        let target = local_target(dir.path());
+        let upload = service.upload(&first.id, &target, NOW).unwrap();
+        assert_eq!(service.objects().len(), 1, "one object, not two");
+
+        // The remote name is stable for the same content, which is what section 13.10's retry needs.
+        let remote = dir.path().join("remote-root").join(&upload.remote_key);
+        assert!(remote.is_file());
+    }
+
+    #[test]
+    fn the_local_target_writes_under_the_projects_own_directory_when_configured_that_way() {
+        // `local_root` is what the shell uses, so the path the application would write to is asserted.
+        let dir = project();
+        let root = veloct_attach::local_root(dir.path(), "local");
+        let text = root.to_string_lossy().replace('\\', "/");
+        assert!(text.contains(".veloct/uploads/local"), "{text}");
+
+        let source = write_file(dir.path(), "photo.png", b"BYTES");
+        let mut service = AttachmentService::open(dir.path()).unwrap();
+        let (view, _) = service
+            .add_file(&source, "local", "default", NOW, &[1, 2, 3, 4, 5, 6])
+            .unwrap();
+        let target = veloct_attach::local_target(local_config(), &root);
+        let upload = service.upload(&view.id, &target, NOW).unwrap();
+        assert!(root.join(&upload.remote_key).is_file());
     }
 }

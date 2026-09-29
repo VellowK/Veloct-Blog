@@ -415,6 +415,19 @@ impl StorageTarget {
     pub fn url_for(&self, key: &str) -> Result<String> {
         public_url(&self.config, key)
     }
+
+    /// What this target can do.
+    ///
+    /// A passthrough so a caller holding a target can ask before it tries: a target whose protocol is not
+    /// implemented reports `verified: false`, and a UI can say so rather than waiting for an upload to fail.
+    pub fn capabilities(&self) -> StorageCapabilities {
+        self.adapter.capabilities()
+    }
+
+    /// Prove the target is reachable, or explain why it is not.
+    pub fn test_connection(&self) -> Result<String> {
+        self.adapter.test_connection()
+    }
 }
 
 /// An in-memory adapter, so protocol logic and the transaction are testable without a network.

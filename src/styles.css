@@ -1330,3 +1330,40 @@ button.primary {
 .deploy-panel .hint {
   font-size: 12px;
 }
+
+/* Storage targets in the attachment panel (handoff.md sections 13.10-13.13). */
+.storage-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.storage-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 4px 8px;
+  border: 1px solid var(--ink-800);
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.storage-list .name {
+  font-weight: 600;
+}
+
+.attachment-panel .warn {
+  color: var(--accent-400);
+}
+
+.attachment-panel .bad {
+  color: var(--danger-400);
+}
+
+.attachment-panel .ok {
+  color: var(--accent-400);
+}

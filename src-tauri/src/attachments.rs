@@ -197,6 +197,264 @@ pub fn sync_attachment_index(state: State<'_, AppState>) -> Result<usize, Comman
     Ok(count)
 }
 
+/// One configured storage target, as the window lists it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StorageTargetView {
+    pub id: String,
+    pub name: String,
+    pub kind: String,
+    /// Whether this build has an adapter for the kind (`handoff.md` §13.10–13.13).
+    pub implemented: bool,
+    /// Why not, when it does not, so the window can say what to use instead.
+    pub unimplemented_reason: Option<String>,
+    pub path_prefix: Option<String>,
+    pub public_url_prefix: String,
+    pub repository: Option<String>,
+    pub branch: Option<String>,
+    /// The HANDLE, never a value (§12).
+    pub credential_ref: Option<String>,
+    pub has_credential: bool,
+}
+
+impl StorageTargetView {
+    fn of(config: &veloct_attach::StorageConfig, has_credential: bool) -> Self {
+        Self {
+            id: config.id.as_str().to_string(),
+            name: config.name.clone(),
+            kind: config.kind.as_str().to_string(),
+            implemented: veloct_attach::is_implemented(config.kind),
+            unimplemented_reason: veloct_attach::unimplemented_reason(config.kind)
+                .map(str::to_string),
+            path_prefix: config.key_prefix.clone(),
+            public_url_prefix: config.public_url_prefix.clone(),
+            repository: config.repository.clone(),
+            branch: config.branch.clone(),
+            credential_ref: config.credential_ref.clone(),
+            has_credential,
+        }
+    }
+}
+
+/// A storage target as the window saves it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SaveStorageTargetRequest {
+    pub id: String,
+    pub name: String,
+    pub kind: String,
+    #[serde(default)]
+    pub path_prefix: Option<String>,
+    #[serde(default)]
+    pub public_url_prefix: Option<String>,
+    /// GitHub: `owner/name` (§13.13).
+    #[serde(default)]
+    pub repository: Option<String>,
+    #[serde(default)]
+    pub branch: Option<String>,
+    /// The credential VALUE, written to the OS store. Never persisted here (§12.2).
+    #[serde(default)]
+    pub credential: Option<String>,
+}
+
+/// The configured storage targets.
+#[tauri::command]
+pub fn storage_targets(state: State<'_, AppState>) -> Result<Vec<StorageTargetView>, CommandError> {
+    let project = state.project()?;
+    let list = read_storage_targets(project.root.as_path())?;
+    Ok(list
+        .iter()
+        .map(|config| {
+            let has = config
+                .credential_ref
+                .as_deref()
+                .map(|handle| crate::credentials::get_or_none(handle).is_some())
+                .unwrap_or(false);
+            StorageTargetView::of(config, has)
+        })
+        .collect())
+}
+
+/// Add or update a storage target.
+#[tauri::command]
+pub fn save_storage_target(
+    state: State<'_, AppState>,
+    request: SaveStorageTargetRequest,
+) -> Result<(), CommandError> {
+    let project = state.project()?;
+    let kind = parse_storage_kind(&request.kind)?;
+
+    let handle = crate::credentials::handle_for(&format!("storage:{}", request.id));
+    if let Some(secret) = request.credential.filter(|value| !value.trim().is_empty()) {
+        crate::credentials::set(&handle, secret.trim())?;
+    }
+
+    let mut config = veloct_attach::StorageConfig::new(&request.id, &request.name, kind);
+    config.key_prefix = request.path_prefix.filter(|value| !value.trim().is_empty());
+    config.public_url_prefix = request.public_url_prefix.unwrap_or_default();
+    config.repository = request.repository.filter(|value| !value.trim().is_empty());
+    config.branch = request.branch.filter(|value| !value.trim().is_empty());
+    // A kind that needs a credential gets the handle; the local directory kind does not, because a handle to
+    // nothing would make the window report a missing credential for a target that needs none.
+    config.credential_ref = match kind {
+        veloct_attach::StorageKind::Sftp
+        | veloct_attach::StorageKind::S3
+        | veloct_attach::StorageKind::LskyPro
+        | veloct_attach::StorageKind::GitHub => Some(handle),
+    };
+
+    let mut list = read_storage_targets(project.root.as_path())?;
+    match list.iter_mut().find(|existing| existing.id.as_str() == request.id) {
+        Some(existing) => *existing = config,
+        None => list.push(config),
+    }
+    write_storage_targets(project.root.as_path(), &list)?;
+
+    let _ = project.log(
+        veloct_logging::LogEvent::info(veloct_logging::Category::Attachment, "storage target saved")
+            .with_field("target_id", &request.id)
+            .with_field("kind", kind.as_str())
+            .with_field("implemented", veloct_attach::is_implemented(kind).to_string()),
+    );
+    Ok(())
+}
+
+/// Remove a storage target, and its stored credential.
+#[tauri::command]
+pub fn delete_storage_target(state: State<'_, AppState>, id: String) -> Result<(), CommandError> {
+    let project = state.project()?;
+    let mut list = read_storage_targets(project.root.as_path())?;
+    let before = list.len();
+    list.retain(|config| config.id.as_str() != id);
+    if list.len() == before {
+        return Err(command_invalid(format!("there is no storage target {id}")));
+    }
+    write_storage_targets(project.root.as_path(), &list)?;
+    let _ = crate::credentials::remove(&crate::credentials::handle_for(&format!("storage:{id}")));
+    Ok(())
+}
+
+/// Whether an attachment may be uploaded, and why not when it may not.
+#[tauri::command]
+pub fn upload_eligibility(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<veloct_app::UploadEligibility, CommandError> {
+    let project = state.project()?;
+    let eligibility = project.attachments().upload_eligibility(&id)?;
+    Ok(eligibility)
+}
+
+/// Upload an attachment to a configured target.
+///
+/// `handoff.md` §13.3's second step: the bytes reach the target and the object record is written, and the
+/// Markdown is still untouched. The caller applies the URL afterwards.
+#[tauri::command]
+pub fn upload_attachment(
+    state: State<'_, AppState>,
+    id: String,
+    storage_target_id: String,
+) -> Result<veloct_app::UploadView, CommandError> {
+    let project = state.project()?;
+    let now = state.now();
+
+    let list = read_storage_targets(project.root.as_path())?;
+    let config = list
+        .iter()
+        .find(|config| config.id.as_str() == storage_target_id)
+        .cloned()
+        .ok_or_else(|| {
+            command_invalid(format!(
+                "there is no storage target {storage_target_id}; configure one first"
+            ))
+        })?;
+
+    // The credential comes from the OS store by handle, and a kind that needs none passes `None`.
+    let credential = config
+        .credential_ref
+        .as_deref()
+        .and_then(crate::credentials::get_or_none);
+
+    // A LOCAL target writes into the project's own `.veloct/uploads`, which is §13.10's server storage for a
+    // user whose server is this machine. It is also the one target that needs no network.
+    let target = match config.kind {
+        veloct_attach::StorageKind::Sftp if credential.is_none() && config.host.is_none() => {
+            veloct_attach::local_target(
+                config.clone(),
+                &veloct_attach::local_root(project.root.as_path(), config.id.as_str()),
+            )
+        }
+        _ => {
+            let client = veloct_core::http::ReqwestHttpClient::with_default_timeout(
+                std::time::Duration::from_secs(300),
+            )?;
+            veloct_attach::target_from_config(config.clone(), credential, std::sync::Arc::new(client))?
+        }
+    };
+
+    let upload = project
+        .attachments()
+        .upload(&id, &target, &now)?;
+
+    let _ = project.log(
+        veloct_logging::LogEvent::info(veloct_logging::Category::Attachment, "attachment uploaded")
+            .with_field("id", &id)
+            .with_field("target_id", &storage_target_id)
+            .with_field("reused", upload.reused.to_string())
+            .with_field("remote_key", &upload.remote_key),
+    );
+    Ok(upload)
+}
+
+/// The recorded remote objects, so the window can show what is on the targets.
+#[tauri::command]
+pub fn attachment_objects(
+    state: State<'_, AppState>,
+) -> Result<Vec<veloct_app::ObjectView>, CommandError> {
+    let project = state.project()?;
+    let objects = project.attachments().objects();
+    Ok(objects)
+}
+
+/// Parse a storage kind.
+pub fn parse_storage_kind(text: &str) -> Result<veloct_attach::StorageKind, CommandError> {
+    match text.trim().to_ascii_lowercase().as_str() {
+        "sftp" | "server" | "local" => Ok(veloct_attach::StorageKind::Sftp),
+        "s3" => Ok(veloct_attach::StorageKind::S3),
+        "lsky" | "lskypro" => Ok(veloct_attach::StorageKind::LskyPro),
+        "github" => Ok(veloct_attach::StorageKind::GitHub),
+        other => Err(command_invalid(format!(
+            "unknown storage kind {other:?}; expected one of sftp, s3, lsky, github"
+        ))),
+    }
+}
+
+/// Where the storage targets are stored.
+pub const STORAGE_TARGETS_FILE: &str = ".veloct/storage-targets.json";
+
+fn read_storage_targets(
+    project_root: &std::path::Path,
+) -> Result<Vec<veloct_attach::StorageConfig>, CommandError> {
+    let path = project_root.join(STORAGE_TARGETS_FILE);
+    let Some(text) = veloct_core::workdir::read_text_optional(&path)? else {
+        return Ok(Vec::new());
+    };
+    serde_json::from_str(&text).map_err(|error| {
+        command_invalid(format!("{} is not a storage target list: {error}", path.display()))
+    })
+}
+
+fn write_storage_targets(
+    project_root: &std::path::Path,
+    targets: &[veloct_attach::StorageConfig],
+) -> Result<(), CommandError> {
+    let path = project_root.join(STORAGE_TARGETS_FILE);
+    let text = serde_json::to_vec_pretty(targets).map_err(|error| {
+        command_invalid(format!("could not serialise the storage targets: {error}"))
+    })?;
+    veloct_core::workdir::ensure_parent(&path)?;
+    veloct_core::workdir::write_atomic(&path, &text)?;
+    Ok(())
+}
+
 /// The directory cached bytes live in, so the window can show it.
 #[tauri::command]
 pub fn attachment_cache_directory(state: State<'_, AppState>) -> Result<String, CommandError> {

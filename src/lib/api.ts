@@ -433,6 +433,47 @@ export interface DeployOutcomeView {
   seo_state: string;
 }
 
+/** One configured storage target (handoff.md sections 13.10-13.13). */
+export interface StorageTargetView {
+  id: string;
+  name: string;
+  kind: string;
+  /** Whether this build has an adapter for the kind. */
+  implemented: boolean;
+  /** Why not, when it does not, so the window can say what to use instead. */
+  unimplemented_reason: string | null;
+  path_prefix: string | null;
+  public_url_prefix: string;
+  repository: string | null;
+  branch: string | null;
+  /** The HANDLE, never a value (section 12). */
+  credential_ref: string | null;
+  has_credential: boolean;
+}
+
+/** What an upload produced (section 13.3). */
+export interface UploadView {
+  attachment: AttachmentView;
+  /** Whether the remote object already existed for this dedup key (section 13.4). */
+  reused: boolean;
+  remote_url: string;
+  remote_key: string;
+}
+
+export interface UploadEligibility {
+  can_upload: boolean;
+  upload_status: string;
+  reason: string | null;
+}
+
+/** One recorded remote object. */
+export interface ObjectView {
+  dedup_key: string;
+  key: string;
+  url: string;
+  bytes: number;
+}
+
 export const api = {
   appInfo: () => invoke<AppInfo>('app_info'),
 
@@ -727,6 +768,50 @@ export const api = {
   /** The sub-targets a deployment can re-send. */
   deployResendable: (releaseId?: string) =>
     invoke<string[]>('deploy_resendable', { releaseId: releaseId ?? null }),
+
+  /** The configured storage targets. Never carries a credential value (section 12.1). */
+  storageTargets: () => invoke<StorageTargetView[]>('storage_targets'),
+
+  saveStorageTarget: (options: {
+    id: string;
+    name: string;
+    kind: string;
+    pathPrefix?: string | undefined;
+    publicUrlPrefix?: string | undefined;
+    repository?: string | undefined;
+    branch?: string | undefined;
+    /** Written to the OS store; omitted or empty leaves the stored one alone. */
+    credential?: string | undefined;
+  }) =>
+    invoke<void>('save_storage_target', {
+      request: {
+        id: options.id,
+        name: options.name,
+        kind: options.kind,
+        path_prefix: options.pathPrefix ?? null,
+        public_url_prefix: options.publicUrlPrefix ?? null,
+        repository: options.repository ?? null,
+        branch: options.branch ?? null,
+        credential: options.credential ?? null,
+      },
+    }),
+
+  deleteStorageTarget: (id: string) => invoke<void>('delete_storage_target', { id }),
+
+  /** Whether an attachment may be uploaded, so the button can be disabled WITH a reason. */
+  uploadEligibility: (id: string) => invoke<UploadEligibility>('upload_eligibility', { id }),
+
+  /**
+   * Upload an attachment to a target.
+   *
+   * Section 13.3's second step: the bytes reach the target and the object record is written, and the Markdown is
+   * still untouched. The caller applies the URL afterwards.
+   */
+  uploadAttachment: (id: string, storageTargetId: string) =>
+    invoke<UploadView>('upload_attachment', { id, storageTargetId }),
+
+  /** The recorded remote objects. */
+  attachmentObjects: () => invoke<ObjectView[]>('attachment_objects'),
 
   /** Take a manual backup into the project's own backup directory (section 17.8). */
   manualBackup: () => invoke<BackupOutcomeView>('manual_backup'),

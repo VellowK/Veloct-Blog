@@ -24,6 +24,8 @@ import {
   type AddAttachmentView,
   type AttachmentOrphans,
   type AttachmentView,
+  type StorageTargetView,
+  type ObjectView,
 } from './lib/api';
 
 /** The axes, in the order §13.1 lists them, with the values the crate uses. */
@@ -71,6 +73,9 @@ export default function AttachmentPanel({
 }) {
   const [attachments, setAttachments] = useState<AttachmentView[]>([]);
   const [orphans, setOrphans] = useState<AttachmentOrphans | null>(null);
+  const [targets, setTargets] = useState<StorageTargetView[]>([]);
+  const [objects, setObjects] = useState<ObjectView[]>([]);
+  const [uploadTarget, setUploadTarget] = useState('');
   const [cacheDirectory, setCacheDirectory] = useState<string>('');
   const [sourcePath, setSourcePath] = useState('');
   const [target, setTarget] = useState('local');
@@ -83,14 +88,20 @@ export default function AttachmentPanel({
   const reload = useCallback(async () => {
     if (!enabled) return;
     try {
-      const [list, found, directory] = await Promise.all([
+      const [list, found, directory, storage, remote] = await Promise.all([
         api.listAttachments(),
         api.attachmentOrphans(),
         api.attachmentCacheDirectory(),
+        api.storageTargets(),
+        api.attachmentObjects(),
       ]);
       setAttachments(list);
       setOrphans(found);
       setCacheDirectory(directory);
+      setTargets(storage);
+      setObjects(remote);
+      // The first implemented target is the sensible default, and a target with no adapter is not offered.
+      setUploadTarget((current) => current || storage.find((t) => t.implemented)?.id || '');
     } catch (caught) {
       setError(describeError(caught));
     }
@@ -239,6 +250,30 @@ export default function AttachmentPanel({
               <button
                 type="button"
                 onClick={() =>
+                  void run(async () => {
+                    if (!uploadTarget) throw new Error('请先选择一个存储目标。');
+                    const result = await api.uploadAttachment(attachment.id, uploadTarget);
+                    setNotice(
+                      result.reused
+                        ? `相同内容已存在于目标,复用了远程对象:${result.remote_url}`
+                        : `已上传:${result.remote_url}`,
+                    );
+                  }, '上传完成。Markdown 已指向远程地址,插入后保存即可。')
+                }
+                // Disabled without a target, because an upload with nowhere to go is not a failure to report
+                // but an action that cannot be taken.
+                disabled={busy || !uploadTarget || !attachment.upload_status.match(/PENDING|FAILED/)}
+                title={
+                  attachment.upload_status === 'SUCCEEDED'
+                    ? '已上传;按第 13.2.2 节不允许重复上传'
+                    : '上传到这个目标'
+                }
+              >
+                上传
+              </button>
+              <button
+                type="button"
+                onClick={() =>
                   void api
                     .attachmentMarkdown(attachment.id)
                     .then((markdown) => {
@@ -274,6 +309,60 @@ export default function AttachmentPanel({
             </li>
           ))}
         </ul>
+      </section>
+
+      <section>
+        <h3>存储目标</h3>
+        {targets.length === 0 && (
+          <p className="muted">
+            还没有存储目标。附件会一直留在缓存池里,直到你上传到某个目标。
+          </p>
+        )}
+        <ul className="storage-list">
+          {targets.map((target) => (
+            <li key={target.id}>
+              <span className="name">{target.name}</span>
+              <span className="muted">{target.kind}</span>
+              {!target.implemented && (
+                // A target with no adapter says so BEFORE an upload is attempted, and says what to use instead.
+                <span className="warn" title={target.unimplemented_reason ?? ''}>
+                  本构建无适配器
+                </span>
+              )}
+              {target.credential_ref && (
+                <span className={target.has_credential ? 'ok' : 'bad'}>
+                  {target.has_credential ? '已保存凭据' : '缺少凭据'}
+                </span>
+              )}
+            </li>
+          ))}
+        </ul>
+        <div className="row">
+          <label>
+            <span>上传到</span>
+            <select value={uploadTarget} onChange={(event) => setUploadTarget(event.target.value)}>
+              <option value="">(选择目标)</option>
+              {targets.map((target) => (
+                <option key={target.id} value={target.id} disabled={!target.implemented}>
+                  {target.name}
+                  {target.implemented ? '' : '(无适配器)'}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        {objects.length > 0 && (
+          <details>
+            <summary>已上传 {objects.length} 个远程对象</summary>
+            <ul className="skip-list">
+              {objects.map((object) => (
+                <li key={object.dedup_key}>
+                  <code>{object.key}</code> — {object.url}
+                </li>
+              ))}
+            </ul>
+          </details>
+        )}
       </section>
 
       {orphans && (orphans.safe.length > 0 || orphans.needs_confirmation.length > 0) && (

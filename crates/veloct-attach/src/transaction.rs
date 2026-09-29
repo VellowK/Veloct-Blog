@@ -26,7 +26,7 @@ use veloct_core::workdir::FileRevision;
 use veloct_core::{Result, VeloctError};
 
 use crate::naming::{random_suffix, DedupKey};
-use crate::pool::{Attachment, AttachmentId, CachePool, ReferenceTask};
+use crate::pool::{Attachment, AttachmentId, CachePool, ReferenceTask, CACHE_DIRECTORY};
 use crate::reference::{ReferenceIndex, ReferenceTarget};
 use crate::state::{AttachmentState, CacheStatus, ReferenceStatus, StorageTargetId, UploadStatus};
 use crate::storage::{ObjectRecord, StorageTarget};
@@ -227,6 +227,16 @@ pub struct AttachmentTransaction {
     /// The per-dedup-key locks that make concurrent uploads of the same content safe
     /// (`handoff.md` §13.4).
     key_locks: KeyLocks,
+    /// Where the cached bytes live, so an upload SENDS them.
+    ///
+    /// This field exists because the upload did not have it, and the bug that produced is worth recording: the
+    /// transaction sent `vec![0u8; size_bytes]` — the right NUMBER of bytes, all of them zero — because it had
+    /// no way to reach the cache. Every local upload wrote a blank file of the correct size, and the unit tests
+    /// did not notice because `MemoryStore` records only the size.
+    ///
+    /// Optional, because a transaction built by a test with no filesystem has nothing to read, and the recorded
+    /// size is then the only thing it can honestly use.
+    cache_root: Option<std::path::PathBuf>,
 }
 
 impl AttachmentTransaction {
@@ -237,7 +247,38 @@ impl AttachmentTransaction {
             objects: std::collections::BTreeMap::new(),
             suffixes: std::collections::BTreeMap::new(),
             key_locks: KeyLocks::default(),
+            cache_root: None,
         }
+    }
+
+    /// Point the transaction at a project root, so an upload reads the real cached bytes.
+    ///
+    /// A builder rather than a constructor argument so `new()` stays usable by a test with no filesystem, and so
+    /// the CALLER is the one that states where the cache is: `veloct_app::AttachmentService` passes its project
+    /// root, and a test that wants to prove the bytes are read passes a directory it filled itself.
+    pub fn with_cache_root(mut self, project_root: impl Into<std::path::PathBuf>) -> Self {
+        self.cache_root = Some(project_root.into());
+        self
+    }
+
+    /// Where the cached bytes live, when the transaction knows.
+    pub fn cache_root(&self) -> Option<&std::path::Path> {
+        self.cache_root.as_deref()
+    }
+
+    /// The cached bytes for one attachment.
+    ///
+    /// `None` when there is nowhere to read from or the file is absent, so the caller can report that rather
+    /// than sending zeros.
+    fn read_cached(&self, cache_path: &str, size_bytes: u64) -> Option<Vec<u8>> {
+        let root = self.cache_root.as_ref()?;
+        let path = root.join(CACHE_DIRECTORY).join(cache_path);
+        let bytes = std::fs::read(&path).ok()?;
+        // The recorded size is the caller's own check; this only rejects an obviously wrong read.
+        if size_bytes > 0 && bytes.is_empty() {
+            return None;
+        }
+        Some(bytes)
     }
 
     pub fn pool(&self) -> &CachePool {
@@ -399,7 +440,40 @@ impl AttachmentTransaction {
 
         let remote_name = stored.remote_name();
         let size_bytes = stored.size_bytes;
-        let bytes = vec![0u8; size_bytes as usize];
+        let cache_path = stored.cache_path.clone();
+
+        // Read the CACHED BYTES. The first version of this sent `vec![0u8; size_bytes]`, which is a file of the
+        // right length containing nothing — the worst kind of bug, because the upload succeeded, the size
+        // matched, and the picture was blank.
+        let bytes = match self.read_cached(&cache_path, size_bytes) {
+            Some(bytes) => bytes,
+            None => {
+                // Nothing to read, and sending zeros would be a lie about the content. The attachment is left
+                // retryable rather than marked succeeded, and the caller is told what is wrong.
+                let stored = self.pool.get_mut(id).expect("the attachment was just read");
+                stored.state.upload_status = UploadStatus::Failed;
+                stored.last_error = Some(format!(
+                    "the cached bytes for {id} are missing, so there was nothing to upload;                      the cache directory must be the project's own"
+                ));
+                return Err(VeloctError::Attachment(format!(
+                    "the cached bytes for attachment {id} could not be read;                      the transaction needs the project root (use `with_cache_root`) to find them"
+                )));
+            }
+        };
+        // A size that disagrees with the bytes on disk means the record is stale, and uploading either would be
+        // wrong. This is asserted rather than trusted.
+        if bytes.len() as u64 != size_bytes {
+            let stored = self.pool.get_mut(id).expect("the attachment was just read");
+            stored.state.upload_status = UploadStatus::Failed;
+            stored.last_error = Some(format!(
+                "the cached file has {} bytes but the record says {size_bytes}",
+                bytes.len()
+            ));
+            return Err(VeloctError::Attachment(format!(
+                "attachment {id} records {size_bytes} bytes but its cache file has {}",
+                bytes.len()
+            )));
+        }
 
         // No `let` binding here: both arms diverge, so the match's value would never be read.
         match target.store(&remote_name, &bytes) {
@@ -433,12 +507,20 @@ impl AttachmentTransaction {
                 })
             }
             Err(error) => {
-                let message = error.to_string();
                 let stored = self.pool.get_mut(id).expect("still present");
                 stored.state.upload_status = UploadStatus::Failed;
                 stored.state.reference_status = ReferenceStatus::NotApplied;
-                stored.last_error = Some(message.clone());
-                Err(VeloctError::Attachment(message))
+                // The MESSAGE is recorded for the UI, and the error ITSELF is returned.
+                //
+                // This used to wrap every failure as `VeloctError::Attachment(message)`, which threw away the
+                // code and the hint and turned "this target kind has no adapter in this build, here is what to
+                // use instead" into an opaque ATTACHMENT error. A caller cannot act on a code it was never
+                // given, and section 14.13 requires a failure REASON the user can read.
+                stored.last_error = Some(match error.hint() {
+                    Some(hint) => format!("{error} ({hint})"),
+                    None => error.to_string(),
+                });
+                Err(error)
             }
         }
     }
@@ -805,13 +887,76 @@ mod tests {
         StorageTarget::new(config(), Box::new(MemoryStore::with_store(config(), store)))
     }
 
-    fn transaction() -> AttachmentTransaction {
-        AttachmentTransaction::new()
+    /// A fixture with a REAL cache root and the bytes the records claim.
+    ///
+    /// The upload used to send zeros, so no test needed a cache file. Now that it reads them, a fixture that
+    /// does not provide them is testing a state the application never produces — and the tests caught that
+    /// immediately, which is the point of fixing the upload rather than working around it.
+    struct Fixture {
+        transaction: AttachmentTransaction,
+        /// Held so the directory outlives the transaction.
+        _root: tempfile::TempDir,
     }
 
-    fn add(transaction: &mut AttachmentTransaction) -> AttachmentId {
+    impl std::ops::Deref for Fixture {
+        type Target = AttachmentTransaction;
+        fn deref(&self) -> &Self::Target {
+            &self.transaction
+        }
+    }
+
+    impl std::ops::DerefMut for Fixture {
+        fn deref_mut(&mut self) -> &mut Self::Target {
+            &mut self.transaction
+        }
+    }
+
+    fn transaction() -> Fixture {
+        let root = tempfile::TempDir::new().expect("a temp project");
+        Fixture {
+            transaction: AttachmentTransaction::new().with_cache_root(root.path()),
+            _root: root,
+        }
+    }
+
+    /// Write the bytes a record claims, so an upload has something real to send.
+    fn fill_cache(fixture: &Fixture, id: &AttachmentId) {
+        let attachment = fixture
+            .transaction
+            .pool()
+            .get(id)
+            .expect("the attachment was added");
+        let path = fixture
+            ._root
+            .path()
+            .join(crate::pool::CACHE_DIRECTORY)
+            .join(&attachment.cache_path);
+        veloct_core::workdir::ensure_parent(&path).unwrap();
+        std::fs::write(&path, vec![7u8; attachment.size_bytes as usize]).unwrap();
+    }
+
+    /// Write a cache file for every attachment in a shared transaction.
+    fn write_cache_file(
+        cache_root: &std::path::Path,
+        uploader: &Arc<ConcurrentUploader>,
+        size: u64,
+    ) {
+        uploader.with(|transaction| {
+            for id in transaction.pool().ids() {
+                let attachment = transaction.pool().get(id).expect("in the pool");
+                let path = cache_root
+                    .join(crate::pool::CACHE_DIRECTORY)
+                    .join(&attachment.cache_path);
+                veloct_core::workdir::ensure_parent(&path).unwrap();
+                std::fs::write(&path, vec![7u8; size as usize]).unwrap();
+            }
+        });
+    }
+
+    fn add(transaction: &mut Fixture) -> AttachmentId {
         let id = AttachmentId::new("att-1");
         transaction.add(&add_request(&id, "content-hash-1")).unwrap();
+        fill_cache(transaction, &id);
         id
     }
 
@@ -1088,7 +1233,14 @@ mod tests {
         let store = Arc::new(MemoryFileStore::new());
         let target = Arc::new(target_with(store.clone()));
 
-        let uploader = Arc::new(ConcurrentUploader::new(AttachmentTransaction::new()));
+        // A real cache root with the bytes the record claims, because the upload now READS them. The directory
+        // is leaked deliberately: it must outlive the uploader, and a `TempDir` dropped at the end of the test
+        // would be fine but threading the guard through the closure is noise for a test fixture.
+        let root = tempfile::TempDir::new().unwrap();
+        let cache_root = root.path().to_path_buf();
+        let uploader = Arc::new(ConcurrentUploader::new(
+            AttachmentTransaction::new().with_cache_root(cache_root.clone()),
+        ));
         let id = uploader.with(|transaction| {
             transaction
                 .add(&AddRequest::new(
@@ -1103,6 +1255,7 @@ mod tests {
                 .unwrap();
             AttachmentId::new("att-1")
         });
+        write_cache_file(&cache_root, &uploader, 1024);
 
         let barrier = Arc::new(std::sync::Barrier::new(2));
         let handles: Vec<_> = (0..2)
@@ -1190,7 +1343,12 @@ mod tests {
         // The per-key lock must not serialise unrelated files into a failure.
         let store = Arc::new(MemoryFileStore::new());
         let target = Arc::new(target_with(store.clone()));
-        let uploader = Arc::new(ConcurrentUploader::new(AttachmentTransaction::new()));
+        // A real cache root, because the upload now reads the bytes rather than sending zeros.
+        let root = tempfile::TempDir::new().unwrap();
+        let cache_root = root.path().to_path_buf();
+        let uploader = Arc::new(ConcurrentUploader::new(
+            AttachmentTransaction::new().with_cache_root(cache_root.clone()),
+        ));
 
         for (id, hash) in [("att-1", "hash-1"), ("att-2", "hash-2")] {
             uploader.with(|transaction| {
@@ -1207,6 +1365,7 @@ mod tests {
                     .unwrap();
             });
         }
+        write_cache_file(&cache_root, &uploader, 512);
 
         let barrier = Arc::new(std::sync::Barrier::new(2));
         let handles: Vec<_> = ["att-1", "att-2"]
