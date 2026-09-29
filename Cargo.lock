@@ -4996,6 +4996,7 @@ dependencies = [
  "veloct-content",
  "veloct-core",
  "veloct-deploy",
+ "veloct-logging",
  "veloct-markdown",
  "veloct-process",
  "veloct-storage",
@@ -5010,6 +5011,17 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",
+ "time",
+ "veloct-core",
+]
+
+[[package]]
+name = "veloct-logging"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tempfile",
  "time",
  "veloct-core",
 ]

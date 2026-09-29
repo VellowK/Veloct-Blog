@@ -17,6 +17,7 @@
 #![forbid(unsafe_code)]
 
 pub mod commands;
+pub mod logging;
 pub mod state;
 
 pub use commands::{AppInfo, DocumentView, PreviewView, ProjectView, SaveView};
@@ -56,6 +57,7 @@ pub fn run() {
             commands::start_preview,
             commands::stop_preview,
             commands::preview_status,
+            commands::read_log,
         ])
         .setup(|app| {
             // The preview supervisor is started lazily, when a project is opened, so a machine with no

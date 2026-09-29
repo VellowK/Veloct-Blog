@@ -158,6 +158,26 @@ export function describeError(error: unknown): string {
   return command.hint ? `${command.message} (${command.hint})` : command.message;
 }
 
+export interface LogEntryView {
+  timestamp: string;
+  level: 'info' | 'warning' | 'error';
+  category: string;
+  /** The category's label, so the page keeps no table of its own in step with the Rust side. */
+  category_label: string;
+  message: string;
+  fields: Record<string, string>;
+}
+
+export interface LogPage {
+  entries: LogEntryView[];
+  total: number;
+  info: number;
+  warning: number;
+  error: number;
+  /** Every category present, so the filter is built from what actually happened. */
+  categories: string[];
+}
+
 export const api = {
   appInfo: () => invoke<AppInfo>('app_info'),
 
@@ -268,4 +288,23 @@ export const api = {
   stopPreview: () => invoke<PreviewView>('stop_preview'),
 
   previewStatus: () => invoke<PreviewView>('preview_status'),
+
+  /**
+   * Read the project's log.
+   *
+   * The filtering happens on the Rust side, so the page does not receive the whole log to show part of
+   * it. The entries arriving are already redacted either way (handoff.md section 18.1).
+   */
+  readLog: (options?: {
+    limit?: number;
+    level?: 'info' | 'warning' | 'error';
+    category?: string;
+    search?: string;
+  }) =>
+    invoke<LogPage>('read_log', {
+      limit: options?.limit ?? null,
+      level: options?.level ?? null,
+      category: options?.category ?? null,
+      search: options?.search ?? null,
+    }),
 };

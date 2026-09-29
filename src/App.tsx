@@ -27,6 +27,7 @@ import {
   type SaveView,
   type WipTransition,
 } from './lib/api';
+import LogView from './LogView';
 import {
   dueReason,
   hashText,
@@ -154,6 +155,8 @@ export default function App() {
   const [conflict, setConflict] = useState<SaveView | null>(null);
   const [pathInput, setPathInput] = useState('');
   const [filter, setFilter] = useState<ContentKind | 'all'>('all');
+  // Whether the log page is showing instead of the editor (handoff.md section 18).
+  const [showLog, setShowLog] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -344,6 +347,9 @@ export default function App() {
             </nav>
 
             <div className="new-buttons">
+              <button type="button" onClick={() => setShowLog((showing) => !showing)}>
+                {showLog ? '返回编辑' : '查看日志'}
+              </button>
               <button type="button" onClick={() => void createDocument('article')}>
                 + 文章
               </button>
@@ -376,7 +382,9 @@ export default function App() {
       </aside>
 
       <main className="editor">
-        {document ? (
+        {showLog ? (
+          <LogView enabled={project !== null} />
+        ) : document ? (
           <>
             <header className="editor-header">
               <input

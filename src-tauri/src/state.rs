@@ -23,6 +23,7 @@ use veloct_process::{
     ChildSpawner, HttpReadinessProbe, PreviewRole, PreviewSpec, PreviewState, PreviewSupervisor,
     SupervisorConfig,
 };
+use veloct_logging::LogSink;
 use veloct_process::port::reserve_local_port;
 
 /// How the application acquires a preview child process.
@@ -82,6 +83,13 @@ pub struct OpenProject {
     pub content: ContentService,
     /// When the project was opened, so the UI can show it.
     pub opened_at: String,
+    /// The project's event log (handoff.md section 18).
+    ///
+    /// Behind a `Mutex<Box<dyn LogSink>>` rather than a concrete `FileSink` so a test can drive the
+    /// whole command surface against an in-memory log, and so a project whose log directory is not
+    /// writable can still be used: a log that cannot be written must not stop the application, and that
+    /// failure is itself worth an event.
+    pub log: Mutex<Box<dyn LogSink>>,
 }
 
 impl std::fmt::Debug for OpenProject {
@@ -97,11 +105,40 @@ impl OpenProject {
     /// Open a project directory.
     pub fn open(path: impl Into<PathBuf>, now: &str) -> Arc<Self> {
         let root = ProjectRoot::new(path);
+        let sink = crate::logging::open_sink(root.as_path(), now);
         Arc::new(Self {
             content: ContentService::open(root.as_path()),
             root,
             opened_at: now.to_string(),
+            log: Mutex::new(sink),
         })
+    }
+
+    /// Open a project with a specific log sink, which is what tests use.
+    pub fn with_log(path: impl Into<PathBuf>, now: &str, sink: Box<dyn LogSink>) -> Arc<Self> {
+        let root = ProjectRoot::new(path);
+        Arc::new(Self {
+            content: ContentService::open(root.as_path()),
+            root,
+            opened_at: now.to_string(),
+            log: Mutex::new(sink),
+        })
+    }
+
+    /// Record an event in the project's log.
+    ///
+    /// The event is already redacted by the time it gets here, because `LogEvent`'s constructors do
+    /// that and its fields are private. A failed write is reported to the caller rather than swallowed,
+    /// so a broken log is visible instead of looking like a quiet one.
+    pub fn log(&self, event: veloct_logging::LogEvent) -> veloct_core::Result<()> {
+        self.log
+            .lock()
+            .write(&event)
+    }
+
+    /// The most recent entries, for the log page.
+    pub fn recent_log(&self, limit: usize) -> veloct_core::Result<Vec<veloct_logging::Entry>> {
+        self.log.lock().recent(limit)
     }
 
     pub fn path(&self) -> &Path {

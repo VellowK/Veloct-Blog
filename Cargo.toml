@@ -6,6 +6,7 @@ members = [
   "crates/veloct-storage",
   "crates/veloct-content",
   "crates/veloct-git",
+    "crates/veloct-logging",
   "crates/veloct-process",
   "crates/veloct-release",
   "crates/veloct-deploy",
@@ -31,6 +32,7 @@ veloct-markdown = { path = "crates/veloct-markdown" }
 veloct-storage = { path = "crates/veloct-storage" }
 veloct-content = { path = "crates/veloct-content" }
 veloct-git = { path = "crates/veloct-git" }
+veloct-logging = { path = "crates/veloct-logging" }
 veloct-process = { path = "crates/veloct-process" }
 veloct-release = { path = "crates/veloct-release" }
 veloct-deploy = { path = "crates/veloct-deploy" }

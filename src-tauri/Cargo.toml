@@ -18,6 +18,7 @@ tauri-build = { workspace = true }
 veloct-core = { workspace = true }
 veloct-app = { workspace = true }
 veloct-content = { workspace = true }
+veloct-logging = { workspace = true }
 veloct-storage = { workspace = true }
 veloct-process = { workspace = true }
 veloct-attach = { workspace = true }

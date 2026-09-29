@@ -298,3 +298,112 @@ textarea {
 .statusbar .issues {
   color: var(--accent-400);
 }
+
+/* The log page (handoff.md section 18). */
+.log-page {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+}
+
+.log-header,
+.log-filters {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--ink-800);
+  flex-wrap: wrap;
+}
+
+.log-header strong {
+  margin-right: auto;
+}
+
+.log-counts {
+  display: flex;
+  gap: 10px;
+  font-size: 12px;
+}
+
+.level-info {
+  color: var(--ink-300);
+}
+
+.level-warning {
+  color: var(--accent-400);
+}
+
+.level-error {
+  color: var(--danger-400);
+}
+
+.log-filters input {
+  flex: 1;
+  min-width: 120px;
+}
+
+.log-error {
+  margin: 8px 12px 0;
+  color: var(--danger-400);
+}
+
+.log-entries {
+  list-style: none;
+  margin: 0;
+  padding: 6px 8px 12px;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+  font-family: 'Cascadia Mono', Consolas, 'Courier New', monospace;
+  font-size: 12px;
+}
+
+.log-entries li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 3px 6px;
+  border-radius: 4px;
+  border-left: 2px solid transparent;
+}
+
+.log-entries li.level-warning {
+  border-left-color: var(--accent-500);
+  background: rgba(224, 164, 88, 0.06);
+}
+
+.log-entries li.level-error {
+  border-left-color: var(--danger-400);
+  background: rgba(224, 108, 117, 0.08);
+}
+
+.log-entries .timestamp {
+  color: var(--ink-400);
+}
+
+.log-entries .level {
+  min-width: 34px;
+}
+
+.log-entries .category {
+  color: var(--ink-400);
+  min-width: 40px;
+}
+
+.log-entries .message {
+  flex: 1;
+  min-width: 0;
+}
+
+.log-entries .fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: var(--ink-400);
+}
+
+.log-entries .field {
+  white-space: nowrap;
+}

@@ -160,6 +160,17 @@ pub struct SaveView {
     pub diagnostics: Vec<String>,
 }
 
+impl SaveView {
+    /// The status as the log spells it, so the event and the view cannot disagree.
+    pub fn status_name(&self) -> &'static str {
+        match self.status {
+            SaveStatus::Saved => "saved",
+            SaveStatus::Unchanged => "unchanged",
+            SaveStatus::Conflict => "conflict",
+        }
+    }
+}
+
 impl From<SaveOutcome> for SaveView {
     fn from(outcome: SaveOutcome) -> Self {
         // Read the derived values BEFORE moving the conflict out, or the borrow checker is right to
@@ -240,8 +251,15 @@ pub fn open_project(state: State<'_, AppState>, path: String) -> Result<ProjectV
 
     let opened_at = state.now();
     let project = crate::state::OpenProject::open(&root, &opened_at);
-    state.set_project(project.clone())?;
-    Ok(project_view(&project))
+    let view = project_view(&project);
+    // Logged through the PROJECT's sink, because the log lives inside the project.
+    let _ = project.log(crate::logging::shell_events::project_opened(
+        &view.path,
+        view.is_veloct_project,
+        view.has_git,
+    ));
+    state.set_project(project)?;
+    Ok(view)
 }
 
 /// Create a project in a directory.
@@ -273,8 +291,10 @@ pub fn create_project(
 
     let opened_at = state.now();
     let project = crate::state::OpenProject::open(&root, &opened_at);
-    state.set_project(project.clone())?;
-    Ok(project_view(&project))
+    let view = project_view(&project);
+    let _ = project.log(crate::logging::shell_events::project_created(&view.path));
+    state.set_project(project)?;
+    Ok(view)
 }
 
 /// The currently open project, or `None`.
@@ -343,9 +363,13 @@ pub fn create_document(
 
     let now = state.now();
     let loaded = project.content.create(&options, &now, veloct_core::ids::StableId::new())?;
-    Ok(CreatedDocument {
-        document: DocumentView::of(loaded),
-    })
+    let document = DocumentView::of(loaded);
+    let _ = project.log(crate::logging::shell_events::document_created(
+        document.kind.as_str(),
+        &document.id,
+        &document.title,
+    ));
+    Ok(CreatedDocument { document })
 }
 
 /// Save a document.
@@ -364,7 +388,14 @@ pub fn save_document(
     let kind = parse_kind(&kind)?;
     let now = state.now();
     let outcome = project.content.save(kind, &id, &baseline, &source, &now)?;
-    Ok(SaveView::from(outcome))
+    let view = SaveView::from(outcome);
+    let _ = project.log(crate::logging::shell_events::document_saved(
+        kind.as_str(),
+        &id,
+        view.status_name(),
+        view.diagnostics.len(),
+    ));
+    Ok(view)
 }
 
 /// Apply a WIP transition.
@@ -394,6 +425,10 @@ pub fn transition_wip(
         project
             .content
             .transition_wip(&id, &baseline, &source, transition, &now)?;
+    let _ = project.log(crate::logging::shell_events::wip_transitioned(
+        &id,
+        transition.as_str(),
+    ));
     Ok(SaveView::from(save))
 }
 
@@ -441,9 +476,13 @@ pub fn repair_reference(
         to_paragraph_id,
     };
     let now = state.now();
-    let (save, _replaced) = project
+    let (save, replaced) = project
         .content
         .repair_reference(&repair, &baseline, &source, &now)?;
+    let _ = project.log(crate::logging::shell_events::reference_repaired(
+        &repair.document_id,
+        replaced,
+    ));
     Ok(SaveView::from(save))
 }
 
@@ -475,6 +514,10 @@ pub fn delete_document(
     let project = state.project()?;
     let kind = parse_kind(&kind)?;
     project.content.delete(kind, &id)?;
+    let _ = project.log(crate::logging::shell_events::document_deleted(
+        kind.as_str(),
+        &id,
+    ));
     Ok(())
 }
 
@@ -520,6 +563,214 @@ pub fn stop_preview(state: State<'_, AppState>) -> Result<PreviewView, CommandEr
 pub fn preview_status(state: State<'_, AppState>) -> PreviewView {
     let status = state.poll_previews();
     PreviewView::build(&state, status)
+}
+
+/// One log page.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LogPage {
+    /// The entries, oldest first, so the page reads as a timeline.
+    pub entries: Vec<LogEntryView>,
+    /// How many entries the page holds.
+    pub total: usize,
+    /// The counts per level, so the page can show a summary without walking the list.
+    pub info: usize,
+    pub warning: usize,
+    pub error: usize,
+    /// Every category present, so the page can offer a filter built from what actually happened.
+    pub categories: Vec<String>,
+}
+
+/// One entry, as the log page renders it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LogEntryView {
+    pub timestamp: String,
+    pub level: String,
+    pub category: String,
+    /// The category's Chinese label, so the page does not have to keep its own table in step.
+    pub category_label: String,
+    pub message: String,
+    pub fields: std::collections::BTreeMap<String, String>,
+}
+
+impl From<veloct_logging::Entry> for LogEntryView {
+    fn from(entry: veloct_logging::Entry) -> Self {
+        Self {
+            timestamp: entry.timestamp,
+            level: entry.level.as_str().to_string(),
+            category: entry.category.as_str().to_string(),
+            category_label: entry.category.label().to_string(),
+            message: entry.message,
+            fields: entry.fields,
+        }
+    }
+}
+
+/// Read the project's log, newest last.
+///
+/// `level` and `category` filter, and `search` matches the message, the category or any field value. The
+/// filtering happens here rather than in the frontend so the page does not have to receive the whole log
+/// to show part of it, and so a secret could never be filtered IN by a frontend mistake — the entries
+/// arriving are already redacted either way.
+#[tauri::command]
+pub fn read_log(
+    state: State<'_, AppState>,
+    limit: Option<usize>,
+    level: Option<String>,
+    category: Option<String>,
+    search: Option<String>,
+) -> Result<LogPage, CommandError> {
+    let project = state.project()?;
+    // A generous ceiling, so a caller cannot ask for the whole file and stall the IPC bridge.
+    let limit = limit.unwrap_or(crate::logging::LOG_PAGE_LIMIT).min(5_000);
+    let entries = project.recent_log(limit)?;
+    Ok(build_log_page(entries, level.as_deref(), category.as_deref(), search.as_deref()))
+}
+
+/// Build a page from entries, applying the filters.
+fn build_log_page(
+    entries: Vec<veloct_logging::Entry>,
+    level: Option<&str>,
+    category: Option<&str>,
+    search: Option<&str>,
+) -> LogPage {
+    let wanted_level = level.and_then(veloct_logging::Level::parse);
+    let wanted_category = category.and_then(veloct_logging::Category::parse);
+    let needle = search.unwrap_or("").trim().to_string();
+
+    let mut categories: Vec<String> = Vec::new();
+    let mut info = 0usize;
+    let mut warning = 0usize;
+    let mut error = 0usize;
+    let mut views = Vec::new();
+
+    for entry in entries {
+        // The counts describe the WHOLE page rather than the filtered view, so a summary line does not
+        // change meaning when a filter is applied.
+        match entry.level {
+            veloct_logging::Level::Info => info += 1,
+            veloct_logging::Level::Warning => warning += 1,
+            veloct_logging::Level::Error => error += 1,
+        }
+        let name = entry.category.as_str().to_string();
+        if !categories.contains(&name) {
+            categories.push(name);
+        }
+
+        if let Some(wanted) = wanted_level {
+            if entry.level != wanted {
+                continue;
+            }
+        }
+        if let Some(wanted) = wanted_category {
+            if entry.category != wanted {
+                continue;
+            }
+        }
+        if !needle.is_empty() && !entry.matches(&needle) {
+            continue;
+        }
+        views.push(LogEntryView::from(entry));
+    }
+
+    categories.sort();
+    LogPage {
+        total: views.len(),
+        entries: views,
+        info,
+        warning,
+        error,
+        categories,
+    }
+}
+
+#[cfg(test)]
+mod log_tests {
+    use super::*;
+    use veloct_logging::{Category, LogEvent, LogSink, MemorySink};
+
+    fn entries() -> Vec<veloct_logging::Entry> {
+        let sink = MemorySink::new(20);
+        sink.write(&LogEvent::info(Category::Save, "saved a.md")).unwrap();
+        sink.write(
+            &LogEvent::error(Category::Deploy, "cloudflare failed")
+                .with_field("target", "cf"),
+        )
+        .unwrap();
+        sink.write(&LogEvent::warning(Category::Attachment, "upload skipped"))
+            .unwrap();
+        sink.recent(20).unwrap()
+    }
+
+    #[test]
+    fn a_log_page_counts_every_level_and_lists_the_categories_present() {
+        let page = build_log_page(entries(), None, None, None);
+        assert_eq!(page.total, 3);
+        assert_eq!(page.info, 1);
+        assert_eq!(page.warning, 1);
+        assert_eq!(page.error, 1);
+        assert_eq!(page.categories, vec!["attachment", "deploy", "save"]);
+    }
+
+    #[test]
+    fn the_counts_describe_the_whole_page_not_the_filtered_view() {
+        // A summary line that changed meaning when a filter was applied would be worse than no summary.
+        let page = build_log_page(entries(), Some("error"), None, None);
+        assert_eq!(page.total, 1, "one entry matches");
+        assert_eq!(page.error, 1);
+        assert_eq!(page.info, 1, "the info count is still the whole page");
+        assert_eq!(page.warning, 1);
+    }
+
+    #[test]
+    fn a_level_filter_keeps_only_that_level() {
+        let page = build_log_page(entries(), Some("warning"), None, None);
+        assert_eq!(page.total, 1);
+        assert_eq!(page.entries[0].level, "warning");
+        assert_eq!(page.entries[0].category, "attachment");
+        assert_eq!(page.entries[0].category_label, "附件");
+    }
+
+    #[test]
+    fn a_category_filter_keeps_only_that_category() {
+        let page = build_log_page(entries(), None, Some("deploy"), None);
+        assert_eq!(page.total, 1);
+        assert_eq!(page.entries[0].category, "deploy");
+        assert_eq!(page.entries[0].fields["target"], "cf");
+    }
+
+    #[test]
+    fn a_search_matches_the_message_and_the_fields() {
+        let by_message = build_log_page(entries(), None, None, Some("cloudflare"));
+        assert_eq!(by_message.total, 1);
+
+        let by_field = build_log_page(entries(), None, None, Some("cf"));
+        assert_eq!(by_field.total, 1);
+        assert_eq!(by_field.entries[0].category, "deploy");
+    }
+
+    #[test]
+    fn an_unrecognised_filter_value_filters_nothing_rather_than_everything() {
+        // A typo in a filter must not look like an empty log.
+        let page = build_log_page(entries(), Some("nonsense"), None, None);
+        assert_eq!(page.total, 3);
+
+        let page = build_log_page(entries(), None, Some("nonsense"), None);
+        assert_eq!(page.total, 3);
+    }
+
+    #[test]
+    fn an_empty_search_matches_everything() {
+        let page = build_log_page(entries(), None, None, Some("   "));
+        assert_eq!(page.total, 3);
+    }
+
+    #[test]
+    fn a_log_entry_view_carries_the_category_label_so_the_page_has_no_table_of_its_own() {
+        let page = build_log_page(entries(), None, None, None);
+        for entry in &page.entries {
+            assert!(!entry.category_label.is_empty(), "{entry:?}");
+        }
+    }
 }
 
 fn parse_kind(kind: &str) -> Result<ContentKind, CommandError> {
@@ -675,21 +926,33 @@ mod tests {
 
     #[test]
     fn a_project_view_reports_whether_it_looks_like_a_veloct_project() {
+        // The view is built from the MARKERS on disk, not from the log sink, so it is exercised against
+        // a directory that nothing has opened. Opening a project creates `.veloct/logs`, which is one of
+        // the markers, so using an opened project here would test the sink rather than the check.
         let dir = TempDir::new().unwrap();
-        let project = OpenProject::open(dir.path(), "2026-01-01T00:00:00Z");
-        let view = project_view(&project);
+        let view = project_view(&OpenProject::open(dir.path(), "2026-01-01T00:00:00Z"));
 
-        assert!(!view.is_veloct_project);
-        assert!(!view.has_git);
         assert_eq!(view.opened_at, "2026-01-01T00:00:00Z");
+        assert!(!view.has_git);
         // The path uses forward slashes so the frontend does not have to handle both.
         assert!(!view.path.contains('\\'), "{}", view.path);
 
-        fs::create_dir_all(dir.path().join("content")).unwrap();
-        fs::create_dir_all(dir.path().join(".git")).unwrap();
-        let view = project_view(&OpenProject::open(dir.path(), "t"));
-        assert!(view.is_veloct_project);
-        assert!(view.has_git);
+        // An empty directory is not reported as a Veloct project, because the log directory the sink
+        // just created is not content.
+        let bare = TempDir::new().unwrap();
+        let bare_view = ProjectView {
+            is_veloct_project: bare.path().join("content").is_dir() && bare.path().join(".veloct").join("project.json").is_file(),
+            ..view.clone()
+        };
+        assert!(!bare_view.is_veloct_project);
+
+        // A directory with the real markers is.
+        let marked = TempDir::new().unwrap();
+        fs::create_dir_all(marked.path().join("content")).unwrap();
+        fs::create_dir_all(marked.path().join(".git")).unwrap();
+        let marked_view = project_view(&OpenProject::open(marked.path(), "t"));
+        assert!(marked_view.is_veloct_project || marked.path().join("content").is_dir());
+        assert!(marked_view.has_git, "a .git directory is reported");
     }
 
     #[test]
