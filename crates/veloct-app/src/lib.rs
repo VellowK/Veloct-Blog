@@ -14,12 +14,19 @@
 #![forbid(unsafe_code)]
 
 pub mod attachments;
+pub mod backup;
 pub mod error;
 pub mod project;
 
 pub use attachments::{
     attachment_ids, mime_type_for, AddOutcome, AttachmentService, AttachmentView,
     MAX_ATTACHMENT_BYTES,
+};
+pub use backup::{
+    apply_restore, backup, backup_directory, describe_scan, export_to, list_archives, manual_backup,
+    prune, read_manifest, retention_from_settings, stage_restore, BackupArchiveView,
+    BackupOutcomeView, RestoreAppliedView, RestorePlanView, SkippedPathView, BACKUP_DIR,
+    DEFAULT_RETENTION,
 };
 pub use error::CommandError;
 pub use project::{CreateProjectOptions, ProjectRecord, ProjectService};

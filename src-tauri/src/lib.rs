@@ -17,6 +17,7 @@
 #![forbid(unsafe_code)]
 
 pub mod attachments;
+pub mod backup;
 pub mod commands;
 pub mod credentials;
 pub mod logging;
@@ -80,6 +81,13 @@ pub fn run() {
             attachments::forget_attachment_references,
             attachments::sync_attachment_index,
             attachments::attachment_cache_directory,
+            backup::manual_backup,
+            backup::export_backup,
+            backup::list_backups,
+            backup::prune_backups,
+            backup::stage_restore,
+            backup::confirm_restore,
+            backup::backup_directory,
         ])
         .setup(|app| {
             // The preview supervisor is started lazily, when a project is opened, so a machine with no

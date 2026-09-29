@@ -30,6 +30,7 @@ import {
 } from './lib/api';
 import Editor from './Editor';
 import AttachmentPanel from './AttachmentPanel';
+import BackupPanel from './BackupPanel';
 import LogView from './LogView';
 import PageCreator, { AiSettingsPanel } from './PageCreator';
 import PublishPanel from './PublishPanel';
@@ -165,6 +166,7 @@ export default function App() {
   // The publish panel is a third main view beside the editor and the log.
   const [showPublish, setShowPublish] = useState(false);
   const [showAttachments, setShowAttachments] = useState(false);
+  const [showBackups, setShowBackups] = useState(false);
   // The editor/preview split, draggable (handoff.md section 4.2). Stored as a percentage so it survives
   // a window resize, and clamped so a pane can never be dragged to nothing and become unrecoverable.
   const [splitPercent, setSplitPercent] = useState(50);
@@ -430,6 +432,19 @@ export default function App() {
               >
                 附件
               </button>
+              <button
+                type="button"
+                className={showBackups ? 'active' : ''}
+                onClick={() => {
+                  setShowBackups((showing) => !showing);
+                  setShowAttachments(false);
+                  setShowLog(false);
+                  setShowPublish(false);
+                }}
+                title="备份与恢复(handoff.md 第 17 节)"
+              >
+                备份
+              </button>
             </div>
 
             <ul className="document-list">
@@ -453,7 +468,9 @@ export default function App() {
       </aside>
 
       <main className="editor">
-        {showAttachments ? (
+        {showBackups ? (
+          <BackupPanel enabled={project !== null} />
+        ) : showAttachments ? (
           <AttachmentPanel
             enabled={project !== null}
             onInsertMarkdown={(markdown) => {

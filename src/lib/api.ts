@@ -324,6 +324,69 @@ export interface AttachmentOrphans {
   needs_confirmation: AttachmentView[];
 }
 
+/** A path left out of an archive, with the reason (handoff.md section 17.1). */
+export interface SkippedPathView {
+  path: string;
+  reason: string;
+}
+
+/** What a backup produced. */
+export interface BackupOutcomeView {
+  archive_path: string;
+  archive_bytes: number;
+  archive_sha256: string;
+  file_count: number;
+  total_bytes: number;
+  skipped: SkippedPathView[];
+  /** Findings by PATH and KIND. The value is never sent, so it cannot be shown by mistake. */
+  secret_findings: string[];
+  /** Whether a finding blocks an upload (section 17.3). The local archive is still usable. */
+  needs_acknowledgement: boolean;
+  history_note: string | null;
+  created_at: string;
+}
+
+export interface BackupArchiveView {
+  path: string;
+  file_name: string;
+  bytes: number;
+  created_at: string;
+  file_count: number;
+  trigger: string;
+  secret_findings: number;
+}
+
+/** A restore plan. Nothing has been replaced when this exists (section 17.10). */
+export interface RestorePlanView {
+  mode: string;
+  archive_path: string;
+  file_count: number;
+  total_bytes: number;
+  will_apply: string[];
+  will_preserve: SkippedPathView[];
+  needs_publish_afterwards: boolean;
+  credentials_to_rebind: string[];
+  history_note: string | null;
+  summary: string;
+}
+
+export interface StagedRestoreView {
+  plan: RestorePlanView;
+  staging_directory: string;
+}
+
+export interface RestoreAppliedView {
+  mode: string;
+  files_written: number;
+  total_bytes: number;
+  preserved: string[];
+  replaced: string[];
+  needs_index_rebuild: boolean;
+  working_tree_changed: boolean;
+  credentials_to_rebind: string[];
+  summary: string;
+}
+
 export const api = {
   appInfo: () => invoke<AppInfo>('app_info'),
 
@@ -568,6 +631,42 @@ export const api = {
   syncAttachmentIndex: () => invoke<number>('sync_attachment_index'),
 
   attachmentCacheDirectory: () => invoke<string>('attachment_cache_directory'),
+
+  /** Take a manual backup into the project's own backup directory (section 17.8). */
+  manualBackup: () => invoke<BackupOutcomeView>('manual_backup'),
+
+  /** Export a backup to a directory the user chose (section 17.9). */
+  exportBackup: (destinationDirectory: string) =>
+    invoke<BackupOutcomeView>('export_backup', { destinationDirectory }),
+
+  listBackups: (directory?: string) =>
+    invoke<BackupArchiveView[]>('list_backups', { directory: directory ?? null }),
+
+  /** Apply the retention policy (section 17.6). */
+  pruneBackups: (options?: { directory?: string; keep?: number }) =>
+    invoke<number>('prune_backups', {
+      directory: options?.directory ?? null,
+      keep: options?.keep ?? null,
+    }),
+
+  /**
+   * Stage a restore and read the plan. NOTHING is replaced (section 17.10).
+   *
+   * Deliberately a separate call from `confirmRestore`, because a single restore call would make the
+   * confirmation a formality.
+   */
+  stageRestore: (archivePath: string, mode: 'full' | 'content_only') =>
+    invoke<StagedRestoreView>('stage_restore', { archivePath, mode }),
+
+  /** Apply a staged restore. The Rust side refuses an unconfirmed apply. */
+  confirmRestore: (archivePath: string, mode: string) =>
+    invoke<RestoreAppliedView>('confirm_restore', {
+      archivePath,
+      mode,
+      confirmed: true,
+    }),
+
+  backupDirectory: () => invoke<string>('backup_directory'),
 
   /** Every release the project has, newest first. */
   listReleases: () => invoke<ReleaseView[]>('list_releases'),

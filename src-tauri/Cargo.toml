@@ -43,6 +43,8 @@ tauri-plugin-dialog = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+veloct-app = { workspace = true }
+veloct-backup = { workspace = true }
 veloct-git = { workspace = true }
 git2 = { workspace = true }
 veloct-sidecar = { workspace = true }
