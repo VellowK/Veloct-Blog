@@ -27,6 +27,7 @@ veloct-release = { workspace = true }
 veloct-storage = { workspace = true }
 veloct-process = { workspace = true }
 veloct-attach = { workspace = true }
+rand = { workspace = true }
 veloct-backup = { workspace = true }
 veloct-deploy = { workspace = true }
 veloct-markdown = { workspace = true }

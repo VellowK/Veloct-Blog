@@ -16,6 +16,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod attachments;
 pub mod commands;
 pub mod credentials;
 pub mod logging;
@@ -70,6 +71,15 @@ pub fn run() {
             commands::create_page_from_draft,
             commands::publish_project,
             commands::list_releases,
+            attachments::add_attachment,
+            attachments::list_attachments,
+            attachments::attachment_orphans,
+            attachments::remove_attachment,
+            attachments::attachment_markdown,
+            attachments::reference_attachment,
+            attachments::forget_attachment_references,
+            attachments::sync_attachment_index,
+            attachments::attachment_cache_directory,
         ])
         .setup(|app| {
             // The preview supervisor is started lazily, when a project is opened, so a machine with no

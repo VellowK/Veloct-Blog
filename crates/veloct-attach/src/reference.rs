@@ -253,6 +253,34 @@ impl ReferenceIndex {
     }
 
     /// Which attachments a document references, so deleting a document can update the index.
+    /// Forget every reference from one document, across every attachment.
+    ///
+    /// The per-set `ReferenceSet::remove_document` removes one document from ONE attachment, so nothing
+    /// could answer "this article is gone, forget it everywhere" — which is what deleting an article needs,
+    /// or its citations would survive it and keep attachments from being orphans.
+    ///
+    /// Sets left empty are removed, so an attachment that loses its last reference genuinely has no entry
+    /// rather than an empty one that reads as unreferenced but present.
+    pub fn forget_document(&mut self, content_id: &str) -> usize {
+        let mut removed = 0usize;
+        let mut emptied: Vec<AttachmentId> = Vec::new();
+        for (id, set) in self.sets.iter_mut() {
+            removed += set.remove_document(content_id);
+            if set.is_empty() {
+                emptied.push(id.clone());
+            }
+        }
+        for id in emptied {
+            self.sets.remove(&id);
+        }
+        removed
+    }
+
+    /// The number of references one attachment has.
+    pub fn count_for(&self, id: &AttachmentId) -> usize {
+        self.sets.get(id).map(ReferenceSet::len).unwrap_or(0)
+    }
+
     pub fn referenced_by(&self, content_id: &str) -> Vec<&AttachmentId> {
         self.sets
             .iter()

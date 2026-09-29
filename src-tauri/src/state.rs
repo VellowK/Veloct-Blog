@@ -90,6 +90,11 @@ pub struct OpenProject {
     /// writable can still be used: a log that cannot be written must not stop the application, and that
     /// failure is itself worth an event.
     pub log: Mutex<Box<dyn LogSink>>,
+    /// The attachment cache pool (`handoff.md` §13).
+    ///
+    /// Behind a lock because its operations mutate the pool AND write the state file, so two concurrent adds
+    /// could interleave a read and a write of the same state.
+    pub attachments: Mutex<veloct_app::AttachmentService>,
 }
 
 impl std::fmt::Debug for OpenProject {
@@ -103,26 +108,43 @@ impl std::fmt::Debug for OpenProject {
 
 impl OpenProject {
     /// Open a project directory.
-    pub fn open(path: impl Into<PathBuf>, now: &str) -> Arc<Self> {
+    ///
+    /// FALLIBLE because the attachment state can genuinely fail to load, and an earlier version of this
+    /// function fell back to a pool rooted in the TEMP DIRECTORY when it did. That is worse than failing: the
+    /// user would attach pictures to what looked like their project and the records would land somewhere else,
+    /// silently. An unreadable state file is reported with its path so it can be repaired.
+    pub fn open(path: impl Into<PathBuf>, now: &str) -> veloct_core::Result<Arc<Self>> {
         let root = ProjectRoot::new(path);
         let sink = crate::logging::open_sink(root.as_path(), now);
-        Arc::new(Self {
+        let attachments = veloct_app::AttachmentService::open(root.as_path())?;
+        Ok(Arc::new(Self {
             content: ContentService::open(root.as_path()),
             root,
             opened_at: now.to_string(),
             log: Mutex::new(sink),
-        })
+            attachments: Mutex::new(attachments),
+        }))
     }
 
     /// Open a project with a specific log sink, which is what tests use.
     pub fn with_log(path: impl Into<PathBuf>, now: &str, sink: Box<dyn LogSink>) -> Arc<Self> {
         let root = ProjectRoot::new(path);
+        let attachments = veloct_app::AttachmentService::open(root.as_path())
+            .expect("the attachment state is openable in a test project");
         Arc::new(Self {
             content: ContentService::open(root.as_path()),
             root,
             opened_at: now.to_string(),
             log: Mutex::new(sink),
+            attachments: Mutex::new(attachments),
         })
+    }
+
+    /// The attachment pool.
+    ///
+    /// `parking_lot::Mutex` has no poisoning, so this cannot fail and returns the guard directly.
+    pub fn attachments(&self) -> parking_lot::MutexGuard<'_, veloct_app::AttachmentService> {
+        self.attachments.lock()
     }
 
     /// Record an event in the project's log.
@@ -343,7 +365,7 @@ mod tests {
     fn setting_a_project_makes_it_current_and_records_when_it_was_opened() {
         let dir = TempDir::new().unwrap();
         let state = AppState::headless();
-        let project = OpenProject::open(dir.path(), "2026-01-01T00:00:00Z");
+        let project = OpenProject::open(dir.path(), "2026-01-01T00:00:00Z").unwrap();
 
         state.set_project(project.clone()).unwrap();
         let current = state.project().unwrap();
@@ -360,10 +382,10 @@ mod tests {
         let state = AppState::headless();
 
         state
-            .set_project(OpenProject::open(first.path(), "t"))
+            .set_project(OpenProject::open(first.path(), "t").unwrap())
             .unwrap();
         state
-            .set_project(OpenProject::open(second.path(), "t"))
+            .set_project(OpenProject::open(second.path(), "t").unwrap())
             .unwrap();
 
         assert_eq!(state.project().unwrap().path(), second.path());
@@ -376,7 +398,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let state = AppState::headless();
         state
-            .set_project(OpenProject::open(dir.path(), "t"))
+            .set_project(OpenProject::open(dir.path(), "t").unwrap())
             .unwrap();
 
         let error = state.start_site_preview().unwrap_err();
@@ -473,7 +495,7 @@ mod tests {
     #[test]
     fn an_open_project_exposes_a_content_service_for_its_root() {
         let dir = TempDir::new().unwrap();
-        let project = OpenProject::open(dir.path(), "t");
+        let project = OpenProject::open(dir.path(), "t").unwrap();
         assert_eq!(project.content.paths().root(), dir.path());
         // And the service reads an empty project cleanly rather than failing.
         let index = project.content.build_index().unwrap();

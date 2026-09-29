@@ -35,7 +35,8 @@ pub use network::{
     NetworkImageChoice,
 };
 pub use pool::{
-    Attachment, AttachmentId, CachePool, CleanupOutcome, CleanupRequest, PoolListing, ReferenceTask,
+    checked_cache_path, validate_original_name, Attachment, AttachmentId, CachePool, CleanupOutcome,
+    CleanupRequest, InsertOutcome, PoolListing, ReferenceTask,
 };
 pub use reference::{ReferenceIndex, ReferenceSet, ReferenceTarget};
 pub use state::{

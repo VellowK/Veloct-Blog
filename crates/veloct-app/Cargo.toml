@@ -8,6 +8,7 @@ license.workspace = true
 
 [dependencies]
 veloct-core = { workspace = true }
+rusqlite = { workspace = true }
 veloct-markdown = { workspace = true }
 veloct-storage = { workspace = true }
 veloct-content = { workspace = true }

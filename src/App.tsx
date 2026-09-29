@@ -29,6 +29,7 @@ import {
   type WipTransition,
 } from './lib/api';
 import Editor from './Editor';
+import AttachmentPanel from './AttachmentPanel';
 import LogView from './LogView';
 import PageCreator, { AiSettingsPanel } from './PageCreator';
 import PublishPanel from './PublishPanel';
@@ -163,6 +164,7 @@ export default function App() {
   const [showLog, setShowLog] = useState(false);
   // The publish panel is a third main view beside the editor and the log.
   const [showPublish, setShowPublish] = useState(false);
+  const [showAttachments, setShowAttachments] = useState(false);
   // The editor/preview split, draggable (handoff.md section 4.2). Stored as a percentage so it survives
   // a window resize, and clamped so a pane can never be dragged to nothing and become unrecoverable.
   const [splitPercent, setSplitPercent] = useState(50);
@@ -416,6 +418,18 @@ export default function App() {
               <button type="button" onClick={() => setShowAiSettings(true)}>
                 AI 设置
               </button>
+              <button
+                type="button"
+                className={showAttachments ? 'active' : ''}
+                onClick={() => {
+                  setShowAttachments((showing) => !showing);
+                  setShowLog(false);
+                  setShowPublish(false);
+                }}
+                title="附件池(handoff.md 第 13 节)"
+              >
+                附件
+              </button>
             </div>
 
             <ul className="document-list">
@@ -439,7 +453,24 @@ export default function App() {
       </aside>
 
       <main className="editor">
-        {showPublish ? (
+        {showAttachments ? (
+          <AttachmentPanel
+            enabled={project !== null}
+            onInsertMarkdown={(markdown) => {
+              // §13.3: the pool never rewrites an article. The Markdown is appended to the buffer here and the
+              // user saves when they choose, so adding a picture cannot edit a document by itself.
+              setShowAttachments(false);
+              if (document) {
+                const next = `${source.trimEnd()}\n\n${markdown}\n`;
+                setSource(next);
+                autosave.onChange(next);
+                setStatus('已将附件 Markdown 插入编辑器,保存后生效');
+              } else {
+                setStatus('请先打开一篇文章,再插入附件 Markdown');
+              }
+            }}
+          />
+        ) : showPublish ? (
           <PublishPanel
             enabled={project !== null}
             onPublished={() => void refresh()}

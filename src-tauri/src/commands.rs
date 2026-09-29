@@ -250,7 +250,7 @@ pub fn open_project(state: State<'_, AppState>, path: String) -> Result<ProjectV
     }
 
     let opened_at = state.now();
-    let project = crate::state::OpenProject::open(&root, &opened_at);
+    let project = crate::state::OpenProject::open(&root, &opened_at)?;
     let view = project_view(&project);
     // Logged through the PROJECT's sink, because the log lives inside the project.
     let _ = project.log(crate::logging::shell_events::project_opened(
@@ -290,7 +290,7 @@ pub fn create_project(
     )?;
 
     let opened_at = state.now();
-    let project = crate::state::OpenProject::open(&root, &opened_at);
+    let project = crate::state::OpenProject::open(&root, &opened_at)?;
     let view = project_view(&project);
     let _ = project.log(crate::logging::shell_events::project_created(&view.path));
     state.set_project(project)?;
@@ -1272,7 +1272,7 @@ mod log_tests {
 }
 
 /// An invalid-request error, in the shape the frontend already handles.
-fn command_invalid(message: impl Into<String>) -> CommandError {
+pub(crate) fn command_invalid(message: impl Into<String>) -> CommandError {
     CommandError::new("INVALID", message)
 }
 
@@ -1310,7 +1310,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let state = AppState::headless();
         state
-            .set_project(OpenProject::open(dir.path(), "2026-01-01T00:00:00Z"))
+            .set_project(OpenProject::open(dir.path(), "2026-01-01T00:00:00Z").unwrap())
             .unwrap();
         (dir, state)
     }
@@ -1433,7 +1433,7 @@ mod tests {
         // a directory that nothing has opened. Opening a project creates `.veloct/logs`, which is one of
         // the markers, so using an opened project here would test the sink rather than the check.
         let dir = TempDir::new().unwrap();
-        let view = project_view(&OpenProject::open(dir.path(), "2026-01-01T00:00:00Z"));
+        let view = project_view(&OpenProject::open(dir.path(), "2026-01-01T00:00:00Z").unwrap());
 
         assert_eq!(view.opened_at, "2026-01-01T00:00:00Z");
         assert!(!view.has_git);
@@ -1453,7 +1453,7 @@ mod tests {
         let marked = TempDir::new().unwrap();
         fs::create_dir_all(marked.path().join("content")).unwrap();
         fs::create_dir_all(marked.path().join(".git")).unwrap();
-        let marked_view = project_view(&OpenProject::open(marked.path(), "t"));
+        let marked_view = project_view(&OpenProject::open(marked.path(), "t").unwrap());
         assert!(marked_view.is_veloct_project || marked.path().join("content").is_dir());
         assert!(marked_view.has_git, "a .git directory is reported");
     }

@@ -13,8 +13,13 @@
 
 #![forbid(unsafe_code)]
 
+pub mod attachments;
 pub mod error;
 pub mod project;
 
+pub use attachments::{
+    attachment_ids, mime_type_for, AddOutcome, AttachmentService, AttachmentView,
+    MAX_ATTACHMENT_BYTES,
+};
 pub use error::CommandError;
 pub use project::{CreateProjectOptions, ProjectRecord, ProjectService};

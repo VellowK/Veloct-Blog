@@ -5125,6 +5125,7 @@ name = "veloct-app"
 version = "0.1.0"
 dependencies = [
  "parking_lot",
+ "rusqlite",
  "serde",
  "serde_json",
  "tempfile",
@@ -5243,6 +5244,7 @@ dependencies = [
  "git2",
  "keyring",
  "parking_lot",
+ "rand 0.8.8",
  "serde",
  "serde_json",
  "tauri",

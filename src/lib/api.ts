@@ -288,6 +288,42 @@ export interface ReleaseView {
   created_from_release_id: string | null;
 }
 
+/** One attachment (handoff.md section 13). */
+export interface AttachmentView {
+  id: string;
+  original_name: string;
+  content_hash: string;
+  size_bytes: number;
+  cache_path: string;
+  storage_target_id: string;
+  storage_namespace: string;
+  remote_url: string | null;
+  remote_key: string | null;
+  /** The three independent axes, kept separate (section 13.1). */
+  upload_status: string;
+  reference_status: string;
+  cache_status: string;
+  last_error: string | null;
+  created_at: string;
+  /** How many documents cite it, so the UI can warn before a removal. */
+  reference_count: number;
+}
+
+export interface AddAttachmentView {
+  attachment: AttachmentView;
+  /** Whether the bytes were already present for this target and namespace. */
+  outcome: 'added' | 'reused';
+  /** The Markdown to insert. Built by the Rust side so there is one place that formats the URL. */
+  markdown: string;
+}
+
+export interface AttachmentOrphans {
+  /** Safe to drop: every condition in section 13.2.4 holds. */
+  safe: AttachmentView[];
+  /** Needs the user to decide, because a condition does not hold. */
+  needs_confirmation: AttachmentView[];
+}
+
 export const api = {
   appInfo: () => invoke<AppInfo>('app_info'),
 
@@ -494,6 +530,44 @@ export const api = {
     invoke<PublishView>('publish_project', {
       createdFromReleaseId: createdFromReleaseId ?? null,
     }),
+
+  /** Add a file to the attachment pool. Writes no Markdown; the caller applies it (section 13.3). */
+  addAttachment: (options: {
+    sourcePath: string;
+    storageTargetId: string;
+    namespace: string;
+  }) =>
+    invoke<AddAttachmentView>('add_attachment', {
+      sourcePath: options.sourcePath,
+      storageTargetId: options.storageTargetId,
+      namespace: options.namespace,
+    }),
+
+  listAttachments: () => invoke<AttachmentView[]>('list_attachments'),
+
+  attachmentOrphans: () => invoke<AttachmentOrphans>('attachment_orphans'),
+
+  removeAttachment: (id: string) => invoke<AttachmentView>('remove_attachment', { id }),
+
+  attachmentMarkdown: (id: string) => invoke<string>('attachment_markdown', { id }),
+
+  referenceAttachment: (options: {
+    attachmentId: string;
+    contentId: string;
+    paragraphId?: string;
+  }) =>
+    invoke<void>('reference_attachment', {
+      attachmentId: options.attachmentId,
+      contentId: options.contentId,
+      paragraphId: options.paragraphId ?? null,
+    }),
+
+  forgetAttachmentReferences: (contentId: string) =>
+    invoke<number>('forget_attachment_references', { contentId }),
+
+  syncAttachmentIndex: () => invoke<number>('sync_attachment_index'),
+
+  attachmentCacheDirectory: () => invoke<string>('attachment_cache_directory'),
 
   /** Every release the project has, newest first. */
   listReleases: () => invoke<ReleaseView[]>('list_releases'),
