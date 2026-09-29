@@ -84,8 +84,20 @@ Write-Host "cargo: CARGO_HOME=$cargoHome" -ForegroundColor DarkGray
 
 Push-Location $repoRoot
 try {
-    & $cargoExe @args
-    exit $LASTEXITCODE
+    # Cargo writes progress, and the MSVC linker writes an informational line, to STDERR. Under
+    # `$ErrorActionPreference = 'Stop'` — which this script needs for its own guards — a native command's stderr
+    # becomes a TERMINATING PowerShell error, so a build that SUCCEEDED exited 1 and a caller could not tell
+    # success from failure. The preference is relaxed for this one call and the exit code decides.
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        & $cargoExe @args
+        $code = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previous
+    }
+    exit $code
 }
 finally {
     Pop-Location
