@@ -5240,6 +5240,7 @@ dependencies = [
 name = "veloct-desktop"
 version = "0.1.0"
 dependencies = [
+ "git2",
  "keyring",
  "parking_lot",
  "serde",
@@ -5258,9 +5259,12 @@ dependencies = [
  "veloct-content",
  "veloct-core",
  "veloct-deploy",
+ "veloct-git",
  "veloct-logging",
  "veloct-markdown",
  "veloct-process",
+ "veloct-release",
+ "veloct-sidecar",
  "veloct-storage",
 ]
 

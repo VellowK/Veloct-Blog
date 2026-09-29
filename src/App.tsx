@@ -31,6 +31,7 @@ import {
 import Editor from './Editor';
 import LogView from './LogView';
 import PageCreator, { AiSettingsPanel } from './PageCreator';
+import PublishPanel from './PublishPanel';
 import {
   dueReason,
   hashText,
@@ -160,6 +161,8 @@ export default function App() {
   const [filter, setFilter] = useState<ContentKind | 'all'>('all');
   // Whether the log page is showing instead of the editor (handoff.md section 18).
   const [showLog, setShowLog] = useState(false);
+  // The publish panel is a third main view beside the editor and the log.
+  const [showPublish, setShowPublish] = useState(false);
   // The editor/preview split, draggable (handoff.md section 4.2). Stored as a percentage so it survives
   // a window resize, and clamped so a pane can never be dragged to nothing and become unrecoverable.
   const [splitPercent, setSplitPercent] = useState(50);
@@ -374,7 +377,13 @@ export default function App() {
             </nav>
 
             <div className="new-buttons">
-              <button type="button" onClick={() => setShowLog((showing) => !showing)}>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowLog((showing) => !showing);
+                  setShowPublish(false);
+                }}
+              >
                 {showLog ? '返回编辑' : '查看日志'}
               </button>
               <button type="button" onClick={() => void createDocument('article')}>
@@ -385,6 +394,17 @@ export default function App() {
               </button>
               <button type="button" onClick={() => void createDocument('knowledge')}>
                 + 知识库
+              </button>
+              <button
+                type="button"
+                className={showPublish ? 'active' : ''}
+                onClick={() => {
+                  setShowPublish((showing) => !showing);
+                  setShowLog(false);
+                }}
+                title="检查改动、构建一次并打标签(handoff.md 第 19.3 节)"
+              >
+                发布
               </button>
               <button
                 type="button"
@@ -419,7 +439,12 @@ export default function App() {
       </aside>
 
       <main className="editor">
-        {showLog ? (
+        {showPublish ? (
+          <PublishPanel
+            enabled={project !== null}
+            onPublished={() => void refresh()}
+          />
+        ) : showLog ? (
           <LogView enabled={project !== null} />
         ) : document ? (
           <>

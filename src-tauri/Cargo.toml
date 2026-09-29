@@ -20,6 +20,10 @@ veloct-app = { workspace = true }
 veloct-ai = { workspace = true }
 veloct-content = { workspace = true }
 veloct-logging = { workspace = true }
+git2 = { workspace = true }
+veloct-sidecar = { workspace = true }
+veloct-git = { workspace = true }
+veloct-release = { workspace = true }
 veloct-storage = { workspace = true }
 veloct-process = { workspace = true }
 veloct-attach = { workspace = true }
@@ -38,3 +42,6 @@ tauri-plugin-dialog = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+veloct-git = { workspace = true }
+git2 = { workspace = true }
+veloct-sidecar = { workspace = true }

@@ -257,6 +257,37 @@ export interface AiSettingsView {
   blocked_reason: string | null;
 }
 
+/** What a publish produced (handoff.md sections 14 and 19.3). */
+export interface PublishView {
+  release_id: string;
+  /** Whether the release is anchored by a commit and a tag. */
+  anchored: boolean;
+  /** Why it is not anchored, when it is not. */
+  anchor_error: string | null;
+  commit_sha: string | null;
+  tag_name: string | null;
+  /** False when nothing changed and the existing head was tagged. */
+  committed: boolean;
+  changed_files: number;
+  routes: number;
+  fingerprint: string | null;
+  /** The build's output tail, so a failure is explained rather than just reported. */
+  build_log: string;
+}
+
+/** One release on disk. */
+export interface ReleaseView {
+  release_id: string;
+  created_at: string;
+  build_fingerprint: string;
+  commit_sha: string | null;
+  tag_name: string | null;
+  /** Whether the tag still resolves to the commit the publish record names. */
+  tag_resolves: boolean;
+  routes: number;
+  created_from_release_id: string | null;
+}
+
 export const api = {
   appInfo: () => invoke<AppInfo>('app_info'),
 
@@ -452,6 +483,20 @@ export const api = {
    */
   createPageFromDraft: (source: string, kind: ContentKind) =>
     invoke<DocumentView>('create_page_from_draft', { source, kind }),
+
+  /**
+   * Publish the project.
+   *
+   * `handoff.md` section 19.3 from the window: check what changed, commit only that, build once, tag the
+   * commit. The build runs the site's own Astro through the bundled Node.
+   */
+  publishProject: (createdFromReleaseId?: string) =>
+    invoke<PublishView>('publish_project', {
+      createdFromReleaseId: createdFromReleaseId ?? null,
+    }),
+
+  /** Every release the project has, newest first. */
+  listReleases: () => invoke<ReleaseView[]>('list_releases'),
 
   readLog: (options?: {
     limit?: number;

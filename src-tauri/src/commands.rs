@@ -829,6 +829,240 @@ pub fn create_page_from_draft(
     Ok(document)
 }
 
+// ---------------------------------------------------------------------------------------------
+// Publishing (handoff.md sections 14 and 19.3).
+// ---------------------------------------------------------------------------------------------
+
+/// What a publish produced, as the window reports it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PublishView {
+    pub release_id: String,
+    /// Whether the release is anchored by a commit and a tag.
+    pub anchored: bool,
+    /// Why it is not anchored, when it is not.
+    pub anchor_error: Option<String>,
+    pub commit_sha: Option<String>,
+    pub tag_name: Option<String>,
+    /// Whether the publish created a commit, or found nothing to commit and tagged the existing head.
+    pub committed: bool,
+    pub changed_files: usize,
+    /// The routes the normalised dist manifest lists, so the window can say what was published.
+    pub routes: usize,
+    /// The frozen fingerprint, which identifies the release.
+    pub fingerprint: Option<String>,
+    /// The build's output tail, for the log panel.
+    pub build_log: String,
+}
+
+/// Publish the project.
+///
+/// This is `handoff.md` §19.3 from the window: check what changed, commit only that, build once, tag the
+/// commit. The sequence itself is `veloct_release::publish`; this command supplies the real build and the
+/// real repository, and records what happened in the project's log.
+#[tauri::command]
+pub fn publish_project(
+    state: State<'_, AppState>,
+    created_from_release_id: Option<String>,
+) -> Result<PublishView, CommandError> {
+    let project = state.project()?;
+    let now = state.now();
+    let clock = veloct_core::SystemClock;
+
+    let release_id = veloct_core::ids::ReleaseId::new(
+        time::OffsetDateTime::parse(&now, &time::format_description::well_known::Rfc3339)
+            .unwrap_or_else(|_| time::OffsetDateTime::now_utc()),
+    );
+    let created_from = match created_from_release_id.as_deref() {
+        Some(text) if !text.trim().is_empty() => Some(veloct_core::ids::ReleaseId::parse(text)?),
+        _ => None,
+    };
+
+    // A repository is OPTIONAL: a project that is not under Git still gets its artefacts, and the failure to
+    // anchor is reported rather than thrown away.
+    let repository = if veloct_git::change::is_repository(project.root.as_path()) {
+        veloct_git::change::open(project.root.as_path()).ok()
+    } else {
+        None
+    };
+
+    let sidecar_directory = state
+        .sidecar()
+        .map(std::path::PathBuf::from)
+        .and_then(|program| program.parent().map(std::path::Path::to_path_buf));
+
+    let outcome = crate::publish::publish_project(
+        project.root.as_path(),
+        release_id,
+        created_from,
+        sidecar_directory.as_deref(),
+        &clock,
+        repository.as_ref(),
+    )?;
+
+    // An unanchored release has no commit, and the fingerprint is a function of one; `None` is honest, and
+    // inventing an empty string would produce a fingerprint that identifies nothing.
+    let fingerprint = outcome.record.as_ref().map(|record| {
+        outcome
+            .artifacts
+            .fingerprint(
+                &record.commit_sha,
+                &outcome.artifacts.manifest.build_toolchain_snapshot,
+            )
+    });
+
+    let view = PublishView {
+        release_id: outcome.artifacts.manifest.release_id.as_str().to_string(),
+        anchored: outcome.is_anchored(),
+        anchor_error: outcome.anchor_error.clone(),
+        commit_sha: outcome.record.as_ref().map(|record| record.commit_sha.clone()),
+        tag_name: outcome.record.as_ref().map(|record| record.tag_name.clone()),
+        committed: outcome.record.as_ref().map(|record| record.committed).unwrap_or(false),
+        changed_files: outcome
+            .record
+            .as_ref()
+            .map(|record| record.changed_files)
+            .unwrap_or(0),
+        routes: outcome
+            .artifacts
+            .dist_manifest
+            .as_ref()
+            .map(|manifest| manifest.routes.len())
+            .unwrap_or(0),
+        fingerprint,
+        build_log: build_log_tail(&outcome.build.log),
+    };
+
+    // The event records the two statuses separately, because §15.2 forbids conflating a publish with the
+    // tasks that follow it.
+    let _ = project.log(
+        if view.anchored {
+            veloct_logging::LogEvent::info(veloct_logging::Category::Publish, "release published")
+        } else {
+            veloct_logging::LogEvent::warning(
+                veloct_logging::Category::Publish,
+                "the release was built but could not be anchored",
+            )
+        }
+        .with_field("release_id", &view.release_id)
+        .with_field("routes", view.routes.to_string())
+        .with_field("committed", view.committed.to_string())
+        .with_field("commit_sha", view.commit_sha.clone().unwrap_or_default())
+        .with_field("anchor_error", view.anchor_error.clone().unwrap_or_default()),
+    );
+
+    Ok(view)
+}
+
+/// How much of a build's output the view carries.
+const BUILD_LOG_TAIL: usize = 4_000;
+
+fn build_log_tail(log: &str) -> String {
+    if log.len() <= BUILD_LOG_TAIL {
+        return log.to_string();
+    }
+    let mut start = log.len() - BUILD_LOG_TAIL;
+    while start < log.len() && !log.is_char_boundary(start) {
+        start += 1;
+    }
+    format!("…{}", &log[start..])
+}
+
+/// One release on disk.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReleaseView {
+    pub release_id: String,
+    pub created_at: String,
+    pub build_fingerprint: String,
+    /// The commit and tag, when the release has a publish record.
+    pub commit_sha: Option<String>,
+    pub tag_name: Option<String>,
+    /// Whether the tag still resolves to a commit in the repository.
+    pub tag_resolves: bool,
+    pub routes: usize,
+    pub created_from_release_id: Option<String>,
+}
+
+/// Every release the project has, newest first.
+#[tauri::command]
+pub fn list_releases(state: State<'_, AppState>) -> Result<Vec<ReleaseView>, CommandError> {
+    let project = state.project()?;
+    let repository = if veloct_git::change::is_repository(project.root.as_path()) {
+        veloct_git::change::open(project.root.as_path()).ok()
+    } else {
+        None
+    };
+
+    let directory = project
+        .root
+        .as_path()
+        .join(veloct_core::layout::VELOCT_DIR)
+        .join(veloct_core::layout::RELEASES_DIR);
+
+    let mut releases: Vec<ReleaseView> = Vec::new();
+    let Ok(entries) = std::fs::read_dir(&directory) else {
+        // No releases yet is an empty list, not an error.
+        return Ok(releases);
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let Ok(release_id) = veloct_core::ids::ReleaseId::parse(&entry.file_name().to_string_lossy())
+        else {
+            // A directory that is not a release id is not a release; skipping is honest, and a test asserts
+            // the skip rather than the directory being silently ignored.
+            continue;
+        };
+        let Ok(artifacts) = veloct_release::load(project.root.as_path(), &release_id) else {
+            continue;
+        };
+        let record = veloct_release::read_record(project.root.as_path(), &release_id)
+            .ok()
+            .flatten();
+
+        let tag_resolves = match (&repository, &record) {
+            (Some(repository), Some(record)) => {
+                veloct_git::tag_exists(repository, &release_id)
+                    && veloct_git::commit_for_tag(repository, &release_id)
+                        .map(|sha| sha == record.commit_sha)
+                        .unwrap_or(false)
+            }
+            _ => false,
+        };
+
+        releases.push(ReleaseView {
+            release_id: artifacts.manifest.release_id.as_str().to_string(),
+            created_at: artifacts.manifest.created_at.clone(),
+            build_fingerprint: match &record {
+                Some(record) => artifacts.fingerprint(
+                    &record.commit_sha,
+                    &artifacts.manifest.build_toolchain_snapshot,
+                ),
+                None => String::new(),
+            },
+            commit_sha: record.as_ref().map(|record| record.commit_sha.clone()),
+            tag_name: record.as_ref().map(|record| record.tag_name.clone()),
+            tag_resolves,
+            routes: artifacts
+                .dist_manifest
+                .as_ref()
+                .map(|manifest| manifest.routes.len())
+                .unwrap_or(0),
+            created_from_release_id: artifacts
+                .manifest
+                .created_from_release_id
+                .as_ref()
+                .map(|id| id.as_str().to_string()),
+        });
+    }
+
+    // Newest first, by the id's own timestamp prefix, so the list is stable without a clock.
+    releases.sort_by(|a, b| b.release_id.cmp(&a.release_id));
+    Ok(releases)
+}
+
 /// One log page.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogPage {
