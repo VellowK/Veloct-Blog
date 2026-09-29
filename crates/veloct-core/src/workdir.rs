@@ -58,6 +58,15 @@ impl FileRevision {
             Err(other) => Err(other),
         }
     }
+
+    /// Whether these bytes are this revision's bytes.
+    ///
+    /// The in-memory counterpart of `matches_disk`, for a caller that holds text and wants to know
+    /// whether the file it came from is still the same. The size is compared first because it is free
+    /// and rules out most mismatches without hashing.
+    pub fn matches_text(&self, text: &str) -> bool {
+        text.len() as u64 == self.size && crate::sha256_hex_str(text) == self.hash
+    }
 }
 
 /// Outcome of a write attempt.

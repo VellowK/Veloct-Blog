@@ -15,7 +15,32 @@
 //! Vendor protocols (S3, Lsky Pro, GitHub, SFTP) are tested against local fakes and the test
 //! names say so. A protocol that could not be verified is reported as unconfigured rather than
 //! pretended to work.
-//!
-//! Ownership: `systems-ai-attach` (team `veloct-complete`).
 
 #![forbid(unsafe_code)]
+
+pub mod naming;
+pub mod pool;
+pub mod reference;
+pub mod state;
+pub mod storage;
+pub mod transaction;
+
+pub use naming::{
+    dedup_key, dedup_key_string, is_safe_file_name, random_suffix, remote_file_name, DedupKey,
+    SUFFIX_LENGTH,
+};
+pub use pool::{
+    Attachment, AttachmentId, CachePool, CleanupOutcome, CleanupRequest, PoolListing, ReferenceTask,
+};
+pub use reference::{ReferenceIndex, ReferenceSet, ReferenceTarget};
+pub use state::{
+    is_safe_orphan, AttachmentState, CacheStatus, ReferenceStatus, StorageTargetId, UploadStatus,
+};
+pub use storage::{
+    LocalFileStore, MemoryFileStore, ObjectRecord, PutOutcome, RemoteObject, StorageAdapter,
+    StorageCapabilities, StorageConfig, StorageKind, StorageTarget,
+};
+pub use transaction::{
+    AddRequest, ApplyOutcome, ApplyRequest, AttachmentTransaction, TransactionResult,
+    UploadOutcome,
+};
