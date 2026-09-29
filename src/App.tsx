@@ -27,6 +27,7 @@ import {
   type SaveView,
   type WipTransition,
 } from './lib/api';
+import Editor from './Editor';
 import LogView from './LogView';
 import {
   dueReason,
@@ -157,6 +158,11 @@ export default function App() {
   const [filter, setFilter] = useState<ContentKind | 'all'>('all');
   // Whether the log page is showing instead of the editor (handoff.md section 18).
   const [showLog, setShowLog] = useState(false);
+  // The editor/preview split, draggable (handoff.md section 4.2). Stored as a percentage so it survives
+  // a window resize, and clamped so a pane can never be dragged to nothing and become unrecoverable.
+  const [splitPercent, setSplitPercent] = useState(50);
+  const splitRef = useRef<HTMLDivElement | null>(null);
+  const draggingRef = useRef(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -309,7 +315,10 @@ export default function App() {
   })();
 
   return (
-    <div className="workbench">
+    <div
+      className="workbench"
+      style={{ '--editor-share': `${splitPercent}%` } as React.CSSProperties}
+    >
       <aside className="sidebar">
         <header>
           <strong>Veloct</strong>
@@ -450,13 +459,12 @@ export default function App() {
               </ul>
             )}
 
-            <textarea
-              className="source"
-              value={source}
-              spellCheck={false}
-              onChange={(event) => {
-                setSource(event.target.value);
-                autosave.onChange(event.target.value);
+            <Editor
+              source={source}
+              editable
+              onChange={(next) => {
+                setSource(next);
+                autosave.onChange(next);
               }}
             />
           </>
@@ -472,7 +480,40 @@ export default function App() {
         )}
       </main>
 
-      <section className="preview">
+      <div
+        className="split-handle"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="拖动以调整编辑器和预览的比例"
+        aria-valuenow={splitPercent}
+        aria-valuemin={20}
+        aria-valuemax={80}
+        tabIndex={0}
+        onPointerDown={(event) => {
+          draggingRef.current = true;
+          event.currentTarget.setPointerCapture(event.pointerId);
+        }}
+        onPointerMove={(event) => {
+          if (!draggingRef.current) return;
+          const container = splitRef.current;
+          if (!container) return;
+          const bounds = container.getBoundingClientRect();
+          // The workspace begins after the sidebar, so the ratio is measured inside it.
+          const ratio = ((event.clientX - bounds.left) / bounds.width) * 100;
+          setSplitPercent(Math.min(80, Math.max(20, ratio)));
+        }}
+        onPointerUp={(event) => {
+          draggingRef.current = false;
+          event.currentTarget.releasePointerCapture(event.pointerId);
+        }}
+        onKeyDown={(event) => {
+          // A keyboard path, because a pointer-only resize is unusable without a mouse.
+          if (event.key === 'ArrowLeft') setSplitPercent((value) => Math.max(20, value - 2));
+          if (event.key === 'ArrowRight') setSplitPercent((value) => Math.min(80, value + 2));
+        }}
+      />
+
+      <section className="preview" ref={splitRef}>
         <header>
           <span>{previewLabel}</span>
           {previewState === 'running' ? (

@@ -67,14 +67,40 @@ textarea {
 /* The three-part layout handoff.md section 4.1 asks for, plus a status bar. */
 .workbench {
   display: grid;
-  grid-template-columns: 260px minmax(0, 1fr) minmax(0, 1fr);
+  /* The editor share is a custom property so the drag handle can set one number rather than three
+     column sizes that could disagree. */
+  grid-template-columns:
+    260px
+    minmax(0, var(--editor-share, 50%))
+    5px
+    minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr) 28px;
   grid-template-areas:
-    'sidebar editor preview'
-    'status status status';
+    'sidebar editor split preview'
+    'status status status status';
   height: 100%;
   gap: 1px;
   background: var(--ink-700);
+}
+
+.split-handle {
+  grid-area: split;
+  background: var(--ink-800);
+  cursor: col-resize;
+  /* A wider hit area than the visible line, because a 5px target is a nuisance to grab. */
+  position: relative;
+}
+
+.split-handle::after {
+  content: '';
+  position: absolute;
+  inset: 0 -4px;
+}
+
+.split-handle:hover,
+.split-handle:focus-visible {
+  background: var(--accent-500);
+  outline: none;
 }
 
 .sidebar {
@@ -406,4 +432,169 @@ textarea {
 
 .log-entries .field {
   white-space: nowrap;
+}
+
+/* The WYSIWYG editor (handoff.md section 4.2). */
+.wysiwyg {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+}
+
+.frontmatter-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--ink-800);
+  font-size: 11px;
+}
+
+.frontmatter-strip .fm {
+  display: flex;
+  gap: 4px;
+  align-items: baseline;
+  background: var(--ink-850);
+  border-radius: 4px;
+  padding: 1px 6px;
+}
+
+.frontmatter-strip .fm-key {
+  color: var(--ink-400);
+}
+
+.frontmatter-strip .fm.id .fm-value {
+  color: var(--accent-400);
+  font-family: 'Cascadia Mono', Consolas, monospace;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--ink-800);
+}
+
+.toolbar button {
+  min-width: 28px;
+  padding: 3px 6px;
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.toolbar button.active {
+  background: var(--ink-700);
+  border-color: var(--accent-500);
+  color: var(--accent-400);
+}
+
+.editor-content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 16px;
+}
+
+.editor-content .tiptap {
+  outline: none;
+  min-height: 100%;
+  line-height: 1.7;
+}
+
+.editor-content .tiptap > * + * {
+  margin-top: 0.7em;
+}
+
+.editor-content .tiptap h1,
+.editor-content .tiptap h2,
+.editor-content .tiptap h3,
+.editor-content .tiptap h4 {
+  font-family: Georgia, 'Songti SC', serif;
+  line-height: 1.3;
+  margin-top: 1.2em;
+}
+
+.editor-content .tiptap blockquote {
+  border-left: 3px solid var(--ink-700);
+  padding-left: 12px;
+  color: var(--ink-300);
+}
+
+.editor-content .tiptap code {
+  background: var(--ink-850);
+  border-radius: 3px;
+  padding: 1px 4px;
+  font-family: 'Cascadia Mono', Consolas, monospace;
+  font-size: 0.92em;
+}
+
+.editor-content .tiptap pre {
+  background: var(--ink-950);
+  border: 1px solid var(--ink-800);
+  border-radius: 6px;
+  padding: 10px 12px;
+  overflow-x: auto;
+}
+
+.editor-content .tiptap pre code {
+  background: none;
+  padding: 0;
+}
+
+.editor-content .tiptap table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.editor-content .tiptap th,
+.editor-content .tiptap td {
+  border: 1px solid var(--ink-700);
+  padding: 5px 8px;
+  text-align: left;
+}
+
+.editor-content .tiptap th {
+  background: var(--ink-850);
+}
+
+.editor-content .tiptap img {
+  max-width: 100%;
+  border-radius: 6px;
+}
+
+.editor-content .tiptap a {
+  color: var(--accent-400);
+}
+
+/* An empty document still needs a click target, or the first click lands nowhere. */
+.editor-content .tiptap p.is-editor-empty:first-child::before {
+  content: '开始写作…';
+  color: var(--ink-400);
+  float: left;
+  height: 0;
+  pointer-events: none;
+}
+
+.markdown-source {
+  flex: 1;
+  min-height: 0;
+  resize: none;
+  border: none;
+  border-radius: 0;
+  background: var(--ink-900);
+  font-family: 'Cascadia Mono', Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  padding: 12px 14px;
+  white-space: pre-wrap;
+}
+
+.markdown-source:focus {
+  outline: none;
+}
+
+.editor-loading {
+  padding: 16px;
 }
