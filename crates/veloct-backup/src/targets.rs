@@ -652,13 +652,36 @@ pub fn run_targets(
 /// The rule has three parts and the third is the one that is easy to get wrong: the timer is RESET by
 /// a new change, so a user who keeps typing does not get a backup mid-sentence, and a user who stops
 /// gets one after the idle period.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// This is the ONE implementation of that arithmetic. `veloct_app::autobackup::IdleTracker` wraps it rather
+/// than repeating it: a second implementation was written before this one was found, and two copies of a rule
+/// are two chances for them to disagree. Serialisable because the caller has to persist it — a user who edits,
+/// closes the application and reopens it ten minutes later should still get a backup.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AutoBackupTimer {
     /// The last time content changed, in milliseconds since the epoch.
-    last_change_ms: u64,
+    ///
+    /// Public so a wrapper can PERSIST the state. The arithmetic stays in the methods below, which is the part
+    /// that must not be duplicated; the fields are the state a caller already has to carry across a restart.
+    pub last_change_ms: u64,
     /// Whether anything has changed since the last backup.
-    dirty: bool,
-    idle_ms: u64,
+    pub dirty: bool,
+    /// The idle period in milliseconds.
+    pub idle_ms: u64,
+}
+
+impl AutoBackupTimer {
+    /// The idle period, for a caller that has to report it.
+    pub fn idle(&self) -> std::time::Duration {
+        std::time::Duration::from_millis(self.idle_ms)
+    }
+
+    /// When the content last changed, in milliseconds since the epoch.
+    ///
+    /// Exposed so a wrapper can persist and report the state without keeping a second copy of it.
+    pub fn last_change_ms(&self) -> u64 {
+        self.last_change_ms
+    }
 }
 
 impl AutoBackupTimer {

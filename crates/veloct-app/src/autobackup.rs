@@ -26,78 +26,102 @@ pub const DEFAULT_IDLE_SECONDS: u64 = 600;
 
 /// The state the idle rule needs.
 ///
+/// A WRAPPER, not a second implementation. `veloct_backup::AutoBackupTimer` already had section 17.5's
+/// arithmetic, and this module was written without noticing — so for one round there were two copies of the rule
+/// and two chances for them to disagree. The timer now owns the arithmetic and this owns what the timer does
+/// not have: a THREE-STATE answer (the crate offers a boolean, so "nothing changed" and "not yet" cannot be
+/// told apart) and the reasons a caller can show.
+///
 /// Held by the caller rather than in this module, because it has to survive a restart: a user who edits, closes
 /// the application and reopens it ten minutes later should still get a backup, and an in-memory-only timestamp
 /// would lose that.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IdleTracker {
-    /// When the content last changed, in seconds since the epoch.
-    pub last_change_seconds: u64,
-    /// Whether anything has changed since the last backup.
-    ///
-    /// §17.5's first condition. Without it, an application left open on an unchanged project would write the
-    /// same archive every ten minutes forever.
-    pub changed_since_backup: bool,
-    pub idle_seconds: u64,
+    /// The crate's timer, which is the ONE implementation of the rule.
+    inner: veloct_backup::AutoBackupTimer,
 }
 
 impl Default for IdleTracker {
     fn default() -> Self {
-        Self {
-            last_change_seconds: 0,
-            changed_since_backup: false,
-            idle_seconds: DEFAULT_IDLE_SECONDS,
-        }
+        Self::new(0)
     }
 }
 
 impl IdleTracker {
-    /// A tracker with the documented idle period.
+    /// A tracker with the documented idle period, anchored at `now_seconds`.
     pub fn new(now_seconds: u64) -> Self {
         Self {
-            last_change_seconds: now_seconds,
-            changed_since_backup: false,
-            idle_seconds: DEFAULT_IDLE_SECONDS,
+            inner: veloct_backup::AutoBackupTimer::new(std::time::Duration::from_secs(
+                DEFAULT_IDLE_SECONDS,
+            )),
         }
+        .anchored_at(now_seconds)
+    }
+
+    /// Anchor the timer at an instant without marking the content dirty.
+    ///
+    /// A tracker read from disk has no change to record, and one created fresh must not report `NoChange` for
+    /// the wrong reason — so the anchor sets the STATE directly rather than going through `mark_changed`, which
+    /// would also raise the dirty flag. The rule's arithmetic still lives in the crate; this sets a timestamp.
+    fn anchored_at(mut self, now_seconds: u64) -> Self {
+        self.inner.last_change_ms = now_seconds * 1_000;
+        self.inner.dirty = false;
+        self
+    }
+
+    /// The idle period in seconds, which is the unit the settings use.
+    pub fn idle_seconds(&self) -> u64 {
+        self.inner.idle_ms / 1_000
+    }
+
+    /// When the content last changed, in seconds since the epoch.
+    pub fn last_change_seconds(&self) -> u64 {
+        // The crate keeps milliseconds, and the caller-facing unit here is seconds.
+        self.inner.last_change_ms / 1_000
+    }
+
+    /// Whether anything has changed since the last backup.
+    pub fn changed_since_backup(&self) -> bool {
+        self.inner.is_dirty()
     }
 
     /// Record that the content changed, which RESTARTS the timer (§17.5).
     pub fn note_change(&mut self, now_seconds: u64) {
-        self.last_change_seconds = now_seconds;
-        self.changed_since_backup = true;
+        // Through the crate, so a change to the rule cannot leave this copy behind.
+        self.inner.mark_changed(now_seconds * 1_000);
     }
 
     /// Record that a backup ran, clearing the change flag and restarting the timer.
     pub fn note_backup(&mut self, now_seconds: u64) {
-        self.changed_since_backup = false;
-        self.last_change_seconds = now_seconds;
+        self.inner.mark_backed_up();
+        self.inner.last_change_ms = now_seconds * 1_000;
     }
 
     /// How long the content has been idle at this instant.
     pub fn idle_for(&self, now_seconds: u64) -> u64 {
-        now_seconds.saturating_sub(self.last_change_seconds)
+        now_seconds.saturating_sub(self.last_change_seconds())
     }
 
     /// Whether an automatic backup should run now, and why not when it should not.
     pub fn decide(&self, now_seconds: u64) -> IdleDecision {
-        if !self.changed_since_backup {
-            // §17.5's first condition. Reported as its own reason so the caller can say "nothing to back up"
-            // rather than "not yet".
+        // The three states exist because the crate's boolean cannot express two of them, and a UI that said
+        // "not yet" for an unchanged project would show a countdown toward nothing.
+        if !self.inner.is_dirty() {
             return IdleDecision::NoChange;
         }
-        let idle = self.idle_for(now_seconds);
-        if idle < self.idle_seconds {
-            // §17.5's second condition, with what is LEFT so a UI can count down.
-            return IdleDecision::Waiting {
-                remaining_seconds: self.idle_seconds - idle,
-            };
+        if self.inner.should_back_up(now_seconds * 1_000) {
+            return IdleDecision::Due;
         }
-        IdleDecision::Due
+        IdleDecision::Waiting {
+            remaining_seconds: self.inner.remaining_ms(now_seconds * 1_000) / 1_000,
+        }
     }
 
     /// The tracker with a different idle period, for a user setting or a test.
     pub fn with_idle_seconds(mut self, seconds: u64) -> Self {
-        self.idle_seconds = seconds;
+        // Only the PERIOD changes: the state is what the caller was already tracking, and rebuilding the timer
+        // would lose it.
+        self.inner.idle_ms = seconds * 1_000;
         self
     }
 }
@@ -543,8 +567,8 @@ mod tests {
     fn a_tracker_that_has_never_been_told_about_a_change_reports_no_change() {
         // The default must not start a backup on a project nobody has touched.
         assert_eq!(IdleTracker::default().decide(u64::MAX), IdleDecision::NoChange);
-        assert!(!IdleTracker::default().changed_since_backup);
-        assert_eq!(IdleTracker::default().idle_seconds, DEFAULT_IDLE_SECONDS);
+        assert!(!IdleTracker::default().changed_since_backup());
+        assert_eq!(IdleTracker::default().idle_seconds(), DEFAULT_IDLE_SECONDS);
     }
 
     #[test]

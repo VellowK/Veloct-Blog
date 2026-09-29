@@ -279,7 +279,7 @@ fn auto_state(
         tracker: tracker.clone(),
         decision,
         description: decision.describe(),
-        idle_seconds: tracker.idle_seconds,
+        idle_seconds: tracker.idle_seconds(),
         cloud_retention: veloct_app::cloud_retention_from_settings(project.root.as_path()),
         needs_acknowledgement: last_run_needs_acknowledgement(project.root.as_path()),
     }
