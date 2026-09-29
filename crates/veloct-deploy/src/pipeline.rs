@@ -29,6 +29,13 @@ use crate::target::{
 
 /// One target's adapters: separate ones for the two roots, because they may deploy to different
 /// places and must be able to fail independently.
+/// The adapters for one logical target.
+///
+/// The boxes are `'static`, which is why a caller cannot return a `CloudflarePagesAdapter` — that borrows its
+/// HTTP client. A caller builds the adapters where its client lives, and `veloct_app::deploy` does exactly
+/// that. Making this struct lifetime-generic was tried and reverted: it forced `'static` instantiations
+/// through every test for no gain, because the adapters that need a borrow are built and consumed in one
+/// function.
 pub struct TargetAdapters {
     pub main: Box<dyn DeployAdapter>,
     pub works: Option<Box<dyn DeployAdapter>>,

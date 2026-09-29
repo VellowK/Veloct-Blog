@@ -31,6 +31,7 @@ import {
 import Editor from './Editor';
 import AttachmentPanel from './AttachmentPanel';
 import BackupPanel from './BackupPanel';
+import DeployPanel from './DeployPanel';
 import LogView from './LogView';
 import PageCreator, { AiSettingsPanel } from './PageCreator';
 import PublishPanel from './PublishPanel';
@@ -167,6 +168,7 @@ export default function App() {
   const [showPublish, setShowPublish] = useState(false);
   const [showAttachments, setShowAttachments] = useState(false);
   const [showBackups, setShowBackups] = useState(false);
+  const [showDeploy, setShowDeploy] = useState(false);
   // The editor/preview split, draggable (handoff.md section 4.2). Stored as a percentage so it survives
   // a window resize, and clamped so a pane can never be dragged to nothing and become unrecoverable.
   const [splitPercent, setSplitPercent] = useState(50);
@@ -445,6 +447,20 @@ export default function App() {
               >
                 备份
               </button>
+              <button
+                type="button"
+                className={showDeploy ? 'active' : ''}
+                onClick={() => {
+                  setShowDeploy((showing) => !showing);
+                  setShowBackups(false);
+                  setShowAttachments(false);
+                  setShowLog(false);
+                  setShowPublish(false);
+                }}
+                title="部署目标(handoff.md 第 10 与 14 节)"
+              >
+                部署
+              </button>
             </div>
 
             <ul className="document-list">
@@ -468,7 +484,9 @@ export default function App() {
       </aside>
 
       <main className="editor">
-        {showBackups ? (
+        {showDeploy ? (
+          <DeployPanel enabled={project !== null} />
+        ) : showBackups ? (
           <BackupPanel enabled={project !== null} />
         ) : showAttachments ? (
           <AttachmentPanel

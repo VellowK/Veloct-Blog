@@ -18,6 +18,7 @@
 
 pub mod attachments;
 pub mod backup;
+pub mod deploy;
 pub mod commands;
 pub mod credentials;
 pub mod logging;
@@ -88,6 +89,12 @@ pub fn run() {
             backup::stage_restore,
             backup::confirm_restore,
             backup::backup_directory,
+            deploy::deploy_targets,
+            deploy::save_deploy_target,
+            deploy::delete_deploy_target,
+            deploy::set_deploy_enabled,
+            deploy::deploy_now,
+            deploy::deploy_resendable,
         ])
         .setup(|app| {
             // The preview supervisor is started lazily, when a project is opened, so a machine with no

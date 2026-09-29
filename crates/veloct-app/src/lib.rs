@@ -15,6 +15,7 @@
 
 pub mod attachments;
 pub mod backup;
+pub mod deploy;
 pub mod error;
 pub mod project;
 
@@ -27,6 +28,11 @@ pub use backup::{
     prune, read_manifest, retention_from_settings, stage_restore, BackupArchiveView,
     BackupOutcomeView, RestoreAppliedView, RestorePlanView, SkippedPathView, BACKUP_DIR,
     DEFAULT_RETENTION,
+};
+pub use deploy::{
+    deploy, deploy_with_client, dist_decision, dist_of, is_manual, kind_label, parse_kind,
+    read_payloads, resendable_sub_targets, status_name, CredentialLookup, DeployOutcomeView,
+    StoredTarget, TargetListView, TargetList, TargetResultView, TargetView, TARGETS_FILE,
 };
 pub use error::CommandError;
 pub use project::{CreateProjectOptions, ProjectRecord, ProjectService};

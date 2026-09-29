@@ -331,20 +331,26 @@ impl DeployAdapter for MemoryAdapter {
 /// The sequence is the three documented steps: check which of the file hashes the project already
 /// has, upload the missing ones, then create a deployment referencing them. Sending the hashes first
 /// is what makes a re-publish of a mostly-unchanged site cheap.
-pub struct CloudflarePagesAdapter<'a> {
+/// The Cloudflare Pages adapter.
+///
+/// It SHARES its client rather than borrowing it. The first version held `&'a dyn HttpClient`, which made the
+/// adapter non-`'static` and therefore impossible to put in a `Box<dyn DeployAdapter>` — so the application
+/// could not build its adapters at all, which is what the lifetime error was really saying. An `Arc` is
+/// itself an `HttpClient`, so sharing costs nothing at the call site.
+pub struct CloudflarePagesAdapter {
     target: FrozenTarget,
     account_id: String,
     /// A credential HANDLE, resolved to a value by the caller before the adapter runs.
     token: String,
-    client: &'a dyn HttpClient,
+    client: std::sync::Arc<dyn HttpClient>,
 }
 
-impl<'a> CloudflarePagesAdapter<'a> {
+impl CloudflarePagesAdapter {
     pub fn new(
         target: FrozenTarget,
         account_id: impl Into<String>,
         token: impl Into<String>,
-        client: &'a dyn HttpClient,
+        client: std::sync::Arc<dyn HttpClient>,
     ) -> Self {
         Self {
             target,
@@ -501,7 +507,7 @@ impl<'a> CloudflarePagesAdapter<'a> {
     }
 }
 
-impl DeployAdapter for CloudflarePagesAdapter<'_> {
+impl DeployAdapter for CloudflarePagesAdapter {
     fn target(&self) -> &FrozenTarget {
         &self.target
     }
@@ -829,7 +835,7 @@ mod tests {
             frozen(TargetKind::CloudflarePages, "my-site"),
             "acct",
             "token",
-            &client,
+            std::sync::Arc::new(client.clone()),
         );
 
         let missing = adapter.missing_files(&payload).unwrap();
@@ -853,7 +859,7 @@ mod tests {
             frozen(TargetKind::CloudflarePages, "my-site"),
             "acct",
             "token",
-            &client,
+            std::sync::Arc::new(client.clone()),
         );
 
         let outcome = adapter.push(&payload).unwrap();
@@ -882,7 +888,7 @@ mod tests {
             frozen(TargetKind::CloudflarePages, "my-site"),
             "acct",
             "secret-token",
-            &client,
+            std::sync::Arc::new(client.clone()),
         );
         adapter.push(&payload).unwrap();
 
@@ -912,7 +918,7 @@ mod tests {
             frozen(TargetKind::CloudflarePages, "my-site"),
             "acct",
             "token",
-            &client,
+            std::sync::Arc::new(client.clone()),
         );
 
         let error = adapter.push(&payload).unwrap_err();
@@ -935,7 +941,7 @@ mod tests {
             frozen(TargetKind::CloudflarePages, "my-site"),
             "acct",
             "token",
-            &client,
+            std::sync::Arc::new(client.clone()),
         );
         let error = adapter.push(&payload).unwrap_err();
         assert!(error.to_string().contains("500"), "{error}");
@@ -956,7 +962,7 @@ mod tests {
             frozen(TargetKind::CloudflarePages, "my-site"),
             "acct",
             "token",
-            &client,
+            std::sync::Arc::new(client.clone()),
         );
         adapter.push(&payload).unwrap();
 
@@ -975,7 +981,7 @@ mod tests {
             frozen(TargetKind::CloudflarePages, "my-site"),
             "acct",
             "token",
-            &client,
+            std::sync::Arc::new(client.clone()),
         );
         let message = adapter.test_connection().unwrap();
         assert!(message.contains("my-site"), "{message}");
@@ -989,7 +995,7 @@ mod tests {
             frozen(TargetKind::CloudflarePages, "my-site"),
             "acct",
             "token",
-            &client,
+            std::sync::Arc::new(client.clone()),
         );
         let error = adapter.test_connection().unwrap_err();
         assert!(error.to_string().contains("project not found"), "{error}");

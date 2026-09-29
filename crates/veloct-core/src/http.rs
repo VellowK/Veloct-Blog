@@ -274,7 +274,9 @@ pub enum StreamEvent {
 
 /// The HTTP capability. Implemented by [`ReqwestHttpClient`] in production and
 /// [`FakeHttpClient`] in tests.
-pub trait HttpClient: Send + Sync + std::fmt::Debug {
+pub trait HttpClient: Send + Sync + std::fmt::Debug + std::any::Any {
+    /// The concrete type, so a reference can be shared as an owned handle when a trait object needs one.
+    fn as_any(&self) -> &dyn std::any::Any;
     /// Perform a request and read the whole body.
     fn execute(&self, request: HttpRequest) -> Result<HttpResponse>;
 
@@ -287,6 +289,51 @@ pub trait HttpClient: Send + Sync + std::fmt::Debug {
         request: HttpRequest,
         cancel: &Cancellation,
     ) -> Result<Box<dyn Iterator<Item = Result<StreamEvent>> + Send>>;
+}
+
+/// A shared client is itself a client.
+///
+/// This is what lets an adapter SHARE its client rather than borrow it. The requirement is concrete: a
+/// `Box<dyn DeployAdapter>` is `'static`, so an adapter that holds `&'a dyn HttpClient` cannot be boxed into
+/// one — and `veloct-deploy`'s `CloudflarePagesAdapter` did exactly that, which made it impossible for the
+/// application to build adapters and keep them. Sharing removes the lifetime instead of working around it.
+impl<T: HttpClient + ?Sized> HttpClient for std::sync::Arc<T> {
+    fn as_any(&self) -> &dyn std::any::Any {
+        // The Arc itself is the concrete type, so a shared client can be shared again.
+        self
+    }
+
+    fn execute(&self, request: HttpRequest) -> Result<HttpResponse> {
+        (**self).execute(request)
+    }
+
+    fn stream(
+        &self,
+        request: HttpRequest,
+        cancel: &Cancellation,
+    ) -> Result<Box<dyn Iterator<Item = Result<StreamEvent>> + Send>> {
+        (**self).stream(request, cancel)
+    }
+}
+
+/// Share a client as an owned handle.
+///
+/// `Box<dyn DeployAdapter>` is `'static`, so an adapter cannot hold `&'a dyn HttpClient`. This turns a borrowed
+/// trait object into an `Arc` BY DOWNCASTING TO ITS CONCRETE TYPE, which is why [`HttpClient`] requires `Any`.
+///
+/// Returns `None` for an implementor that is not itself shareable, so the caller can report that rather than
+/// panicking: a client that cannot be shared is a configuration problem, not a crash.
+pub fn share(client: &dyn HttpClient) -> Option<std::sync::Arc<dyn HttpClient>> {
+    if let Some(shared) = client.as_any().downcast_ref::<std::sync::Arc<dyn HttpClient>>() {
+        return Some(shared.clone());
+    }
+    if let Some(reqwest) = client.as_any().downcast_ref::<ReqwestHttpClient>() {
+        return Some(std::sync::Arc::new(reqwest.clone()));
+    }
+    if let Some(fake) = client.as_any().downcast_ref::<FakeHttpClient>() {
+        return Some(std::sync::Arc::new(fake.clone()));
+    }
+    None
 }
 
 /// The production client, backed by a blocking `reqwest` client with rustls.
@@ -402,6 +449,10 @@ pub fn redact_url(url: &str) -> String {
 }
 
 impl HttpClient for ReqwestHttpClient {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
     fn execute(&self, request: HttpRequest) -> Result<HttpResponse> {
         let builder = self.build(&request)?;
         let response = builder
@@ -465,10 +516,21 @@ impl HttpClient for ReqwestHttpClient {
 ///
 /// Vendor protocols are tested through this (or through a local fake HTTP server), never
 /// against a live service, and the test name must say so.
-#[derive(Debug, Default)]
+/// A test double that can be SHARED.
+///
+/// The `Arc`s are the point rather than an optimisation. `veloct-deploy`'s Cloudflare adapter must be
+/// `Box<dyn DeployAdapter>`, which is `'static`, so an adapter holding `&'a dyn HttpClient` cannot be boxed
+/// into one — which is why the APPLICATION could not construct an adapter at all. Making the fake shareable
+/// lets the adapter own a clone that writes to the SAME log, so a test still sees the requests the adapter
+/// made.
+///
+/// The first version of this clone deep-copied the responses and gave the clone a fresh, empty request log,
+/// and `the_cloudflare_adapter_uploads_then_creates_a_deployment` failed with `[]` — the test was right and
+/// the clone was wrong.
+#[derive(Debug, Default, Clone)]
 pub struct FakeHttpClient {
-    responses: Mutex<Vec<FakeResponse>>,
-    pub requests: Mutex<Vec<HttpRequest>>,
+    responses: std::sync::Arc<Mutex<Vec<FakeResponse>>>,
+    pub requests: std::sync::Arc<Mutex<Vec<HttpRequest>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -492,8 +554,11 @@ impl FakeHttpClient {
     }
 
     /// Queue a response for any request.
-    pub fn always(mut self, status: u16, body: impl Into<Vec<u8>>) -> Self {
-        self.responses.get_mut().expect("fresh mutex").push(FakeResponse {
+    pub fn always(self, status: u16, body: impl Into<Vec<u8>>) -> Self {
+        self.responses
+            .lock()
+            .expect("the response lock is not poisoned")
+            .push(FakeResponse {
             matcher: FakeMatcher::AnyUrl,
             status,
             headers: Vec::new(),
@@ -504,12 +569,15 @@ impl FakeHttpClient {
 
     /// Queue a response for the first request whose URL contains `fragment`.
     pub fn on_url_contains(
-        mut self,
+        self,
         fragment: impl Into<String>,
         status: u16,
         body: impl Into<Vec<u8>>,
     ) -> Self {
-        self.responses.get_mut().expect("fresh mutex").push(FakeResponse {
+        self.responses
+            .lock()
+            .expect("the response lock is not poisoned")
+            .push(FakeResponse {
             matcher: FakeMatcher::UrlContains(fragment.into()),
             status,
             headers: Vec::new(),
@@ -523,13 +591,16 @@ impl FakeHttpClient {
     /// Needed because deployment and storage protocols reuse a path for different verbs (for
     /// example an S3-style `PUT` object versus a `DELETE` object).
     pub fn on_method_and_url(
-        mut self,
+        self,
         method: HttpMethod,
         fragment: impl Into<String>,
         status: u16,
         body: impl Into<Vec<u8>>,
     ) -> Self {
-        self.responses.get_mut().expect("fresh mutex").push(FakeResponse {
+        self.responses
+            .lock()
+            .expect("the response lock is not poisoned")
+            .push(FakeResponse {
             matcher: FakeMatcher::MethodAndUrlContains(method, fragment.into()),
             status,
             headers: Vec::new(),
@@ -539,8 +610,11 @@ impl FakeHttpClient {
     }
 
     /// Queue a JSON response.
-    pub fn on_json(mut self, fragment: impl Into<String>, value: serde_json::Value) -> Self {
-        self.responses.get_mut().expect("fresh mutex").push(FakeResponse {
+    pub fn on_json(self, fragment: impl Into<String>, value: serde_json::Value) -> Self {
+        self.responses
+            .lock()
+            .expect("the response lock is not poisoned")
+            .push(FakeResponse {
             matcher: FakeMatcher::UrlContains(fragment.into()),
             status: 200,
             headers: vec![("content-type".into(), "application/json".into())],
@@ -586,6 +660,10 @@ impl FakeHttpClient {
 }
 
 impl HttpClient for FakeHttpClient {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
     fn execute(&self, request: HttpRequest) -> Result<HttpResponse> {
         self.requests.lock().expect("mutex").push(request.clone());
         let response = self.take_matching(&request);

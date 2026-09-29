@@ -678,6 +678,10 @@ mod tests {
         /// A provider that is cancelled by the act of being called, then fails.
         struct CancelOnCall;
         impl veloct_core::http::HttpClient for CancelOnCall {
+            fn as_any(&self) -> &dyn std::any::Any {
+                self
+            }
+
             fn execute(
                 &self,
                 _request: veloct_core::http::HttpRequest,

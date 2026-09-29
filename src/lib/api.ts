@@ -387,6 +387,52 @@ export interface RestoreAppliedView {
   summary: string;
 }
 
+/** One configured deployment target (handoff.md sections 10 and 14). */
+export interface TargetView {
+  id: string;
+  kind: string;
+  kind_label: string;
+  enabled: boolean;
+  /** Whether this kind needs the user to upload by hand (ADR-0012, section 14.11). */
+  manual: boolean;
+  project: string | null;
+  works_project: string | null;
+  works_origin: string | null;
+  /** The HANDLE, never a value (section 12). */
+  credential_ref: string | null;
+  has_credential: boolean;
+}
+
+export interface TargetListView {
+  enabled: boolean;
+  targets: TargetView[];
+}
+
+/** One target's outcome. `partial` means one sub-target succeeded and the other did not. */
+export interface TargetResultView {
+  target_id: string;
+  kind: string;
+  status: string;
+  main_status: string;
+  main_detail: string | null;
+  works_status: string | null;
+  works_detail: string | null;
+  needs_attention: boolean;
+  works_origin: string | null;
+}
+
+export interface DeployOutcomeView {
+  release_id: string;
+  targets: TargetResultView[];
+  all_succeeded: boolean;
+  needing_attention: string[];
+  pushed_files: number;
+  started_at: string;
+  finished_at: string | null;
+  /** Section 15.2: the SEO push is a separate task with its own state. */
+  seo_state: string;
+}
+
 export const api = {
   appInfo: () => invoke<AppInfo>('app_info'),
 
@@ -631,6 +677,56 @@ export const api = {
   syncAttachmentIndex: () => invoke<number>('sync_attachment_index'),
 
   attachmentCacheDirectory: () => invoke<string>('attachment_cache_directory'),
+
+  deployTargets: () => invoke<TargetListView>('deploy_targets'),
+
+  /**
+   * Add or update a target.
+   *
+   * The credential is a separate parameter because it goes to the OS store and the row keeps only a handle
+   * (section 12.2).
+   */
+  saveDeployTarget: (options: {
+    id: string;
+    kind: string;
+    enabled: boolean;
+    /** `undefined` is allowed explicitly, because `exactOptionalPropertyTypes` is on. */
+    project?: string | undefined;
+    worksProject?: string | undefined;
+    worksOrigin?: string | undefined;
+    /** Omitted or empty means "leave the stored credential alone". */
+    credential?: string | undefined;
+  }) =>
+    invoke<void>('save_deploy_target', {
+      // Tauri matches the command's parameter name, so the fields travel as one `request` object rather than
+      // as eight positional arguments.
+      request: {
+        id: options.id,
+        kind: options.kind,
+        enabled: options.enabled,
+        project: options.project ?? null,
+        works_project: options.worksProject ?? null,
+        works_origin: options.worksOrigin ?? null,
+        credential: options.credential ?? null,
+      },
+    }),
+
+  deleteDeployTarget: (id: string) => invoke<void>('delete_deploy_target', { id }),
+
+  setDeployEnabled: (enabled: boolean) => invoke<void>('set_deploy_enabled', { enabled }),
+
+  /**
+   * Deploy the CURRENT build.
+   *
+   * A deploy does not build: section 14.13's re-send pushes an existing dist so the fingerprint that
+   * authorised it still describes the bytes. Publishing first is the caller's job.
+   */
+  deployNow: (releaseId?: string) =>
+    invoke<DeployOutcomeView>('deploy_now', { releaseId: releaseId ?? null }),
+
+  /** The sub-targets a deployment can re-send. */
+  deployResendable: (releaseId?: string) =>
+    invoke<string[]>('deploy_resendable', { releaseId: releaseId ?? null }),
 
   /** Take a manual backup into the project's own backup directory (section 17.8). */
   manualBackup: () => invoke<BackupOutcomeView>('manual_backup'),
