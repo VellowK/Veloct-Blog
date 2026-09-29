@@ -178,6 +178,85 @@ export interface LogPage {
   categories: string[];
 }
 
+// ---------------------------------------------------------------------------------------------
+// The AI subsystem and the page creator (handoff.md sections 8 and 11).
+// ---------------------------------------------------------------------------------------------
+
+/** An image the model asked for but did not generate (section 8.1). */
+export interface ImagePlaceholder {
+  description: string;
+  /** The 1-based body line, so the dialog can point at it. */
+  line: number;
+}
+
+/**
+ * A generated page, parsed by the project's own parser.
+ *
+ * Nothing has been written: this is the thing being previewed between §8.1's "the AI generates the page"
+ * and "the user confirms".
+ */
+export interface PageDraft {
+  title: string;
+  slug: string;
+  summary: string | null;
+  tags: string[];
+  category: string | null;
+  kind: 'page' | 'article' | 'knowledge';
+  body: string;
+  /** The whole document with the frontmatter VELOCT assigned. This is what a confirm writes. */
+  source: string;
+  placeholders: ImagePlaceholder[];
+  /** Parser diagnostics, so a structural problem is seen BEFORE the page exists. */
+  diagnostics: string[];
+  provider_id: string | null;
+  model_id: string | null;
+  used_fallback: boolean;
+}
+
+export interface PageDraftView {
+  draft: PageDraft;
+  prompt_feature: string;
+}
+
+export interface AiProviderView {
+  id: string;
+  name: string;
+  protocol: string;
+  base_url: string;
+  /** The HANDLE, never a credential (section 12.2). */
+  credential_ref: string | null;
+  /** Whether one is stored. The value is never sent to the frontend. */
+  has_credential: boolean;
+  enabled: boolean;
+  usable: boolean;
+}
+
+export interface AiModelView {
+  provider_id: string;
+  model_id: string;
+  label: string;
+  context_window: number | null;
+}
+
+export interface AiFeatureView {
+  id: string;
+  label: string;
+  provider_id: string | null;
+  model_id: string | null;
+  configured: boolean;
+}
+
+export interface AiSettingsView {
+  providers: AiProviderView[];
+  models: AiModelView[];
+  features: AiFeatureView[];
+  fallback_provider_id: string | null;
+  fallback_model_id: string | null;
+  page_create_ready: boolean;
+  /** Why it is not ready, when it is not, so the dialog can say what to do. */
+  blocked_reason: string | null;
+}
+
 export const api = {
   appInfo: () => invoke<AppInfo>('app_info'),
 
@@ -295,6 +374,85 @@ export const api = {
    * The filtering happens on the Rust side, so the page does not receive the whole log to show part of
    * it. The entries arriving are already redacted either way (handoff.md section 18.1).
    */
+  /** The AI configuration. Never carries a credential value (section 12.1). */
+  aiSettings: () => invoke<AiSettingsView>('ai_settings'),
+
+  /**
+   * Add or update a provider.
+   *
+   * The credential is a separate parameter because it goes to the OS store and the row keeps only a handle.
+   * A single object with the secret inside would invite persisting it (section 12.2).
+   */
+  saveAiProvider: (options: {
+    id: string;
+    name: string;
+    protocol: string;
+    baseUrl: string;
+    enabled: boolean;
+    /** Omitted or empty means "leave the stored credential alone". */
+    credential?: string;
+  }) =>
+    invoke<void>('save_ai_provider', {
+      id: options.id,
+      name: options.name,
+      protocol: options.protocol,
+      baseUrl: options.baseUrl,
+      enabled: options.enabled,
+      credential: options.credential ?? null,
+    }),
+
+  deleteAiProvider: (id: string) => invoke<void>('delete_ai_provider', { id }),
+
+  /** Map a feature to a model, or clear it by passing nulls (section 11.3). */
+  setAiFeature: (options: {
+    featureId: string;
+    label?: string;
+    providerId: string | null;
+    modelId: string | null;
+  }) =>
+    invoke<void>('set_ai_feature', {
+      featureId: options.featureId,
+      label: options.label ?? null,
+      providerId: options.providerId,
+      modelId: options.modelId,
+    }),
+
+  /** Set the single global fallback (section 11.4). */
+  setAiFallback: (providerId: string | null, modelId: string | null) =>
+    invoke<void>('set_ai_fallback', { providerId, modelId }),
+
+  /**
+   * Generate a page draft.
+   *
+   * NOTHING is written. Section 8.1 puts the preview before the creation, and this call is the generation
+   * step rather than the create step.
+   */
+  generatePage: (options: {
+    title: string;
+    brief: string;
+    kind?: 'page' | 'article' | 'knowledge';
+    tags?: string[];
+    category?: string;
+    withImagePlaceholders?: boolean;
+  }) =>
+    invoke<PageDraftView>('generate_page', {
+      title: options.title,
+      brief: options.brief,
+      kind: options.kind ?? null,
+      tags: options.tags ?? null,
+      category: options.category ?? null,
+      withImagePlaceholders: options.withImagePlaceholders ?? null,
+    }),
+
+  /**
+   * Create the page from a confirmed draft.
+   *
+   * This IS the confirmation. The Rust side re-parses and refuses a document with a structural error, so
+   * section 8.1's "without confirmation, a page must not be created" holds even if a caller skips the view.
+   */
+  createPageFromDraft: (source: string, kind: ContentKind) =>
+    invoke<DocumentView>('create_page_from_draft', { source, kind }),
+
   readLog: (options?: {
     limit?: number;
     level?: 'info' | 'warning' | 'error';

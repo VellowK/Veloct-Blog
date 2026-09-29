@@ -166,6 +166,68 @@ describe('frontmatterFields', () => {
   });
 });
 
+describe('the page creator preview', () => {
+  /**
+   * The AI draft's source, as `veloct-ai` builds it: frontmatter carrying the id Veloct just assigned,
+   * then the model's body.
+   */
+  const AI_SOURCE = [
+    '---',
+    'id: 01J8Z5Q0K3W7M9V2B4N6P8R9AZ',
+    'type: page',
+    'slug: about-us',
+    'title: About Us',
+    'wip: false',
+    'wip_publish: false',
+    'wip_ever_published: false',
+    'created_at: 2026-01-01T12:00:00Z',
+    'updated_at: 2026-01-01T12:00:00Z',
+    'tags: []',
+    '---',
+    '',
+    '# About Us',
+    '',
+    'We are a team.',
+    '',
+    ':::image{placeholder="a photo of the team"}',
+    ':::',
+    '',
+  ].join('\n');
+
+  it('shows only the body, so the assigned id cannot be edited away', () => {
+    // The frontmatter holds the id Veloct assigned a moment ago. A textarea over the whole document would
+    // make it possible to type an id that disagrees with how the document is addressed.
+    const { body, frontmatter } = splitSource(AI_SOURCE);
+    expect(body).not.toContain('id:');
+    expect(body.startsWith('\n# About Us')).toBe(true);
+    expect(frontmatter).toContain('id: 01J8Z5Q0K3W7M9V2B4N6P8R9AZ');
+  });
+
+  it('keeps the assigned identity when the user edits the preview', () => {
+    // Section 8.1 lets the user modify the draft before confirming; the identity is not theirs to edit.
+    const edited = replaceBody(AI_SOURCE, '\n# About Us\n\nWe are a small team.\n');
+    expect(edited).toContain('id: 01J8Z5Q0K3W7M9V2B4N6P8R9AZ');
+    expect(edited).toContain('slug: about-us');
+    expect(edited).toContain('created_at: 2026-01-01T12:00:00Z');
+    expect(edited).toContain('We are a small team.');
+    expect(edited).not.toContain('We are a team.');
+  });
+
+  it('preserves the image placeholder through an edit of another part', () => {
+    // A placeholder is the project's own construct and the user replaces it deliberately, not by accident.
+    const edited = replaceBody(AI_SOURCE, '\n# About Us\n\nNew text.\n\n:::image{placeholder="a photo of the team"}\n:::\n');
+    expect(edited).toContain(':::image{placeholder="a photo of the team"}');
+    const roundTrip = splitSource(edited);
+    expect(roundTrip.frontmatter).toBe(splitSource(AI_SOURCE).frontmatter);
+  });
+
+  it('round trips an untouched draft byte for byte', () => {
+    // Confirming without editing must write exactly what was previewed.
+    const { frontmatter, body } = splitSource(AI_SOURCE);
+    expect(joinSource(frontmatter, body)).toBe(AI_SOURCE);
+  });
+});
+
 describe('bodiesDifferMeaningfully', () => {
   it('ignores the incidental whitespace a rich-text round trip changes', () => {
     // A Markdown round trip WILL change trailing spaces and blank-line runs. Reporting that as a real

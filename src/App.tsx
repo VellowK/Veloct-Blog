@@ -21,6 +21,7 @@ import {
   describeError,
   type ContentKind,
   type DocumentView,
+  type AiSettingsView,
   type PreviewView,
   type ProjectView,
   type RibbonEntry,
@@ -29,6 +30,7 @@ import {
 } from './lib/api';
 import Editor from './Editor';
 import LogView from './LogView';
+import PageCreator, { AiSettingsPanel } from './PageCreator';
 import {
   dueReason,
   hashText,
@@ -161,6 +163,10 @@ export default function App() {
   // The editor/preview split, draggable (handoff.md section 4.2). Stored as a percentage so it survives
   // a window resize, and clamped so a pane can never be dragged to nothing and become unrecoverable.
   const [splitPercent, setSplitPercent] = useState(50);
+  // The AI surface (handoff.md sections 8 and 11).
+  const [aiSettings, setAiSettings] = useState<AiSettingsView | null>(null);
+  const [showPageCreator, setShowPageCreator] = useState(false);
+  const [showAiSettings, setShowAiSettings] = useState(false);
   const splitRef = useRef<HTMLDivElement | null>(null);
   const draggingRef = useRef(false);
 
@@ -206,6 +212,18 @@ export default function App() {
   useEffect(() => {
     if (project) void api.previewStatus().then(setPreview).catch(() => undefined);
   }, [project]);
+
+  const reloadAiSettings = useCallback(async () => {
+    try {
+      setAiSettings(await api.aiSettings());
+    } catch (caught) {
+      setError(describeError(caught));
+    }
+  }, []);
+
+  useEffect(() => {
+    if (project) void reloadAiSettings();
+  }, [project, reloadAiSettings]);
 
   const onSaved = useCallback(
     (view: SaveView) => {
@@ -367,6 +385,16 @@ export default function App() {
               </button>
               <button type="button" onClick={() => void createDocument('knowledge')}>
                 + 知识库
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowPageCreator(true)}
+                title="由 AI 生成整页,确认前不会创建任何文件"
+              >
+                AI 建页
+              </button>
+              <button type="button" onClick={() => setShowAiSettings(true)}>
+                AI 设置
               </button>
             </div>
 
@@ -538,6 +566,32 @@ export default function App() {
           </p>
         )}
       </section>
+
+      {showPageCreator && (
+        <PageCreator
+          settings={aiSettings}
+          onClose={() => setShowPageCreator(false)}
+          onOpenSettings={() => {
+            setShowPageCreator(false);
+            setShowAiSettings(true);
+          }}
+          onCreated={(created) => {
+            setShowPageCreator(false);
+            setDocument(created);
+            setSource(created.source);
+            setStatus(`已创建 ${created.title}`);
+            void refresh();
+          }}
+        />
+      )}
+
+      {showAiSettings && (
+        <AiSettingsPanel
+          settings={aiSettings}
+          onReload={reloadAiSettings}
+          onClose={() => setShowAiSettings(false)}
+        />
+      )}
 
       <footer className="statusbar">
         <span>{status}</span>
