@@ -118,13 +118,17 @@ Legend: **P** = planned, **I** = implemented, **F** = failing (regression).
 
 | # | Clause | Test id | Crate | State |
 |---|---|---|---|---|
-| G1 | Independent checkbox delivery per logical target | `deploy::targets_independent` | veloct-deploy | P |
-| G2 | Partial success rolls up to `PARTIAL` and never retracts the success | `deploy::partial_rollup` | veloct-deploy | P |
-| G3 | Failure does not auto-retry | `deploy::no_auto_retry` | veloct-deploy | P |
-| G4 | Failed sub-target re-publish uses the frozen snapshot | `deploy::resend_uses_frozen_snapshot` | veloct-deploy | P |
-| G5 | A target without a Works Origin is reported as degraded | `deploy::degraded_without_works_origin` | veloct-deploy | P |
-| G6 | 1Panel path exports `dist/site` + `dist/works` for manual upload | `deploy::manual_export_layout` | veloct-deploy | P |
-| G7 | SEO push failure never marks the site release as failed | `deploy::seo_push_failure_isolated` | veloct-deploy | P |
+| G1 | Independent checkbox delivery per logical target | `target::the_three_automatic_targets_are_the_ones_the_contract_names`, `target::the_two_edgeone_regions_are_independent_targets`, `target::a_target_config_carries_only_a_credential_handle`, `pipeline::one_target_failing_does_not_retract_another_targets_success`, `pipeline::a_disabled_target_is_skipped_and_not_reported_as_a_failure` | veloct-deploy | **I** |
+| G2 | Partial success rolls up to `PARTIAL` and never retracts the success | `target::one_failure_makes_the_target_partial_and_keeps_the_success`, `target::a_works_failure_does_not_touch_the_main_result`, `target::a_skip_is_not_a_failure`, `pipeline::a_works_failure_makes_the_target_partial_and_leaves_main_succeeded`, `pipeline::a_main_failure_does_not_stop_the_works_root_from_being_pushed` | veloct-deploy | **I** |
+| G3 | Failure does not auto-retry | `pipeline::a_failure_is_not_retried_automatically` (each publish attempts each root exactly once; the adapter records one push per publish, never two) | veloct-deploy | **I** |
+| G4 | Failed sub-target re-publish uses the frozen snapshot | `pipeline::a_re_send_publishes_only_the_failed_sub_target`, `pipeline::a_re_send_uses_the_frozen_target_not_the_current_configuration`, `pipeline::a_re_send_from_a_different_commit_is_refused`, `pipeline::a_re_send_with_the_wrong_payload_is_refused`, `pipeline::a_re_send_records_whether_the_existing_dist_was_reused`, `target::a_re_send_reuses_the_dist_when_the_fingerprint_still_matches`, `target::a_re_send_rebuilds_when_the_fingerprint_differs`, `target::a_re_send_rebuilds_when_there_is_no_dist_at_all`, `target::a_frozen_target_keeps_what_the_release_was_built_for` | veloct-deploy | **I** |
+| G5 | A target without a Works Origin is reported as degraded | `target::a_target_without_a_works_origin_is_degraded`, `pipeline::a_degraded_target_skips_the_works_root_rather_than_failing_it` | veloct-deploy | **I** |
+| G6 | 1Panel path exports `dist/site` + `dist/works` for manual upload | `adapter::a_manual_adapter_reports_an_export_rather_than_a_deployment`, `adapter::an_export_manifest_names_both_roots_and_marks_a_degraded_target`, `pipeline::a_manual_target_reports_an_export_and_still_counts_as_a_success` | veloct-deploy | **I** |
+| G7 | SEO push failure never marks the site release as failed | `pipeline::a_seo_task_is_never_part_of_the_site_release_status`, `pipeline::a_publish_result_with_only_seo_trouble_still_reports_success` | veloct-deploy | **I** |
+| G8 | Cloudflare Pages deploys through the documented three-step direct-upload API | `adapter::the_cloudflare_adapter_only_uploads_the_missing_hashes`, `adapter::the_cloudflare_adapter_uploads_then_creates_a_deployment`, `adapter::the_cloudflare_adapter_sends_its_credential_as_a_bearer_token`, `adapter::the_cloudflare_adapter_does_not_upload_when_every_hash_is_known` | veloct-deploy | **I** |
+| G9 | An unverified protocol reports itself as unverified rather than pretending | `target::a_target_reports_honestly_which_protocols_are_verified`, `adapter::capabilities_report_honestly_for_each_kind`, `adapter::a_memory_adapter_can_stand_in_for_a_manual_target_too` | veloct-deploy | **I** |
+| G10 | An adapter failure is reported with its reason and never as a success | `adapter::reading_a_root_that_does_not_exist_is_an_error_not_an_empty_payload`, `adapter::reading_an_empty_root_is_refused_for_the_same_reason`, `adapter::the_cloudflare_adapter_reports_a_rejected_hash_check`, `adapter::the_cloudflare_adapter_reports_a_rejected_upload`, `adapter::a_connection_test_reports_the_failure_reason` | veloct-deploy | **I** |
+| G11 | A rollback uses the release's own tag and commit and rewrites nothing | `target::a_rollback_plan_carries_the_tag_the_commit_and_the_snapshot`, `target::a_rollback_of_a_release_with_no_anchor_is_refused` | veloct-deploy | **I** |
 
 ## H. Handoff §28 completion definition — end-to-end acceptance
 
@@ -174,7 +178,7 @@ a live endpoint stays marked `UNVERIFIED` in the matrix and in the UI.
 | 2026-09-28 · release | `powershell -ExecutionPolicy Bypass -File scripts/cargo.ps1 test --workspace --exclude veloct-desktop` | **279 passed, 0 failed** (58 `veloct-core`, 9 `veloct-app`, 110 `veloct-markdown`, 38 `veloct-storage`, 24 `veloct-git`, 40 `veloct-release`) |
 | 2026-09-28 · lints | `powershell -ExecutionPolicy Bypass -File scripts/cargo.ps1 clippy --workspace --exclude veloct-desktop --all-targets` | no warnings |
 | 2026-09-28 · site build | `npm.cmd run build` in `site/` then `node scripts/verify-build.mjs` | exit 0; **41/41 build checks passed** |
-| 2026-09-28 · workspace | `powershell -ExecutionPolicy Bypass -File scripts/cargo.ps1 test --workspace --exclude veloct-desktop` | **682 passed, 0 failed** (88 `veloct-ai`, 9 `veloct-app`, **146 `veloct-attach`**, 144 `veloct-content`, 58 `veloct-core`, 24 `veloct-git`, 110 `veloct-markdown`, 25 `veloct-process`, 40 `veloct-release`, 38 `veloct-storage`) |
+| 2026-09-28 · workspace | `powershell -ExecutionPolicy Bypass -File scripts/cargo.ps1 test --workspace --exclude veloct-desktop` | **752 passed, 0 failed** (88 `veloct-ai`, 9 `veloct-app`, 146 `veloct-attach`, 144 `veloct-content`, 58 `veloct-core`, **70 `veloct-deploy`**, 24 `veloct-git`, 110 `veloct-markdown`, 25 `veloct-process`, 40 `veloct-release`, 38 `veloct-storage`) |
 
 Rows at **I** as a result of these runs:
 

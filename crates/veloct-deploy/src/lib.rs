@@ -20,7 +20,21 @@
 //! Vendor APIs are not invented. Cloudflare Pages is implemented against its documented direct
 //! upload API and tested against a local fake; EdgeOne is a manual/export target until a
 //! verified API definition exists (ADR-0012).
-//!
-//! Ownership: `verify-deploy` (team `veloct-complete`).
 
 #![forbid(unsafe_code)]
+
+pub mod adapter;
+pub mod pipeline;
+pub mod target;
+
+pub use adapter::{
+    CloudflarePagesAdapter, DeployAdapter, DeployCapabilities, ExportManifest, ExportRoot,
+    ManualExportAdapter, MemoryAdapter, PushFile, PushOutcome, PushPayload,
+};
+pub use pipeline::{
+    Orchestrator, PublishPayloads, PublishResult, ResendContext, SeoTaskState, TargetAdapters,
+};
+pub use target::{
+    roll_up, DistDecision, FrozenTarget, LogicalStatus, LogicalTargetRun, RollbackPlan, SubTarget,
+    SubTargetRun, SubTargetStatus, TargetConfig, TargetKind, TargetSnapshot,
+};
