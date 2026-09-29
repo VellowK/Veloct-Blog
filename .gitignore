@@ -41,3 +41,18 @@ desktop.ini
 # --- temporary experiment left over from diagnosing Cargo registry access ---
 /.cargo/
 dist-ui/
+
+# The pinned Node RUNTIME is fetched and hash-verified rather than committed: it is 89 MB, and putting it in
+# every clone and every diff would buy nothing. The pin is `scripts/node-runtime.toml`, the fetch is
+# `scripts/fetch-node.ps1`, and ADR-0005 is satisfied because the launcher resolves it from the sidecar path
+# and never from PATH. The pattern above already ignores it; this line says so deliberately rather than by
+# accident of the `*.exe` rule.
+/src-tauri/binaries/veloct-node-*.exe
+*.staged
+
+# --- the one generated binary that IS committed ---
+# The sidecar LAUNCHER is 2.66 MB of Rust built from `crates/veloct-sidecar`, and Tauri's `externalBin`
+# resolves it by its target-triple name at runtime, so it has to be present at that exact path. It is
+# re-included HERE, at the end, because git applies these rules in order and a later rule wins: a negation
+# placed beside the `*.exe` rule above would simply be overridden by it.
+!src-tauri/binaries/veloct-astro-sidecar-*.exe

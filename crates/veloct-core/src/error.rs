@@ -135,6 +135,17 @@ impl VeloctError {
     }
 
     /// A stable machine-readable code, used for AI request metadata, diagnostics and logs.
+    /// The actionable hint, when the error has one.
+    ///
+    /// Exposed so a caller can show "what to do" separately from "what went wrong" without matching on the
+    /// variant, which would break every time a variant gained a field.
+    pub fn hint(&self) -> Option<&str> {
+        match self {
+            Self::NotConfigured { hint, .. } => hint.as_deref(),
+            _ => None,
+        }
+    }
+
     pub fn code(&self) -> &'static str {
         match self {
             Self::NotConfigured { .. } => "NOT_CONFIGURED",

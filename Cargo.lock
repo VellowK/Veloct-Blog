@@ -5337,6 +5337,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "veloct-sidecar"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "tempfile",
+ "veloct-core",
+]
+
+[[package]]
 name = "veloct-storage"
 version = "0.1.0"
 dependencies = [

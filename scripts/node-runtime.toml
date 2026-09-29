@@ -1,0 +1,24 @@
+# The pinned Node runtime.
+#
+# `docs/spec/00-architecture.md` ADR-0005: "Node.js is a bundled sidecar, never a user prerequisite. A
+# pinned Node runtime is bundled as a Tauri `externalBin` sidecar together with the site template, and the
+# app resolves the node binary from the sidecar path, never from `PATH`."
+#
+# Pin, not vendored: `node.exe` is 89 MB, so committing it would put a large binary in every clone and every
+# diff for no benefit. It is FETCHED instead and verified against the official checksum Node publishes,
+# which is the same treatment the release pipeline gives any other build input: a named version and a hash,
+# so the runtime is reproducible rather than "whatever was installed".
+#
+# `scripts/fetch-node.ps1` reads this file. `node.exe` itself is gitignored; the pin is not.
+
+version = "v24.21.0"
+lts = "Krypton"
+
+[windows-x64]
+# The distribution archive and its SHA-256, from https://nodejs.org/dist/v24.21.0/SHASUMS256.txt
+archive = "node-v24.21.0-win-x64.zip"
+archive_sha256 = "158f7685b44de51f6c0df1d153526cbcd3e1bc739a8dfc607721cef75de9e541"
+# The single member the launcher needs, unpacked from the archive.
+member = "node-v24.21.0-win-x64/node.exe"
+member_sha256 = "ba4e6d110e8c1592a1ecd390f6b05f3da124b13871a5be62b341a07a853c6c32"
+target = "src-tauri/binaries/veloct-node-x86_64-pc-windows-msvc.exe"

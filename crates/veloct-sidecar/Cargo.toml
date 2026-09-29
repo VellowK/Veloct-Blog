@@ -1,0 +1,18 @@
+[package]
+name = "veloct-sidecar"
+description = "The Astro preview launcher: resolves the bundled Node runtime and runs the site's own Astro"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "veloct-astro-sidecar"
+path = "src/main.rs"
+
+[dependencies]
+veloct-core = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
