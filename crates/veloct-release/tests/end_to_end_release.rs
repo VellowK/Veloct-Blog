@@ -26,8 +26,8 @@ use std::process::Command;
 use veloct_core::ids::ReleaseId;
 use veloct_core::FixedClock;
 use veloct_release::{
-    build_once, freeze, load, record_dist_manifest, scan_dist, BuildOutcome, BuildRequest,
-    BuildRunner, BuildInputs, DeploymentTargetSnapshot, FreezeRequest, ReleaseArtifacts,
+    freeze, load, record_dist_manifest, scan_dist, BuildOutcome, BuildRequest, BuildRunner, BuildInputs,
+    DeploymentTargetSnapshot, FreezeRequest, PublishOutcome, PublishRequest, ReleaseArtifacts,
     ReleaseManifest, ToolchainSnapshot,
 };
 
@@ -291,13 +291,22 @@ fn target_snapshot() -> DeploymentTargetSnapshot {
     DeploymentTargetSnapshot::default()
 }
 
-/// Run the whole publish path once, returning the artefacts and the build outcome.
-fn publish_once(
+/// Run the whole publish path once through the REAL `veloct_release::publish`.
+///
+/// This used to re-implement the sequence, which meant the test proved that a copy of the pipeline worked.
+/// Calling the shipped function is what makes the result evidence about the code that runs.
+fn publish_once_from(
     project: &Path,
     release_id: &str,
     release_build_time: &str,
-) -> Result<(ReleaseArtifacts, BuildOutcome), String> {
+    repository: Option<&git2::Repository>,
+    created_from: Option<&str>,
+) -> Result<PublishOutcome, String> {
     let release_id = ReleaseId::parse(release_id).map_err(|error| error.to_string())?;
+    let created_from_release_id = created_from
+        .map(ReleaseId::parse)
+        .transpose()
+        .map_err(|error| error.to_string())?;
     let clock = FixedClock::new(
         time::OffsetDateTime::parse(
             "2026-01-01T12:00:00Z",
@@ -306,28 +315,24 @@ fn publish_once(
         .map_err(|error| error.to_string())?,
     );
 
-    let artifacts = freeze(
-        FreezeRequest {
+    veloct_release::publish(
+        &PublishRequest {
             project_root: project.to_path_buf(),
+            site_dir: project.join("site"),
             release_id,
             build_inputs: build_inputs(project)?,
             target_snapshot: target_snapshot(),
             toolchain: toolchain(),
             site_template_version: veloct_core::VERSION.to_string(),
-            site_template_dir: project.join("site"),
             release_build_time: release_build_time.to_string(),
-            created_from_release_id: None,
+            created_from_release_id,
+            commit_message: None,
         },
+        &NpmBuildRunner,
+        repository,
         &clock,
     )
-    .map_err(|error| error.to_string())?;
-
-    let runner = NpmBuildRunner;
-    let mut artifacts = artifacts;
-    let outcome = build_once(project, &project.join("site"), &mut artifacts, &runner)
-        .map_err(|error| error.to_string())?;
-
-    Ok((artifacts, outcome))
+    .map_err(|error| error.to_string())
 }
 
 #[test]
@@ -348,8 +353,17 @@ fn the_release_pipeline_produces_a_verifiable_release_end_to_end() {
 
     let release_id = "20260101T120000Z-e2e001";
     let build_time = "2026-01-01T12:00:00Z";
-    let (artifacts, outcome) = publish_once(&project, release_id, build_time)
+    let published = publish_once_from(&project, release_id, build_time, Some(&repository), None)
         .unwrap_or_else(|error| panic!("the publish path failed: {error}"));
+    // The real function anchors the release itself, so the test does not create the tag by hand.
+    assert!(
+        published.is_anchored(),
+        "the publish anchored the release: {:?}",
+        published.anchor_error
+    );
+    let record = published.record.clone().expect("a publish record");
+    let artifacts = published.artifacts.clone();
+    let outcome = published.build.clone();
 
     // ---- Section 14.1: ONE build produced TWO publish roots ----
     let dist = project.join("dist");
@@ -417,12 +431,22 @@ fn the_release_pipeline_produces_a_verifiable_release_end_to_end() {
     );
 
     // ---- Section 14.4: the release is anchored by a Git tag ----
-    veloct_git::create_release_tag(&repository, &reloaded.release_id).expect("the release tag");
+    // The tag was created by `publish`, and the record it wrote names it.
+    assert_eq!(record.tag_name, format!("release/{release_id}"));
     let tags = veloct_git::list_release_tags(&repository).expect("the tags");
     assert_eq!(tags.len(), 1, "exactly one release tag: {tags:?}");
     let anchored = veloct_git::commit_for_tag(&repository, &reloaded.release_id)
         .expect("the tag resolves to a commit");
     assert!(!anchored.is_empty());
+    assert_eq!(
+        anchored, record.commit_sha,
+        "the tag resolves to the commit the publish record names"
+    );
+    // And the record is on disk beside the release.
+    assert!(
+        veloct_release::record_path(&artifacts).is_file(),
+        "the publish record is written beside the release"
+    );
     assert!(
         veloct_git::tag_exists(&repository, &reloaded.release_id),
         "the tag exists"
@@ -445,9 +469,15 @@ fn the_release_pipeline_produces_a_verifiable_release_end_to_end() {
 
     // A SECOND build from the same frozen inputs must produce the same normalised manifest. This is
     // the determinism claim, and it is why the build time is frozen.
-    let second = publish_once(&project, "20260101T130000Z-e2e002", build_time)
-        .unwrap_or_else(|error| panic!("the rebuild failed: {error}"));
-    let rescanned = scan_dist(&second.1.site_root, &second.1.works_root)
+    let second = publish_once_from(
+        &project,
+        "20260101T130000Z-e2e002",
+        build_time,
+        Some(&repository),
+        Some(release_id),
+    )
+    .unwrap_or_else(|error| panic!("the rebuild failed: {error}"));
+    let rescanned = scan_dist(&second.build.site_root, &second.build.works_root)
         .expect("the second dist can be scanned");
 
     assert_eq!(
@@ -460,7 +490,7 @@ fn the_release_pipeline_produces_a_verifiable_release_end_to_end() {
     );
 
     // And the fingerprint does not move when the content does not.
-    let second_fingerprint = second.0.fingerprint(&anchored, &toolchain());
+    let second_fingerprint = second.artifacts.fingerprint(&anchored, &toolchain());
     assert_eq!(
         first_fingerprint, second_fingerprint,
         "the fingerprint must be a function of the inputs, not of the run"
@@ -473,7 +503,9 @@ fn the_release_pipeline_produces_a_verifiable_release_end_to_end() {
 
     // A DIFFERENT commit must produce a different fingerprint, or the fingerprint would not identify
     // the release.
-    let other = second.0.fingerprint("0000000000000000000000000000000000000000", &toolchain());
+    let other = second
+        .artifacts
+        .fingerprint("0000000000000000000000000000000000000000", &toolchain());
     assert_ne!(
         first_fingerprint, other,
         "a different commit is a different release"

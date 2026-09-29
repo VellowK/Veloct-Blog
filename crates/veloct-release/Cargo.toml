@@ -11,6 +11,9 @@ veloct-core = { workspace = true }
 veloct-markdown = { workspace = true }
 veloct-content = { workspace = true }
 veloct-git = { workspace = true }
+# The publish sequence commits and tags (handoff.md section 14.4), so git2 is a real dependency now
+# rather than only a test one.
+git2 = { workspace = true }
 veloct-storage = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

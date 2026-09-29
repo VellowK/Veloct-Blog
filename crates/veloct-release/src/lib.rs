@@ -21,11 +21,15 @@
 
 pub mod manifest;
 pub mod pipeline;
+pub mod publish;
 
 pub use manifest::{
     canonical_json, canonical_json_pretty, sort_json_keys, BuildInputs, DeploymentTargetSnapshot,
     DistManifest, FingerprintInputs, ReleaseManifest, ReleasePaths, SubTargetSnapshot,
     ToolchainSnapshot, BUILD_ENV_ALLOWLIST, RELEASE_SCHEMA,
+};
+pub use publish::{
+    publish, read_record, record_path, PublishOutcome, PublishRecord, PublishRequest,
 };
 pub use pipeline::{
     build_once, freeze, load, record_dist_manifest, scan_dist, BuildOutcome, BuildRequest,
