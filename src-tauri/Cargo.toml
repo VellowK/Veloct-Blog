@@ -17,6 +17,7 @@ tauri-build = { workspace = true }
 [dependencies]
 veloct-core = { workspace = true }
 veloct-app = { workspace = true }
+veloct-ai = { workspace = true }
 veloct-content = { workspace = true }
 veloct-logging = { workspace = true }
 veloct-storage = { workspace = true }
@@ -28,6 +29,7 @@ veloct-markdown = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 time = { workspace = true }
+keyring = { workspace = true }
 parking_lot = { workspace = true }
 tauri = { workspace = true }
 tauri-plugin-shell = { workspace = true }

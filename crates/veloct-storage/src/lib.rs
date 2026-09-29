@@ -20,11 +20,17 @@
 
 #![forbid(unsafe_code)]
 
+pub mod ai_settings;
 pub mod db;
 pub mod migrations;
 pub mod models;
 pub mod rebuild;
 
+pub use ai_settings::{
+    read_fallback, read_features, read_models, read_providers, read_settings, record_request,
+    replace_models, set_fallback, set_feature, upsert_provider, delete_provider, AiFallbackRow,
+    AiFeatureRow, AiModelRow, AiProviderRow, AiRequestRecord, AiSettings,
+};
 pub use db::{open, open_at, open_in_memory, MigrationReport};
 pub use migrations::CURRENT_SCHEMA_VERSION;
 pub use models::{

@@ -26,6 +26,7 @@ pub mod cancellation;
 pub mod context;
 pub mod error;
 pub mod feature;
+pub mod page;
 pub mod provider;
 pub mod service;
 
@@ -34,6 +35,9 @@ pub use cancellation::CancelToken;
 pub use context::{ContextBundle, ContextLimits, ContextSource};
 pub use error::{AiError, AiErrorKind};
 pub use feature::{builtin_features, feature_spec, FeatureId, FeatureSpec};
+pub use page::{
+    build_draft, ensure_creatable, ContentKindChoice, ImagePlaceholder, PageDraft, PageRequest,
+};
 pub use provider::{
     ChatMessage, ChatRequest, ChatResponse, ConnectionTest, ModelRef, ModelSource, Provider,
     ProviderConfig, ProviderModel, ProviderProtocol,

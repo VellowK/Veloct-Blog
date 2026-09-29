@@ -565,6 +565,270 @@ pub fn preview_status(state: State<'_, AppState>) -> PreviewView {
     PreviewView::build(&state, status)
 }
 
+// ---------------------------------------------------------------------------------------------
+// The AI subsystem and the page creator (handoff.md sections 8 and 11).
+// ---------------------------------------------------------------------------------------------
+
+/// The AI configuration, for the settings page.
+#[tauri::command]
+pub fn ai_settings(state: State<'_, AppState>) -> Result<crate::page_creator::AiSettingsView, CommandError> {
+    let project = state.project()?;
+    let settings = read_ai_settings(&project)?;
+    // The reader is passed, not an "exists" predicate: the view reports WHETHER a credential is saved
+    // (section 12.1) and must never show the value, which is what this signature makes easy to honour.
+    Ok(crate::page_creator::AiSettingsView::build(
+        &settings,
+        &crate::credentials::get_or_none,
+    ))
+}
+
+/// Read the stored AI settings through the project's database.
+fn read_ai_settings(
+    project: &Arc<crate::state::OpenProject>,
+) -> Result<veloct_storage::AiSettings, CommandError> {
+    let (connection, _) = veloct_storage::open(project.root.as_path(), &veloct_core::SystemClock)?;
+    Ok(veloct_storage::read_settings(&connection)?)
+}
+
+/// Add or update a provider.
+///
+/// The credential is written to the OS store and the row keeps only a HANDLE (sections 12.1, 12.2). The
+/// command takes the secret separately from the row so there is no path that puts it in the database.
+#[tauri::command]
+pub fn save_ai_provider(
+    state: State<'_, AppState>,
+    id: String,
+    name: String,
+    protocol: String,
+    base_url: String,
+    enabled: bool,
+    credential: Option<String>,
+) -> Result<(), CommandError> {
+    let project = state.project()?;
+    let now = state.now();
+
+    if id.trim().is_empty() {
+        return Err(command_invalid("a provider needs an id"));
+    }
+    if veloct_ai::ProviderProtocol::parse(&protocol).is_none() {
+        return Err(command_invalid(format!(
+            "unknown protocol {protocol:?}; expected one of openai, anthropic, ollama"
+        )));
+    }
+
+    // The handle, not the credential, is what the row holds.
+    let handle = crate::credentials::handle_for(&id);
+    let mut credential_ref = None;
+    if veloct_ai::ProviderProtocol::parse(&protocol)
+        .map(|parsed| parsed.requires_credential())
+        .unwrap_or(true)
+    {
+        credential_ref = Some(handle.clone());
+    }
+
+    // A supplied credential goes to the OS store and nowhere else.
+    if let Some(secret) = credential.filter(|value| !value.trim().is_empty()) {
+        crate::credentials::set(&handle, secret.trim())?;
+    }
+
+    let row = veloct_storage::AiProviderRow {
+        id: id.clone(),
+        name,
+        protocol,
+        base_url,
+        credential_ref,
+        enabled,
+        created_at: now,
+    };
+
+    let (connection, _) = veloct_storage::open(project.root.as_path(), &veloct_core::SystemClock)?;
+    veloct_storage::upsert_provider(&connection, &row)?;
+    let _ = project.log(
+        veloct_logging::LogEvent::info(veloct_logging::Category::Ai, "AI provider saved")
+            .with_field("provider_id", &id)
+            .with_field("protocol", &row.protocol)
+            // The HANDLE, never the credential (section 18.1).
+            .with_field("credential_ref", row.credential_ref.clone().unwrap_or_default()),
+    );
+    Ok(())
+}
+
+/// Remove a provider and its stored credential.
+#[tauri::command]
+pub fn delete_ai_provider(state: State<'_, AppState>, id: String) -> Result<(), CommandError> {
+    let project = state.project()?;
+    let (connection, _) = veloct_storage::open(project.root.as_path(), &veloct_core::SystemClock)?;
+    veloct_storage::delete_provider(&connection, &id)?;
+    // The credential goes too, or removing a provider would leave a secret in the OS store that nothing
+    // can reach and the user cannot see.
+    let _ = crate::credentials::remove(&crate::credentials::handle_for(&id));
+    let _ = project.log(
+        veloct_logging::LogEvent::info(veloct_logging::Category::Ai, "AI provider removed")
+            .with_field("provider_id", &id),
+    );
+    Ok(())
+}
+
+/// Map a feature to a model, or clear the mapping (section 11.3).
+#[tauri::command]
+pub fn set_ai_feature(
+    state: State<'_, AppState>,
+    feature_id: String,
+    label: Option<String>,
+    provider_id: Option<String>,
+    model_id: Option<String>,
+) -> Result<(), CommandError> {
+    let project = state.project()?;
+    let (connection, _) = veloct_storage::open(project.root.as_path(), &veloct_core::SystemClock)?;
+    let label = label.unwrap_or_else(|| feature_id.clone());
+    veloct_storage::set_feature(
+        &connection,
+        &feature_id,
+        &label,
+        provider_id.as_deref(),
+        model_id.as_deref(),
+    )?;
+    let _ = project.log(
+        veloct_logging::LogEvent::info(veloct_logging::Category::Ai, "AI feature mapped")
+            .with_field("feature_id", &feature_id)
+            .with_field("provider_id", provider_id.unwrap_or_default())
+            .with_field("model_id", model_id.unwrap_or_default()),
+    );
+    Ok(())
+}
+
+/// Set the single global fallback (section 11.4).
+#[tauri::command]
+pub fn set_ai_fallback(
+    state: State<'_, AppState>,
+    provider_id: Option<String>,
+    model_id: Option<String>,
+) -> Result<(), CommandError> {
+    let project = state.project()?;
+    let (connection, _) = veloct_storage::open(project.root.as_path(), &veloct_core::SystemClock)?;
+    veloct_storage::set_fallback(&connection, provider_id.as_deref(), model_id.as_deref())?;
+    let _ = project.log(
+        veloct_logging::LogEvent::info(veloct_logging::Category::Ai, "AI fallback set")
+            .with_field("provider_id", provider_id.unwrap_or_default())
+            .with_field("model_id", model_id.unwrap_or_default()),
+    );
+    Ok(())
+}
+
+/// Generate a page draft. NOTHING is written (section 8.1).
+#[tauri::command]
+pub fn generate_page(
+    state: State<'_, AppState>,
+    title: String,
+    brief: String,
+    kind: Option<String>,
+    tags: Option<Vec<String>>,
+    category: Option<String>,
+    with_image_placeholders: Option<bool>,
+) -> Result<crate::page_creator::PageDraftView, CommandError> {
+    let project = state.project()?;
+    let request = crate::page_creator::parse_request(
+        &title,
+        &brief,
+        kind.as_deref(),
+        &tags.unwrap_or_default(),
+        category.as_deref(),
+        with_image_placeholders.unwrap_or(true),
+    )?;
+
+    let settings = read_ai_settings(&project)?;
+    let model = crate::page_creator::model_for_page_create(&settings)?;
+    let service = crate::page_creator::build_service(&settings, &crate::credentials::get_or_none)?;
+
+    let now = state.now();
+    let draft = crate::page_creator::generate_page(
+        &service,
+        model,
+        &request,
+        &now,
+        veloct_core::ids::StableId::new(),
+    )?;
+
+    let (connection, _) = veloct_storage::open(project.root.as_path(), &veloct_core::SystemClock)?;
+    let request_id = veloct_core::ids::StableId::new().to_text();
+    let _ = veloct_storage::record_request(
+        &connection,
+        &veloct_storage::AiRequestRecord {
+            id: &request_id,
+            feature_id: crate::page_creator::PAGE_CREATE_FEATURE,
+            provider_id: draft.provider_id.as_deref(),
+            model: draft.model_id.as_deref(),
+            status: if draft.used_fallback {
+                "fallback_succeeded"
+            } else {
+                "succeeded"
+            },
+            used_fallback: draft.used_fallback,
+            created_at: &now,
+        },
+    );
+    let _ = project.log(
+        veloct_logging::LogEvent::info(veloct_logging::Category::Ai, "page draft generated")
+            .with_field("title", &draft.title)
+            .with_field("provider_id", draft.provider_id.clone().unwrap_or_default())
+            .with_field("model_id", draft.model_id.clone().unwrap_or_default())
+            .with_field("used_fallback", draft.used_fallback.to_string())
+            .with_field("placeholders", draft.placeholders.len().to_string()),
+    );
+
+    Ok(crate::page_creator::PageDraftView::new(draft))
+}
+
+/// Create the page from a confirmed draft.
+///
+/// Section 8.1: the page is created only after the user confirms. This command IS the confirmation, and it
+/// re-validates the draft rather than trusting that the UI checked, so the rule cannot be bypassed by a
+/// caller that skipped the dialog.
+#[tauri::command]
+pub fn create_page_from_draft(
+    state: State<'_, AppState>,
+    source: String,
+    kind: String,
+) -> Result<DocumentView, CommandError> {
+    let project = state.project()?;
+
+    // Re-parse what is about to be written, and refuse a document with a structural error. The draft was
+    // validated when it was generated, but a caller could have edited it.
+    let parsed = veloct_markdown::parse::parse(&source)?;
+    if parsed.diagnostics.has_errors() {
+        let errors: Vec<String> = parsed
+            .diagnostics
+            .errors()
+            .map(|diagnostic| format!("{}: {}", diagnostic.code.as_str(), diagnostic.message))
+            .collect();
+        return Err(command_invalid(format!(
+            "the page has {} structural error(s), so it was not created: {}",
+            errors.len(),
+            errors.join("; ")
+        )));
+    }
+
+    let content_kind = parse_kind(&kind)?;
+    let now = state.now();
+
+    // Written through the content service, so the page lands in the collection with the project's own
+    // naming, id assignment and paragraph ids rather than by writing a file directly.
+    let loaded = project.content.create_from_source(
+        content_kind,
+        &source,
+        &now,
+        veloct_core::ids::StableId::new(),
+    )?;
+    let document = DocumentView::of(loaded);
+    let _ = project.log(
+        veloct_logging::LogEvent::info(veloct_logging::Category::Content, "page created from an AI draft")
+            .with_field("kind", document.kind.as_str())
+            .with_field("id", &document.id)
+            .with_field("title", &document.title),
+    );
+    Ok(document)
+}
+
 /// One log page.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogPage {
@@ -771,6 +1035,11 @@ mod log_tests {
             assert!(!entry.category_label.is_empty(), "{entry:?}");
         }
     }
+}
+
+/// An invalid-request error, in the shape the frontend already handles.
+fn command_invalid(message: impl Into<String>) -> CommandError {
+    CommandError::new("INVALID", message)
 }
 
 fn parse_kind(kind: &str) -> Result<ContentKind, CommandError> {

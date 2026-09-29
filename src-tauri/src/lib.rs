@@ -17,7 +17,9 @@
 #![forbid(unsafe_code)]
 
 pub mod commands;
+pub mod credentials;
 pub mod logging;
+pub mod page_creator;
 pub mod state;
 
 pub use commands::{AppInfo, DocumentView, PreviewView, ProjectView, SaveView};
@@ -58,6 +60,13 @@ pub fn run() {
             commands::stop_preview,
             commands::preview_status,
             commands::read_log,
+            commands::ai_settings,
+            commands::save_ai_provider,
+            commands::delete_ai_provider,
+            commands::set_ai_feature,
+            commands::set_ai_fallback,
+            commands::generate_page,
+            commands::create_page_from_draft,
         ])
         .setup(|app| {
             // The preview supervisor is started lazily, when a project is opened, so a machine with no

@@ -172,6 +172,98 @@ impl ContentService {
         self.workspace.paths()
     }
 
+    /// Create a document from a COMPLETE Markdown source, re-stamping the fields Veloct owns.
+    ///
+    /// This is the AI page creator's confirm step (`handoff.md` §8.1). The source already carries
+    /// frontmatter — `veloct-ai` built it with `veloct_markdown` rather than inventing a private format
+    /// (§8.2) — so this does not re-derive the document from scratch. What it does NOT trust is the
+    /// identity: the id, the timestamps and the WIP flags are re-stamped from `new_id` and `now` here.
+    ///
+    /// Re-stamping rather than validating is deliberate. A caller could hand this method a source whose id
+    /// was generated a minute ago, or whose `created_at` came from a model that wrote 1999, and either
+    /// would produce a file whose frontmatter disagrees with how it is addressed. Re-stamping makes "every
+    /// created document has a fresh identity" true by construction instead of by a check that could be
+    /// forgotten.
+    pub fn create_from_source(
+        &self,
+        kind: ContentKind,
+        source: &str,
+        now: &str,
+        new_id: StableId,
+    ) -> Result<LoadedDocument> {
+        let parsed = veloct_markdown::parse::parse(source)?;
+        if parsed.diagnostics.has_errors() {
+            let errors: Vec<String> = parsed
+                .diagnostics
+                .errors()
+                .map(|diagnostic| format!("{}: {}", diagnostic.code.as_str(), diagnostic.message))
+                .collect();
+            return Err(VeloctError::Invalid(format!(
+                "the document has {} structural error(s), so it was not created: {}",
+                errors.len(),
+                errors.join("; ")
+            )));
+        }
+
+        let reference = DocumentRef::new(kind, new_id);
+        let path = self.paths().document_path(kind, new_id);
+        if path.exists() {
+            return Err(VeloctError::Invalid(format!(
+                "{} document {} already exists",
+                kind.as_str(),
+                new_id.to_text()
+            )));
+        }
+
+        // A slug the source proposed is honoured, but it is checked exactly as `create` checks one: two
+        // documents sharing a public URL would make the build depend on iteration order.
+        let mut frontmatter = parsed.frontmatter.clone();
+        let slug = if frontmatter.slug.trim().is_empty() {
+            veloct_core::paths::slugify(&frontmatter.title)
+        } else {
+            veloct_core::paths::slugify(&frontmatter.slug)
+        };
+        let slug = if slug.is_empty() {
+            new_id.to_text().to_ascii_lowercase()
+        } else {
+            slug
+        };
+        if let Some(owner) = self.slug_owner(kind, &slug, reference)? {
+            return Err(VeloctError::Invalid(format!(
+                "the slug {slug:?} is already used by another {} document",
+                owner.kind.as_str()
+            )));
+        }
+
+        frontmatter.id = new_id;
+        frontmatter.content_type = kind.content_type();
+        frontmatter.slug = slug;
+        frontmatter.timestamps = Timestamps {
+            created_at: now.to_string(),
+            updated_at: now.to_string(),
+            published_at: None,
+        };
+        if kind.supports_wip() {
+            // A new article starts as a draft, and no redirect is promised until it is published.
+            frontmatter.wip = true;
+            frontmatter.wip_publish = false;
+            frontmatter.wip_ever_published = false;
+        } else {
+            frontmatter.wip = false;
+            frontmatter.wip_publish = false;
+            frontmatter.wip_ever_published = false;
+        }
+
+        let assembled = crate::model::new_document_source(&frontmatter, &parsed.body)?;
+        // Paragraph ids are assigned so a reference can be made to the new document immediately (§9.2).
+        let (source, _) = veloct_markdown::rewrite::assign_paragraph_ids(
+            &assembled,
+            &mut veloct_markdown::ast::ParagraphId::new,
+        );
+        store::write_document(&path, &source)?;
+        store::read_document(self.paths(), reference)
+    }
+
     /// Create a document, refusing to overwrite one that already exists.
     ///
     /// The id is generated fresh, so a create can never collide with an existing file. The check

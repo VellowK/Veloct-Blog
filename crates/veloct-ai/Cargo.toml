@@ -8,6 +8,7 @@ license.workspace = true
 
 [dependencies]
 veloct-core = { workspace = true }
+veloct-markdown = { workspace = true }
 veloct-storage = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
