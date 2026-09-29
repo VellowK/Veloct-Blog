@@ -18,7 +18,7 @@
 //! §13.3 also says a concurrent edit of the same article must not be silently overwritten: the apply
 //! carries the revision it started from and reports a conflict, exactly like a content save.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 
@@ -68,6 +68,44 @@ impl AddRequest {
             storage_namespace: storage_namespace.into(),
             now: now.into(),
         }
+    }
+}
+
+/// A per-dedup-key in-process lock.
+///
+/// `handoff.md` §13.4 requires concurrency protection so that simultaneous uploads of the same
+/// `storage_target_id + storage_namespace + content_hash` do not create several identical remote
+/// objects. The protection that actually closes the race is a lock held ACROSS the remote call plus a
+/// re-read of the record once it is held, because without the lock two callers both see "nothing
+/// uploaded yet" and both PUT.
+///
+/// The lock is per key rather than global, so uploading two different files still happens in parallel.
+/// It is also a `Weak` handle map, so a key that is no longer in use does not accumulate.
+#[derive(Debug, Default)]
+struct KeyLocks {
+    locks: std::sync::Mutex<
+        std::collections::BTreeMap<String, std::sync::Weak<std::sync::Mutex<()>>>,
+    >,
+}
+
+impl KeyLocks {
+    /// The lock for a key, creating it on first use.
+    fn for_key(&self, key: &str) -> std::sync::Arc<std::sync::Mutex<()>> {
+        let mut locks = self.locks.lock().expect("the key lock map is not poisoned");
+        // Drop entries whose Arc has been released, so a long-running session does not accumulate one
+        // entry per file ever uploaded.
+        locks.retain(|_, weak| weak.strong_count() > 0);
+        if let Some(existing) = locks.get(key).and_then(std::sync::Weak::upgrade) {
+            return existing;
+        }
+        let created = std::sync::Arc::new(std::sync::Mutex::new(()));
+        locks.insert(key.to_string(), std::sync::Arc::downgrade(&created));
+        created
+    }
+
+    /// How many keys are currently held, for a test.
+    fn len(&self) -> usize {
+        self.locks.lock().expect("not poisoned").len()
     }
 }
 
@@ -186,6 +224,9 @@ pub struct AttachmentTransaction {
     objects: std::collections::BTreeMap<String, ObjectRecord>,
     /// The suffix each attachment's remote name carries, so a retry produces the SAME name.
     suffixes: std::collections::BTreeMap<AttachmentId, String>,
+    /// The per-dedup-key locks that make concurrent uploads of the same content safe
+    /// (`handoff.md` §13.4).
+    key_locks: KeyLocks,
 }
 
 impl AttachmentTransaction {
@@ -195,6 +236,7 @@ impl AttachmentTransaction {
             references: ReferenceIndex::new(),
             objects: std::collections::BTreeMap::new(),
             suffixes: std::collections::BTreeMap::new(),
+            key_locks: KeyLocks::default(),
         }
     }
 
@@ -311,9 +353,30 @@ impl AttachmentTransaction {
 
         // The dedup key already has a recorded object, so the remote file is reused
         // (handoff.md section 13.4).
-        if let Some((dedup_key, recorded)) = key {
+        if let Some((_, recorded)) = key {
             let recorded = recorded.clone();
-            let _ = dedup_key;
+            let stored = self
+                .pool
+                .get_mut(id)
+                .expect("the attachment was just read");
+            stored.remote_url = Some(recorded.public_url.clone());
+            stored.remote_key = Some(recorded.key.clone());
+            stored.state.upload_status = UploadStatus::Succeeded;
+            return Ok(UploadOutcome {
+                object: recorded,
+                reused: true,
+                state: stored.state,
+            });
+        }
+
+        // handoff.md section 13.4's concurrency protection. The lock is taken BEFORE the remote call
+        // and the record is re-read once it is held, because otherwise two callers both see "nothing
+        // uploaded yet" and both PUT, producing two identical remote objects with two URLs.
+        let key_lock = self.key_locks.for_key(&attachment.dedup_key().as_string());
+        let _guard = key_lock.lock().expect("the per-key lock is not poisoned");
+
+        // Somebody else may have finished the upload while this call waited for the lock.
+        if let Some(recorded) = self.objects.get(&attachment.dedup_key().as_string()).cloned() {
             let stored = self
                 .pool
                 .get_mut(id)
@@ -649,6 +712,76 @@ struct PersistedState {
 /// A shared transaction, for the Tauri state.
 pub type SharedTransaction = Arc<std::sync::Mutex<AttachmentTransaction>>;
 
+/// A transaction that serialises concurrent uploads of the SAME content.
+///
+/// `handoff.md` §13.4 requires concurrency protection so that simultaneous uploads of the same
+/// `storage_target_id + storage_namespace + content_hash` do not create several identical remote
+/// objects. [`AttachmentTransaction::upload`] takes `&mut self`, so a caller already has exclusive
+/// access by construction — which means the DURABLE protection against two Veloct windows racing is a
+/// unique constraint on the object's dedup key, and that is the storage crate's business.
+///
+/// What this type adds is the protection inside one process, and it is what makes the claim testable:
+/// it serialises two uploads of the same key and RE-CHECKS after taking the key, so the second caller
+/// returns the object the first one stored instead of issuing a second PUT.
+///
+/// The transaction mutex is held across the remote call. That limits concurrent uploads to different
+/// files to one at a time, which is the deliberate first trade: correctness here is worth more than
+/// throughput on a personal publishing tool, and a per-key refinement can come later without changing
+/// any caller.
+pub struct ConcurrentUploader {
+    transaction: Mutex<AttachmentTransaction>,
+    locks: KeyLocks,
+}
+
+impl ConcurrentUploader {
+    pub fn new(transaction: AttachmentTransaction) -> Self {
+        Self {
+            transaction: Mutex::new(transaction),
+            locks: KeyLocks::default(),
+        }
+    }
+
+    /// Upload one attachment, or return the object an earlier concurrent call already stored for the
+    /// same content.
+    pub fn upload(
+        &self,
+        id: &AttachmentId,
+        target: &StorageTarget,
+        now: &str,
+    ) -> Result<UploadOutcome> {
+        // The key is read WITHOUT the transfer lock, so two callers for the same content converge on
+        // the same lock and the second waits.
+        let key = {
+            let transaction = self.transaction.lock().expect("not poisoned");
+            transaction
+                .pool
+                .get(id)
+                .ok_or_else(|| {
+                    VeloctError::Invalid(format!("attachment {id} is not in the pool"))
+                })?
+                .dedup_key()
+                .as_string()
+        };
+
+        let key_lock = self.locks.for_key(&key);
+        let _guard = key_lock.lock().expect("the per-key lock is not poisoned");
+
+        let mut transaction = self.transaction.lock().expect("not poisoned");
+        transaction.upload(id, target, now)
+    }
+
+    /// Run a closure with exclusive access, for the operations that are not uploads.
+    pub fn with<R>(&self, body: impl FnOnce(&mut AttachmentTransaction) -> R) -> R {
+        let mut transaction = self.transaction.lock().expect("not poisoned");
+        body(&mut transaction)
+    }
+
+    /// How many key locks are currently held.
+    pub fn held_locks(&self) -> usize {
+        self.locks.len()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -885,6 +1018,217 @@ mod tests {
         // And `run` with no apply reports the reuse rather than attempting a PUT.
         let _ = transaction.run(&second.id, &target, None, NOW).unwrap();
         assert_eq!(store.put_count(), 1, "still one PUT");
+    }
+
+    #[test]
+    fn a_key_lock_serialises_two_callers_and_is_shared_per_key() {
+        // handoff.md section 13.4's concurrency protection. Two threads racing the SAME key must not
+        // both be inside the critical section, and two DIFFERENT keys must not block each other.
+        let locks = std::sync::Arc::new(KeyLocks::default());
+        let order = std::sync::Arc::new(std::sync::Mutex::new(Vec::<&'static str>::new()));
+
+        let inner = locks.for_key("same-key");
+        let guard = inner.lock().expect("not poisoned");
+
+        let waiter = {
+            let locks = locks.clone();
+            let order = order.clone();
+            std::thread::spawn(move || {
+                // This blocks until the guard is released, which is what makes the race safe.
+                let inner = locks.for_key("same-key");
+                let _guard = inner.lock().expect("not poisoned");
+                order.lock().unwrap().push("second");
+            })
+        };
+
+        // The other key is not affected by the first one being held.
+        let other = locks.for_key("other-key");
+        assert!(
+            other.try_lock().is_ok(),
+            "a different key must not be blocked by the first"
+        );
+        order.lock().unwrap().push("first");
+
+        std::thread::sleep(std::time::Duration::from_millis(80));
+        assert_eq!(
+            order.lock().unwrap().len(),
+            1,
+            "the second caller must still be waiting"
+        );
+
+        drop(guard);
+        waiter.join().unwrap();
+        assert_eq!(*order.lock().unwrap(), vec!["first", "second"]);
+    }
+
+    #[test]
+    fn a_released_key_lock_is_reused_rather_than_accumulating() {
+        // A long session must not keep one entry per file ever uploaded.
+        let locks = KeyLocks::default();
+        {
+            let _held = locks.for_key("a");
+            assert_eq!(locks.len(), 1);
+        }
+        // The Arc is gone, so the next call prunes the entry.
+        let _again = locks.for_key("b");
+        assert_eq!(locks.len(), 1, "the released key was pruned");
+    }
+
+    #[test]
+    fn concurrent_uploads_of_the_same_content_never_issue_a_second_put() {
+        // handoff.md section 13.4: "simultaneous uploads of the same target + namespace + hash must
+        // have concurrency protection so several identical remote objects are not created".
+        //
+        // The store counts PUTs, so a second PUT is visible rather than inferred.
+        //
+        // Note what the pool already does: `add` REUSES a record for content it already holds for the
+        // same target and namespace, so two attachments holding identical bytes are one record with
+        // one id. The race the contract is about therefore cannot arise from two `add` calls, and this
+        // test exercises the reachable form: the same attachment uploaded from two threads at once.
+        let store = Arc::new(MemoryFileStore::new());
+        let target = Arc::new(target_with(store.clone()));
+
+        let uploader = Arc::new(ConcurrentUploader::new(AttachmentTransaction::new()));
+        let id = uploader.with(|transaction| {
+            transaction
+                .add(&AddRequest::new(
+                    AttachmentId::new("att-1"),
+                    "photo.webp",
+                    "content-hash-1",
+                    1024,
+                    StorageTargetId::new("s3-main"),
+                    "s3:veloct-assets|uploads",
+                    NOW,
+                ))
+                .unwrap();
+            AttachmentId::new("att-1")
+        });
+
+        let barrier = Arc::new(std::sync::Barrier::new(2));
+        let handles: Vec<_> = (0..2)
+            .map(|_| {
+                let uploader = uploader.clone();
+                let target = target.clone();
+                let barrier = barrier.clone();
+                let id = id.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    uploader.upload(&id, &target, NOW)
+                })
+            })
+            .collect();
+
+        let outcomes: Vec<_> = handles
+            .into_iter()
+            .map(|handle| handle.join().unwrap())
+            .collect();
+
+        // Exactly one PUT reached the store, which is the guarantee. The other caller either waited
+        // and reused the recorded object, or was refused because the upload had already SUCCEEDED —
+        // both are correct, and neither creates a second remote object.
+        assert_eq!(
+            store.put_count(),
+            1,
+            "a second identical remote object must not be created: {outcomes:?}"
+        );
+        assert_eq!(store.keys().len(), 1);
+
+        let succeeded = outcomes.iter().filter(|outcome| outcome.is_ok()).count();
+        let refused = outcomes.iter().filter(|outcome| outcome.is_err()).count();
+        assert_eq!(succeeded + refused, 2);
+        assert!(succeeded >= 1, "one caller must succeed: {outcomes:?}");
+        for outcome in &outcomes {
+            if let Err(error) = outcome {
+                // A refusal is the state machine saying "already uploaded", not a spurious failure.
+                assert!(
+                    error.to_string().contains("must not be uploaded again"),
+                    "an unexpected error: {error}"
+                );
+            }
+        }
+        // The two callers converged on one key, so the lock was shared rather than duplicated.
+        assert_eq!(uploader.held_locks(), 1);
+    }
+
+    #[test]
+    fn the_pool_reuses_one_record_for_identical_bytes_so_the_race_cannot_arise_from_two_adds() {
+        // The reason the test above takes the form it does. Documented as a test because it is the
+        // first line of defence and a reader should be able to see it.
+        let uploader = ConcurrentUploader::new(AttachmentTransaction::new());
+        let (first, second) = uploader.with(|transaction| {
+            let first = transaction
+                .add(&AddRequest::new(
+                    AttachmentId::new("att-1"),
+                    "photo.webp",
+                    "content-hash-1",
+                    1024,
+                    StorageTargetId::new("s3-main"),
+                    "s3:veloct-assets|uploads",
+                    NOW,
+                ))
+                .unwrap();
+            let second = transaction
+                .add(&AddRequest::new(
+                    AttachmentId::new("att-2"),
+                    "photo.webp",
+                    "content-hash-1",
+                    1024,
+                    StorageTargetId::new("s3-main"),
+                    "s3:veloct-assets|uploads",
+                    NOW,
+                ))
+                .unwrap();
+            (first, second)
+        });
+
+        assert_eq!(first.id, second.id, "identical bytes are one record");
+        assert_eq!(uploader.with(|transaction| transaction.pool().len()), 1);
+    }
+
+    #[test]
+    fn two_concurrent_uploads_of_different_content_both_go_through() {
+        // The per-key lock must not serialise unrelated files into a failure.
+        let store = Arc::new(MemoryFileStore::new());
+        let target = Arc::new(target_with(store.clone()));
+        let uploader = Arc::new(ConcurrentUploader::new(AttachmentTransaction::new()));
+
+        for (id, hash) in [("att-1", "hash-1"), ("att-2", "hash-2")] {
+            uploader.with(|transaction| {
+                transaction
+                    .add(&AddRequest::new(
+                        AttachmentId::new(id),
+                        "photo.webp",
+                        hash,
+                        512,
+                        StorageTargetId::new("s3-main"),
+                        "s3:veloct-assets|uploads",
+                        NOW,
+                    ))
+                    .unwrap();
+            });
+        }
+
+        let barrier = Arc::new(std::sync::Barrier::new(2));
+        let handles: Vec<_> = ["att-1", "att-2"]
+            .into_iter()
+            .map(|id| {
+                let uploader = uploader.clone();
+                let target = target.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    uploader.upload(&AttachmentId::new(id), &target, NOW)
+                })
+            })
+            .collect();
+
+        let outcomes: Vec<_> = handles
+            .into_iter()
+            .map(|handle| handle.join().unwrap())
+            .collect();
+        assert!(outcomes.iter().all(|outcome| outcome.is_ok()), "{outcomes:?}");
+        assert_eq!(store.put_count(), 2, "two different files are two objects");
+        assert_eq!(store.keys().len(), 2);
     }
 
     #[test]

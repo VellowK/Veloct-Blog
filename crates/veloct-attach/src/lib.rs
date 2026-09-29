@@ -19,6 +19,7 @@
 #![forbid(unsafe_code)]
 
 pub mod naming;
+pub mod network;
 pub mod pool;
 pub mod reference;
 pub mod state;
@@ -28,6 +29,10 @@ pub mod transaction;
 pub use naming::{
     dedup_key, dedup_key_string, is_safe_file_name, random_suffix, remote_file_name, DedupKey,
     SUFFIX_LENGTH,
+};
+pub use network::{
+    is_network_image, network_image_notice, ImageResult, ImageSearch, ImageSource,
+    NetworkImageChoice,
 };
 pub use pool::{
     Attachment, AttachmentId, CachePool, CleanupOutcome, CleanupRequest, PoolListing, ReferenceTask,

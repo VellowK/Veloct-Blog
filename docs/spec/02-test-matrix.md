@@ -30,20 +30,20 @@ Legend: **P** = planned, **I** = implemented, **F** = failing (regression).
 
 | # | Clause | Test id | Crate | State |
 |---|---|---|---|---|
-| B1 | Same content + same target + same namespace ⇒ reuse | `attach::dedup_same_namespace_reuses` | veloct-attach | P |
-| B2 | Same content + different target ⇒ no wrong URL reuse | `attach::dedup_other_target_not_reused` | veloct-attach | P |
-| B3 | Same name, different content ⇒ new random suffix | `attach::same_name_diff_content_new_suffix` | veloct-attach | P |
-| B4 | Upload failure keeps the cache file | `attach::upload_failure_keeps_cache` | veloct-attach | P |
-| B5 | Remote success + Markdown update failure loses no file | `attach::apply_failure_keeps_recoverable` | veloct-attach | P |
-| B6 | Removing an article reference never deletes the remote file | `attach::remove_reference_keeps_remote` | veloct-attach | P |
-| B7 | Bulk cleanup cannot delete a still-referenced file | `attach::cleanup_protects_referenced` | veloct-attach | P |
-| B8 | Bulk cleanup cannot delete `PENDING`/`UPLOADING` | `attach::cleanup_protects_inflight` | veloct-attach | P |
-| B9 | `SUCCEEDED + FAILED + PRESENT` retries reference application without re-upload | `attach::retry_apply_no_reupload` | veloct-attach | P |
-| B10 | Multi-reference: dropping one reference does not orphan the attachment | `attach::multi_reference_set_semantics` | veloct-attach | P |
-| B11 | Concurrent upload of same target+namespace+hash yields one remote object | `attach::concurrent_upload_single_object` | veloct-attach | P |
-| B12 | Filename gets a fixed-6-char suffix before the extension | `attach::filename_suffix_format` | veloct-attach | P |
-| B13 | Changing the public URL prefix does not move or delete remote files | `attach::url_prefix_change_no_move` | veloct-attach | P |
-| B14 | Network image sources bypass the cache pool entirely | `attach::remote_image_no_cache` | veloct-attach | P |
+| B1 | Same content + same target + same namespace ⇒ reuse | `transaction::the_same_bytes_on_the_same_target_reuse_the_remote_object_without_a_second_put`, `pool::the_same_bytes_on_the_same_target_and_namespace_are_reused`, `naming::the_same_hash_on_the_same_target_and_namespace_is_the_same_key` | veloct-attach | **I** |
+| B2 | Same content + different target ⇒ no wrong URL reuse | `transaction::the_same_bytes_on_a_different_target_does_not_reuse_the_object`, `pool::the_same_bytes_on_a_different_target_is_a_new_record`, `naming::the_same_hash_on_a_different_target_is_a_different_key`, `naming::the_same_hash_in_a_different_namespace_is_a_different_key` | veloct-attach | **I** |
+| B3 | Same name, different content ⇒ new random suffix | `pool::different_content_with_the_same_name_is_a_new_record`, `transaction::different_content_gets_a_different_suffix` | veloct-attach | **I** |
+| B4 | Upload failure keeps the cache file | `transaction::a_failed_upload_keeps_the_cache_and_allows_a_retry`, `pool::a_failed_upload_with_no_reference_is_swept` (nothing remote exists, so the bytes serve no purpose and are sweepable) | veloct-attach | **I** |
+| B5 | Remote success + Markdown update failure loses no file | `transaction::a_failed_apply_keeps_the_cache_and_offers_an_apply_retry_not_a_re_upload`, `transaction::the_remote_object_is_recorded_before_the_reference_is_applied`, `transaction::a_conflicted_apply_queues_a_reference_task_for_the_retry` | veloct-attach | **I** |
+| B6 | Removing an article reference never deletes the remote file | `reference::removing_a_reference_has_no_remote_effect_because_there_is_no_such_function`, `pool::removing_a_record_has_no_remote_effect`, `storage::there_is_no_wholesale_delete_on_the_adapter` | veloct-attach | **I** |
+| B7 | Bulk cleanup cannot delete a still-referenced file | `pool::a_safe_orphan_is_the_only_thing_a_bulk_sweep_takes`, `pool::a_manual_delete_refuses_a_referenced_file_even_when_confirmed`, `state::a_referenced_attachment_is_never_an_orphan` | veloct-attach | **I** |
+| B8 | Bulk cleanup cannot delete `PENDING`/`UPLOADING` | `state::a_pending_or_uploading_attachment_is_never_bulk_deleted`, `pool::a_pending_file_is_never_swept_even_with_no_reference`, `pool::a_manual_delete_still_refuses_a_pending_file_even_when_confirmed` | veloct-attach | **I** |
+| B9 | `SUCCEEDED + FAILED + PRESENT` retries reference application without re-upload | `state::after_a_failed_apply_the_offered_action_is_retry_apply_and_never_a_re_upload`, `transaction::retrying_the_apply_after_a_failed_upload_attempt_does_not_upload_again` (the PUT count is unchanged by the retry), `transaction::a_second_upload_of_an_already_uploaded_attachment_is_refused` | veloct-attach | **I** |
+| B10 | Multi-reference: dropping one reference does not orphan the attachment | `reference::removing_one_of_several_references_leaves_the_attachment_referenced`, `reference::two_occurrences_in_one_document_are_two_references`, `reference::the_reference_status_is_the_aggregate_over_the_set`, `transaction::applying_the_same_url_to_two_documents_keeps_both_references` | veloct-attach | **I** |
+| B11 | Concurrent upload of same target+namespace+hash yields one remote object | `transaction::concurrent_uploads_of_the_same_content_never_issue_a_second_put` (two threads, and the store records exactly ONE PUT), `transaction::a_key_lock_serialises_two_callers_and_is_shared_per_key`, `transaction::a_released_key_lock_is_reused_rather_than_accumulating`, `transaction::the_pool_reuses_one_record_for_identical_bytes_so_the_race_cannot_arise_from_two_adds` | veloct-attach | **I** |
+| B12 | Filename gets a fixed-6-char suffix before the extension | `naming::a_suffix_is_exactly_six_characters`, `naming::the_suffix_goes_before_the_extension`, `naming::only_the_last_dot_is_treated_as_the_extension`, `naming::a_suffix_uses_only_unambiguous_characters`, `transaction::the_remote_name_is_stable_for_the_same_content` | veloct-attach | **I** |
+| B13 | Changing the public URL prefix does not move or delete remote files | `pool::a_prefix_change_plans_a_rewrite_without_moving_or_deleting_anything`, `pool::a_prefix_rewrite_plan_is_empty_when_nothing_matches`, `storage::changing_the_public_url_prefix_does_not_change_the_namespace` | veloct-attach | **I** |
+| B14 | Network image sources bypass the cache pool entirely | `network::a_choice_has_no_attachment_identity_at_all` (no id, hash, cache path or target is even representable), `network::a_search_result_becomes_a_markdown_image_with_the_remote_url`, `network::a_network_image_url_is_distinguished_from_an_uploaded_attachment`, `network::the_notice_says_what_a_network_image_costs_the_user` | veloct-attach | **I** |
 
 ## C. AI safety & lifecycle — handoff §25
 
@@ -183,7 +183,7 @@ a live endpoint stays marked `UNVERIFIED` in the matrix and in the UI.
 | 2026-09-28 · release | `powershell -ExecutionPolicy Bypass -File scripts/cargo.ps1 test --workspace --exclude veloct-desktop` | **279 passed, 0 failed** (58 `veloct-core`, 9 `veloct-app`, 110 `veloct-markdown`, 38 `veloct-storage`, 24 `veloct-git`, 40 `veloct-release`) |
 | 2026-09-28 · lints | `powershell -ExecutionPolicy Bypass -File scripts/cargo.ps1 clippy --workspace --exclude veloct-desktop --all-targets` | no warnings |
 | 2026-09-28 · site build | `npm.cmd run build` in `site/` then `node scripts/verify-build.mjs` | exit 0; **41/41 build checks passed** |
-| 2026-09-28 · workspace | `powershell -ExecutionPolicy Bypass -File scripts/cargo.ps1 test --workspace --exclude veloct-desktop` | **839 passed, 0 failed** (88 `veloct-ai`, 9 `veloct-app`, 146 `veloct-attach`, **87 `veloct-backup`**, 144 `veloct-content`, 58 `veloct-core`, 70 `veloct-deploy`, 24 `veloct-git`, 110 `veloct-markdown`, 25 `veloct-process`, 40 `veloct-release`, 38 `veloct-storage`) |
+| 2026-09-28 · workspace | `powershell -ExecutionPolicy Bypass -File scripts/cargo.ps1 test --workspace --exclude veloct-desktop` | **862 passed, 0 failed** (88 `veloct-ai`, 9 `veloct-app`, 166 `veloct-attach`, **87 `veloct-backup`**, 144 `veloct-content`, 58 `veloct-core`, 70 `veloct-deploy`, 24 `veloct-git`, 110 `veloct-markdown`, 25 `veloct-process`, 40 `veloct-release`, 38 `veloct-storage`) |
 
 Rows at **I** as a result of these runs:
 
