@@ -5058,6 +5058,7 @@ dependencies = [
 name = "veloct-release"
 version = "0.1.0"
 dependencies = [
+ "git2",
  "hex",
  "serde",
  "serde_json",

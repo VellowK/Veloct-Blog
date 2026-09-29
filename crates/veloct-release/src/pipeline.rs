@@ -59,6 +59,10 @@ pub struct BuildOutcome {
     pub works_root: PathBuf,
     /// The build's stdout/stderr tail, for the log and for a failure report.
     pub log: String,
+    /// The normalised manifest of what was emitted, also written into the release.
+    ///
+    /// `None` only when a BUILD RUNNER produced it, which cannot happen through `build_once`.
+    pub dist_manifest: Option<DistManifest>,
 }
 
 /// Performs the Astro build.
@@ -361,7 +365,7 @@ pub fn load(project_root: &Path, release_id: &ReleaseId) -> Result<ReleaseArtifa
 pub fn build_once(
     project_root: &Path,
     site_dir: &Path,
-    artifacts: &ReleaseArtifacts,
+    artifacts: &mut ReleaseArtifacts,
     runner: &dyn BuildRunner,
 ) -> Result<BuildOutcome> {
     let dist = project_root.join(layout::DIST_DIR);
@@ -410,7 +414,20 @@ pub fn build_once(
         )));
     }
 
-    Ok(outcome)
+    // The normalised manifest is recorded HERE rather than left to the caller.
+    //
+    // It was a separate step, and a release could therefore be built without one: `freeze` leaves
+    // `dist_manifest` as `None`, and nothing forced the caller to fill it in. `handoff.md` §23.6 makes
+    // the manifest the comparable record of what was published, so a release without it cannot be
+    // checked for determinism — which is the whole point of freezing the inputs. Doing it inside
+    // `build_once` makes the omission impossible rather than merely discouraged.
+    let manifest = scan_dist(&site_root, &works_root)?;
+    record_dist_manifest(artifacts, manifest.clone())?;
+
+    Ok(BuildOutcome {
+        dist_manifest: Some(manifest),
+        ..outcome
+    })
 }
 
 /// Record a build's normalised manifest next to the release.
@@ -510,6 +527,7 @@ mod tests {
                 site_root,
                 works_root,
                 log: "fake build".to_string(),
+                dist_manifest: None,
             })
         }
     }
@@ -679,7 +697,7 @@ mod tests {
         let mut artifacts = freeze_release(&fixture, &release_id);
         let runner = FakeBuildRunner::new();
 
-        let outcome = build_once(&fixture.root, &fixture.template, &artifacts, &runner).unwrap();
+        let outcome = build_once(&fixture.root, &fixture.template, &mut artifacts, &runner).unwrap();
         assert!(outcome.site_root.join("index.html").exists());
         assert!(outcome.works_root.join("demo/index.html").exists());
 
@@ -692,9 +710,9 @@ mod tests {
     fn scanning_derives_routes_hashes_and_the_wip_and_works_route_sets() {
         let fixture = fixture();
         let release_id = release(6);
-        let artifacts = freeze_release(&fixture, &release_id);
+        let mut artifacts = freeze_release(&fixture, &release_id);
         let runner = FakeBuildRunner::new();
-        let outcome = build_once(&fixture.root, &fixture.template, &artifacts, &runner).unwrap();
+        let outcome = build_once(&fixture.root, &fixture.template, &mut artifacts, &runner).unwrap();
 
         let manifest = scan_dist(&outcome.site_root, &outcome.works_root).unwrap();
         assert_eq!(manifest.routes, vec!["/", "/article/a/", "/wip/01ABC/"]);
@@ -712,13 +730,13 @@ mod tests {
         // Rows A5 and A6.
         let fixture = fixture();
         let release_id = release(7);
-        let artifacts = freeze_release(&fixture, &release_id);
+        let mut artifacts = freeze_release(&fixture, &release_id);
         let runner = FakeBuildRunner::new();
 
-        let first = build_once(&fixture.root, &fixture.template, &artifacts, &runner).unwrap();
+        let first = build_once(&fixture.root, &fixture.template, &mut artifacts, &runner).unwrap();
         let first_manifest = scan_dist(&first.site_root, &first.works_root).unwrap();
 
-        let second = build_once(&fixture.root, &fixture.template, &artifacts, &runner).unwrap();
+        let second = build_once(&fixture.root, &fixture.template, &mut artifacts, &runner).unwrap();
         let second_manifest = scan_dist(&second.site_root, &second.works_root).unwrap();
 
         assert!(
@@ -733,12 +751,12 @@ mod tests {
         // The comparison must be able to fail, otherwise it proves nothing.
         let fixture = fixture();
         let release_id = release(8);
-        let artifacts = freeze_release(&fixture, &release_id);
+        let mut artifacts = freeze_release(&fixture, &release_id);
 
         let first = build_once(
             &fixture.root,
             &fixture.template,
-            &artifacts,
+            &mut artifacts,
             &FakeBuildRunner::new(),
         )
         .unwrap();
@@ -747,7 +765,7 @@ mod tests {
         let second = build_once(
             &fixture.root,
             &fixture.template,
-            &artifacts,
+            &mut artifacts,
             &FakeBuildRunner::new().with_variable("<!-- build time -->"),
         )
         .unwrap();
@@ -794,12 +812,12 @@ mod tests {
         // handoff 21.2: a failed build must not replace the previous usable dist.
         let fixture = fixture();
         let release_id = release(11);
-        let artifacts = freeze_release(&fixture, &release_id);
+        let mut artifacts = freeze_release(&fixture, &release_id);
 
         let error = build_once(
             &fixture.root,
             &fixture.template,
-            &artifacts,
+            &mut artifacts,
             &FailingBuildRunner {
                 message: "astro exited with code 1".into(),
             },
@@ -828,14 +846,15 @@ mod tests {
                     site_root,
                     works_root: request.out_dir.join("works"),
                     log: String::new(),
+                    dist_manifest: None,
                 })
             }
         }
 
         let fixture = fixture();
         let release_id = release(12);
-        let artifacts = freeze_release(&fixture, &release_id);
-        let error = build_once(&fixture.root, &fixture.template, &artifacts, &HalfRunner).unwrap_err();
+        let mut artifacts = freeze_release(&fixture, &release_id);
+        let error = build_once(&fixture.root, &fixture.template, &mut artifacts, &HalfRunner).unwrap_err();
         assert_eq!(error.code(), "BUILD");
         assert!(error.to_string().contains("works publish root"), "{error}");
     }
@@ -845,11 +864,11 @@ mod tests {
         // Row A14.
         let fixture = fixture();
         let release_id = release(13);
-        let artifacts = freeze_release(&fixture, &release_id);
+        let mut artifacts = freeze_release(&fixture, &release_id);
         let runner = FakeBuildRunner::new();
 
         for _ in 0..3 {
-            build_once(&fixture.root, &fixture.template, &artifacts, &runner).unwrap();
+            build_once(&fixture.root, &fixture.template, &mut artifacts, &runner).unwrap();
         }
 
         let dist = fixture.root.join("dist");
