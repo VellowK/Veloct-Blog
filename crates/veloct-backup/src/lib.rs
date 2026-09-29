@@ -15,7 +15,31 @@
 //!   overwrite. Content-only restore leaves historical releases, git tags, deployment targets,
 //!   AI providers, credentials and app settings untouched.
 //! * The system never rewrites git history to "clean" a secret.
-//!
-//! Ownership: `systems-ai-attach` (team `veloct-complete`).
 
 #![forbid(unsafe_code)]
+
+pub mod archive;
+pub mod restore;
+pub mod secrets;
+pub mod selection;
+pub mod targets;
+
+pub use archive::{
+    archive_size, read_manifest, safe_entry_path, unpack_to, verify_staging, write_archive,
+    ArchiveOutcome, BackupManifest, BackupTrigger, ExcludedEntry, ManifestEntry, ARCHIVE_SCHEMA,
+    MANIFEST_NAME,
+};
+pub use restore::{
+    preservation_reason, Restore, RestoreMode, RestoreOutcome, StagedRestore,
+    CONTENT_ONLY_PRESERVED,
+};
+pub use secrets::{
+    history_not_scanned, scan_files, scan_history, BackupSecretScan, BlobSource, Finding,
+    ScanSurface,
+};
+pub use selection::{absolute, select, BackupSelection, SkippedPath, EXCLUSIONS};
+pub use targets::{
+    by_id, prune, remote_name, run_targets, AutoBackupTimer, BackupRun, BackupTargetAdapter,
+    CloudTarget, CloudTargetKind, MemoryTarget, TargetHandle, TargetResult, TargetSelection,
+    TargetStatus, DEFAULT_RETENTION, IDLE_BEFORE_AUTOMATIC_BACKUP,
+};

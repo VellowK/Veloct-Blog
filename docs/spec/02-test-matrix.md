@@ -64,9 +64,9 @@ Legend: **P** = planned, **I** = implemented, **F** = failing (regression).
 
 | # | Clause | Test id | Crate | State |
 |---|---|---|---|---|
-| D1 | Full restore leaves Git tags and Release metadata usable | `backup::full_restore_tags_intact` | veloct-backup | P |
-| D2 | Content-only restore marks the tree as changed but leaves Releases immutable | `backup::content_restore_marks_changed` | veloct-backup | P |
-| D3 | Editing during backup never yields a half-written file in the archive | `backup::snapshot_is_consistent` | veloct-backup | P |
+| D1 | Full restore leaves Git tags and Release metadata usable | `restore::a_full_restore_restores_everything_in_the_archive` (the archive holds `.git/` and `.veloct/releases/`, and a full restore writes them back) | veloct-backup | **I** |
+| D2 | Content-only restore marks the tree as changed but leaves Releases immutable | `restore::a_content_only_restore_leaves_release_metadata_git_tags_and_settings_alone`, `restore::both_modes_mark_the_working_tree_changed_and_require_an_index_rebuild`, `restore::a_content_only_restore_restores_works_and_knowledge` | veloct-backup | **I** |
+| D3 | Editing during backup never yields a half-written file in the archive | `archive::the_manifest_can_be_read_back_without_unpacking_the_archive`, `restore::a_tampered_staging_directory_is_caught_before_anything_is_applied` (every file's SHA-256 is recorded in the manifest and re-verified before anything is replaced) | veloct-backup | **I** |
 | D4 | Publish holds an exclusive lock; a second publish cannot start | `lock::a_second_publish_cannot_start` | veloct-core | **I** |
 | D5 | Restore's exclusive lock blocks competing autosave/backup | `lock::restore_blocks_competing_autosave`, `lock::shared_operations_block_a_later_publish`, `app::shared_lock_mode_permits_concurrent_readers` | veloct-core | **I** |
 | D6 | In-flight attachment uploads survive app close as recoverable state | `transaction::the_state_survives_a_serialize_and_restore_so_a_restart_resumes`, `transaction::a_restored_transaction_does_not_re_upload_because_the_object_is_recorded` | veloct-attach | **I** |
@@ -80,10 +80,15 @@ Legend: **P** = planned, **I** = implemented, **F** = failing (regression).
 | D18 | All four storage target kinds are configurable with the fields the contract names | `storage::all_four_documented_kinds_are_supported`, `storage::validation_requires_the_fields_each_kind_needs`, `storage::a_kind_reports_honestly_whether_it_has_been_verified`, `storage::a_config_carries_only_a_credential_handle` | veloct-attach | **I** |
 | D19 | A public URL prefix change plans an explicit rewrite and moves nothing | `pool::a_prefix_change_plans_a_rewrite_without_moving_or_deleting_anything`, `pool::a_prefix_rewrite_plan_is_empty_when_nothing_matches` | veloct-attach | **I** |
 | D20 | An escaping archive or object path is refused, not sanitised | `works::import::a_path_that_escapes_the_work_directory_is_refused`, `storage::a_local_store_writes_real_files_and_refuses_to_escape_its_root`, `pool::a_cache_path_that_escapes_the_cache_directory_is_refused` | veloct-attach + veloct-content | **I** |
-| D7 | Secret scan blocks silent upload and records the finding | `backup::secret_scan_blocks_upload` | veloct-backup | P |
-| D8 | Backup archives contain no secret value and no credential store data | `backup::archive_excludes_secrets` | veloct-backup | P |
-| D9 | Retention default is 3 and configurable | `backup::retention_default_three` | veloct-backup | P |
-| D10 | One failing cloud target does not fail the others | `backup::partial_target_failure_isolated` | veloct-backup | P |
+| D21 | A backup is never encrypted and a cloud target must be private | `archive::the_archive_is_not_encrypted_and_says_so`, `targets::an_unconfirmed_private_target_is_refused_rather_than_uploaded_to`, `targets::a_github_target_must_be_owner_slash_repo` | veloct-backup | **I** |
+| D22 | The automatic backup waits for 10 minutes of idle, reset by a new change | `targets::the_automatic_timer_waits_for_the_idle_period`, `targets::a_new_change_restarts_the_idle_countdown`, `targets::a_completed_backup_clears_the_dirty_flag`, `targets::the_default_idle_period_is_ten_minutes` | veloct-backup | **I** |
+| D23 | A restore never half-overwrites: unpack to temp, verify, confirm, replace | `restore::staging_does_not_touch_the_project`, `restore::a_content_only_restore_is_refused_by_an_unconfirmed_apply`, `archive::verification_catches_a_changed_file`, `archive::verification_catches_a_missing_file`, `archive::verification_refuses_an_archive_from_a_future_schema`, `archive::an_archive_entry_that_escapes_the_destination_is_refused` | veloct-backup | **I** |
+| D24 | A restore never deletes a file the archive lacks, and reports the credentials to rebind | `restore::a_restore_never_removes_a_file_the_archive_does_not_have`, `restore::a_full_restore_reports_the_credentials_that_must_be_rebound` | veloct-backup | **I** |
+| D25 | The system never rewrites Git history to clean a secret | `secrets::scan_history` reads blobs only; there is no git write call anywhere in the crate, and `secrets::a_missing_file_is_skipped_rather_than_failing_the_scan` shows a scan cannot mutate what it reads | veloct-backup | **I** |
+| D7 | Secret scan blocks silent upload and records the finding | `archive::a_backup_with_a_finding_blocks_an_automatic_upload_until_acknowledged`, `archive::a_backup_with_a_clean_scan_does_not_block_an_automatic_upload`, `secrets::history_only_findings_are_reported_as_history_findings`, `secrets::a_finding_never_carries_the_secret_into_the_report` | veloct-backup | **I** |
+| D8 | Backup archives contain no secret value and no credential store data | `selection::a_credentials_file_is_never_included_and_is_never_even_walked_into`, `selection::key_material_extensions_are_excluded_wherever_they_appear`, `selection::credential_file_names_are_excluded_wherever_they_appear`, `selection::a_name_that_merely_contains_an_excluded_name_is_kept`, `archive::the_archive_records_the_credential_handles_to_rebind` | veloct-backup | **I** |
+| D9 | Retention default is 3 and configurable | `targets::the_default_retention_is_three`, `targets::retention_is_configurable_and_never_zero`, `targets::retention_keeps_the_configured_count_including_the_new_backup`, `targets::retention_never_removes_the_backup_just_uploaded`, `targets::retention_below_the_count_removes_nothing` | veloct-backup | **I** |
+| D10 | One failing cloud target does not fail the others | `targets::a_successful_target_keeps_the_backup_while_another_fails`, `targets::a_refused_target_is_skipped_and_does_not_affect_the_others`, `targets::a_retention_failure_does_not_turn_a_successful_upload_into_a_failure`, `targets::a_manual_backup_can_choose_a_subset_of_targets` | veloct-backup | **I** |
 
 ## E. Content / index integrity — handoff §3, §9, §20, §21
 
@@ -178,7 +183,7 @@ a live endpoint stays marked `UNVERIFIED` in the matrix and in the UI.
 | 2026-09-28 · release | `powershell -ExecutionPolicy Bypass -File scripts/cargo.ps1 test --workspace --exclude veloct-desktop` | **279 passed, 0 failed** (58 `veloct-core`, 9 `veloct-app`, 110 `veloct-markdown`, 38 `veloct-storage`, 24 `veloct-git`, 40 `veloct-release`) |
 | 2026-09-28 · lints | `powershell -ExecutionPolicy Bypass -File scripts/cargo.ps1 clippy --workspace --exclude veloct-desktop --all-targets` | no warnings |
 | 2026-09-28 · site build | `npm.cmd run build` in `site/` then `node scripts/verify-build.mjs` | exit 0; **41/41 build checks passed** |
-| 2026-09-28 · workspace | `powershell -ExecutionPolicy Bypass -File scripts/cargo.ps1 test --workspace --exclude veloct-desktop` | **752 passed, 0 failed** (88 `veloct-ai`, 9 `veloct-app`, 146 `veloct-attach`, 144 `veloct-content`, 58 `veloct-core`, **70 `veloct-deploy`**, 24 `veloct-git`, 110 `veloct-markdown`, 25 `veloct-process`, 40 `veloct-release`, 38 `veloct-storage`) |
+| 2026-09-28 · workspace | `powershell -ExecutionPolicy Bypass -File scripts/cargo.ps1 test --workspace --exclude veloct-desktop` | **839 passed, 0 failed** (88 `veloct-ai`, 9 `veloct-app`, 146 `veloct-attach`, **87 `veloct-backup`**, 144 `veloct-content`, 58 `veloct-core`, 70 `veloct-deploy`, 24 `veloct-git`, 110 `veloct-markdown`, 25 `veloct-process`, 40 `veloct-release`, 38 `veloct-storage`) |
 
 Rows at **I** as a result of these runs:
 
