@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      The CSP here mirrors the shell's own. `frame-src` allows the loopback preview origins, because
+      handoff.md section 5.1 requires the preview to be the REAL Astro project rather than a second
+      renderer, and the only way to show it is an iframe pointed at the dev server.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; img-src 'self' asset: http://asset.localhost data: https:; style-src 'self' 'unsafe-inline'; frame-src http://127.0.0.1:*; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:*"
+    />
+    <title>Veloct</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

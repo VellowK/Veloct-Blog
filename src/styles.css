@@ -1,0 +1,300 @@
+:root {
+  color-scheme: dark;
+  --ink-950: #17161a;
+  --ink-900: #1d1c21;
+  --ink-850: #232228;
+  --ink-800: #2a2931;
+  --ink-700: #3a3944;
+  --ink-300: #b9b5c0;
+  --ink-400: #8b8794;
+  --ink-100: #ece9f1;
+  --accent-400: #e0a458;
+  --accent-500: #d99a45;
+  --danger-400: #e06c75;
+  font-family: system-ui, -apple-system, 'Segoe UI', 'Microsoft YaHei', sans-serif;
+  font-size: 14px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--ink-950);
+  color: var(--ink-100);
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: var(--ink-800);
+  border: 1px solid var(--ink-700);
+  border-radius: 6px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  border-color: var(--accent-500);
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+input,
+textarea {
+  font: inherit;
+  color: inherit;
+  background: var(--ink-900);
+  border: 1px solid var(--ink-700);
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+
+.muted {
+  color: var(--ink-400);
+}
+
+/* The three-part layout handoff.md section 4.1 asks for, plus a status bar. */
+.workbench {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) 28px;
+  grid-template-areas:
+    'sidebar editor preview'
+    'status status status';
+  height: 100%;
+  gap: 1px;
+  background: var(--ink-700);
+}
+
+.sidebar {
+  grid-area: sidebar;
+  background: var(--ink-900);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.sidebar header {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--ink-800);
+}
+
+.open-project {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.filters,
+.new-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 8px 10px;
+}
+
+.filters button.active {
+  background: var(--ink-700);
+  border-color: var(--accent-500);
+}
+
+.document-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 6px 12px;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+.document-list button {
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border-color: transparent;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: baseline;
+  margin-bottom: 2px;
+}
+
+.document-list button.active {
+  background: var(--ink-800);
+  border-color: var(--ink-700);
+}
+
+.document-list .title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.badge {
+  font-size: 11px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--ink-700);
+  color: var(--ink-300);
+}
+
+.badge.published_wip {
+  background: var(--accent-500);
+  color: var(--ink-950);
+}
+
+.badge.draft-only {
+  background: transparent;
+  border: 1px solid var(--ink-700);
+  color: var(--ink-400);
+}
+
+.editor {
+  grid-area: editor;
+  background: var(--ink-900);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+
+.editor-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--ink-800);
+  flex-wrap: wrap;
+}
+
+.editor-header .title {
+  flex: 1;
+  min-width: 120px;
+  font-weight: 600;
+  background: transparent;
+  border-color: transparent;
+}
+
+.wip-controls {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.source {
+  flex: 1;
+  min-height: 0;
+  resize: none;
+  border: none;
+  border-radius: 0;
+  background: var(--ink-900);
+  font-family: 'Cascadia Mono', Consolas, 'Courier New', monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  padding: 12px 14px;
+  white-space: pre-wrap;
+}
+
+.source:focus {
+  outline: none;
+}
+
+.conflict {
+  margin: 10px 12px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--danger-400);
+  border-radius: 8px;
+  background: rgba(224, 108, 117, 0.08);
+}
+
+.conflict p {
+  margin: 6px 0;
+}
+
+.conflict-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.diagnostics {
+  margin: 10px 12px 0;
+  padding: 8px 12px 8px 28px;
+  border: 1px solid var(--accent-500);
+  border-radius: 8px;
+  background: rgba(224, 164, 88, 0.08);
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+.empty {
+  margin: auto;
+  text-align: center;
+  padding: 24px;
+}
+
+.preview {
+  grid-area: preview;
+  background: var(--ink-850);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+
+.preview header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--ink-800);
+}
+
+.preview iframe {
+  flex: 1;
+  min-height: 0;
+  border: none;
+  background: #fff;
+}
+
+.preview-empty {
+  padding: 16px;
+}
+
+.statusbar {
+  grid-area: status;
+  background: var(--ink-850);
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 0 12px;
+  font-size: 12px;
+}
+
+.statusbar .error {
+  color: var(--danger-400);
+  margin-left: auto;
+  cursor: pointer;
+}
+
+.statusbar .issues {
+  color: var(--accent-400);
+}

@@ -40,3 +40,4 @@ desktop.ini
 
 # --- temporary experiment left over from diagnosing Cargo registry access ---
 /.cargo/
+dist-ui/
