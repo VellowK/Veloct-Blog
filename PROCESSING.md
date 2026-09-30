@@ -26,7 +26,7 @@ round found a rule in the same position (§5.10.1: a validation arm whose only r
 | Fact | Value |
 |---|---|
 | Last commit these numbers describe | `2496604 Make the section 13 storage targets configurable, and expose section 13.8's cleanup` — **every commit after it changes documentation only**, so it is still the last commit that touches code |
-| Working tree | **CLEAN** — the §13 round and the storage-kind follow-up are committed as `2496604`; the only commit after it carries this recording (§1.1) |
+| Working tree | **CLEAN** — the §13 round and the storage-kind follow-up are committed as `2496604`; every commit after it is documentation only (§1.1) |
 | Rust tests | **1324 passed, 0 failed, 5 ignored** (+29 over `bf75265`'s 1295; 17 workspace crates + `src-tauri`) |
 | Frontend tests | **71 passed** (vitest: 24 `frontmatter` + 47 `storageTargetForm`) |
 | `clippy --workspace --all-targets` | **0 warnings** |
@@ -40,10 +40,11 @@ Every command above exits **0** on success. That matters and is itself a recent 
 of the commit: before it, four rounds of work had been verified in a working tree and never in a
 checkout, and a number that is true of one directory on one machine is a weaker claim than it looks.
 `docs/spec/02-test-matrix.md` §J holds the run, the per-crate rows that sum to 1324 exactly, and the
-earlier snapshot it supersedes. The commit that carries the paragraph you are reading came
-immediately after `2496604` and changes only this file and the matrix, which no verify command reads —
-so if §3.1 does not reproduce these numbers from a checkout of `2496604`, something outside this
-repository changed and that is the first thing to find out.
+earlier snapshot it supersedes. The commits that carry the paragraph you are reading come straight
+after `2496604` and change only this file and the matrix — `git diff --stat 2496604 HEAD` names
+exactly those two — and no verify command reads either of them, so if §3.1 does not reproduce these
+numbers from a checkout, something outside this repository changed and that is the first thing to
+find out.
 
 ### 1.1 What these rounds changed
 
@@ -99,7 +100,8 @@ Everything else there was edits to existing files, recorded in `docs/spec/00-arc
 
 **ALL OF IT IS COMMITTED: `2496604`** — "Make the section 13 storage targets configurable, and expose
 section 13.8's cleanup" — so the numbers in §1 are reproducible from a checkout rather than from one
-working directory. `git status --short` is **empty**, and the commit after it carries this recording.
+working directory. `git status --short` is **empty**, and every commit after it is documentation
+only — `git diff --stat 2496604 HEAD` names exactly this file and the matrix.
 
 The paths that commit changed, so the next agent knows what is new without reading the whole diff:
 
