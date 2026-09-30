@@ -16,6 +16,7 @@
 pub mod attachments;
 pub mod autobackup;
 pub mod backup;
+pub mod cloud_backup;
 pub mod deploy;
 pub mod error;
 pub mod project;
@@ -25,8 +26,8 @@ pub use attachments::{
     UploadEligibility, UploadView, MAX_ATTACHMENT_BYTES,
 };
 pub use backup::{
-    apply_restore, backup, backup_directory, describe_scan, export_to, list_archives, manual_backup,
-    prune, read_manifest, retention_from_settings, stage_restore, BackupArchiveView,
+    apply_restore, backup, backup_directory, describe_scan, export_to, history_note, list_archives,
+    manual_backup, prune, read_manifest, retention_from_settings, stage_restore, BackupArchiveView,
     BackupOutcomeView, RestoreAppliedView, RestorePlanView, SkippedPathView, BACKUP_DIR,
     DEFAULT_RETENTION,
 };
@@ -37,8 +38,13 @@ pub use deploy::{
 };
 pub use autobackup::{
     cloud_retention_from_settings, commit_sha_of, idle_seconds_from_settings,
-    manifest_needs_acknowledgement, AutoBackupOutcome, IdleDecision, IdleTracker, TargetUploadOutcome,
-    DEFAULT_CLOUD_RETENTION, DEFAULT_IDLE_SECONDS,
+    manifest_needs_acknowledgement, target_upload_outcome, upload_to_targets, AutoBackupOutcome,
+    IdleDecision, IdleTracker, TargetUploadOutcome, DEFAULT_CLOUD_RETENTION, DEFAULT_IDLE_SECONDS,
+};
+pub use cloud_backup::{
+    credential_handle, delete_target, handles_for, parse_cloud_kind, read_targets, record_run,
+    run_against_targets, save_target, ArchiveRef, CloudBackupRunView, CloudBackupTargetView,
+    ScanNote, CLOUD_TARGET_TABLE,
 };
 pub use error::CommandError;
 pub use project::{CreateProjectOptions, ProjectRecord, ProjectService};

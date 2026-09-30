@@ -236,6 +236,31 @@ export interface AiModelView {
   model_id: string;
   label: string;
   context_window: number | null;
+  /**
+   * `fetched` or `manual` (section 11.2).
+   *
+   * Shown because the difference is a promise: a fetched model can disappear when the provider stops
+   * offering it, and a hand-added one cannot.
+   */
+  source: string;
+}
+
+/** What a model refresh did (section 11.2). */
+export interface ModelRefreshView {
+  provider_id: string;
+  /** How many models the provider reported. */
+  fetched: number;
+  /** How many hand-added models the refresh kept. */
+  kept_manual: number;
+  models: AiModelView[];
+  message: string;
+}
+
+/** A provider connection test (section 11.5). Never carries the credential. */
+export interface ConnectionTestView {
+  ok: boolean;
+  models: number;
+  message: string;
 }
 
 export interface AiFeatureView {
@@ -387,6 +412,71 @@ export interface RestoreAppliedView {
   summary: string;
 }
 
+/** One configured cloud backup target (handoff.md section 17.4). */
+export interface CloudBackupTargetView {
+  id: string;
+  /** `github` or `s3`. */
+  kind: string;
+  /** The user-facing label for the kind. */
+  label: string;
+  /** GitHub: `owner/repo`. S3: the bucket. */
+  location: string;
+  prefix: string | null;
+  retention: number;
+  /** Whether the user has confirmed the target is private (section 17.2). */
+  private_confirmed: boolean;
+  enabled: boolean;
+  /** The HANDLE, never a value (section 12). */
+  credential_ref: string | null;
+  has_credential: boolean;
+  /** S3: the access key ID, which is an identifier and not a secret. */
+  access_key: string | null;
+  /** S3: the endpoint, when one is configured. */
+  endpoint: string | null;
+  /** S3: the region. */
+  region: string | null;
+  /** Whether this build has an adapter for the kind. */
+  implemented: boolean;
+  unimplemented_reason: string | null;
+  /** Why a run would refuse this target, when it would (section 17.2). */
+  refusal_reason: string | null;
+}
+
+/** One target's result in a cloud run (section 17.7). */
+export interface TargetUploadOutcome {
+  target_id: string;
+  succeeded: boolean;
+  /** Deliberately not attempted — not selected, disabled, or refused. Nothing to retry. */
+  skipped: boolean;
+  error: string | null;
+  /** How many archives the target holds after its retention ran (section 17.6). */
+  kept: number;
+}
+
+export interface CloudBackupRunView {
+  archive_path: string;
+  archive_sha256: string;
+  archive_bytes: number;
+  created_at: string;
+  trigger: string;
+  targets: TargetUploadOutcome[];
+  all_succeeded: boolean;
+  /** No target stored the backup, whether they failed or none was attempted. */
+  nothing_stored: boolean;
+  summary: string;
+  /** Whether the run could be recorded in the index, and why not when it could not. */
+  index_note: string | null;
+}
+
+export interface CloudBackupResultView {
+  /** The local archive, which exists whether or not any upload happened (section 17.3). */
+  backup: BackupOutcomeView;
+  /** Absent when a secret finding blocked the upload. */
+  run: CloudBackupRunView | null;
+  blocked_by_finding: boolean;
+  blocked_reason: string | null;
+}
+
 /** One configured deployment target (handoff.md sections 10 and 14). */
 export interface TargetView {
   id: string;
@@ -446,6 +536,8 @@ export interface StorageTargetView {
   public_url_prefix: string;
   repository: string | null;
   branch: string | null;
+  /** S3: the access key ID, which is an identifier and not a secret. */
+  access_key: string | null;
   /** The HANDLE, never a value (section 12). */
   credential_ref: string | null;
   has_credential: boolean;
@@ -611,7 +703,6 @@ export const api = {
    */
   /** The AI configuration. Never carries a credential value (section 12.1). */
   aiSettings: () => invoke<AiSettingsView>('ai_settings'),
-
   /**
    * Add or update a provider.
    *
@@ -637,6 +728,36 @@ export const api = {
     }),
 
   deleteAiProvider: (id: string) => invoke<void>('delete_ai_provider', { id }),
+
+  /**
+   * Fetch a provider's model list and store it (section 11.2).
+   *
+   * The refresh REPLACES the models the provider reports and keeps the ones added by hand, so a model the
+   * provider stopped offering cannot stay selectable. `kept_manual` says how many survived.
+   */
+  refreshAiModels: (providerId: string) =>
+    invoke<ModelRefreshView>('refresh_ai_models', { providerId }),
+
+  /** Add a model by hand (section 11.2). A later refresh keeps it. */
+  addAiModel: (providerId: string, modelId: string, displayName?: string | null) =>
+    invoke<AiModelView[]>('add_ai_model', {
+      providerId,
+      modelId,
+      displayName: displayName ?? null,
+    }),
+
+  /** Remove one stored model, so a hand-added typo is not permanent. */
+  deleteAiModel: (providerId: string, modelId: string) =>
+    invoke<void>('delete_ai_model', { providerId, modelId }),
+
+  /**
+   * Test a provider's connection with its REAL configuration (section 11.5).
+   *
+   * A test with a placeholder credential would pass while the real call failed, so this exercises the
+   * provider's own model-list endpoint and reports the provider's own reason.
+   */
+  testAiProvider: (providerId: string) =>
+    invoke<ConnectionTestView>('test_ai_provider', { providerId }),
 
   /** Map a feature to a model, or clear it by passing nulls (section 11.3). */
   setAiFeature: (options: {
@@ -816,6 +937,12 @@ export const api = {
     publicUrlPrefix?: string | undefined;
     repository?: string | undefined;
     branch?: string | undefined;
+    /** S3: Endpoint, Region and Bucket (section 13.11). Blank endpoint means AWS. */
+    endpoint?: string | undefined;
+    region?: string | undefined;
+    bucket?: string | undefined;
+    /** S3: the access key ID, which is an identifier rather than a secret. */
+    accessKey?: string | undefined;
     /** Written to the OS store; omitted or empty leaves the stored one alone. */
     credential?: string | undefined;
   }) =>
@@ -828,6 +955,10 @@ export const api = {
         public_url_prefix: options.publicUrlPrefix ?? null,
         repository: options.repository ?? null,
         branch: options.branch ?? null,
+        endpoint: options.endpoint ?? null,
+        region: options.region ?? null,
+        bucket: options.bucket ?? null,
+        access_key: options.accessKey ?? null,
         credential: options.credential ?? null,
       },
     }),
@@ -884,6 +1015,58 @@ export const api = {
     }),
 
   backupDirectory: () => invoke<string>('backup_directory'),
+
+  /** The configured cloud backup targets (section 17.4). */
+  cloudBackupTargets: () => invoke<CloudBackupTargetView[]>('cloud_backup_targets'),
+
+  /** Add or update a cloud backup target. The credential value goes to the OS store, never to SQLite. */
+  saveCloudBackupTarget: (request: {
+    id: string;
+    kind: string;
+    location: string;
+    prefix?: string | null;
+    retention?: number | null;
+    privateConfirmed: boolean;
+    enabled?: boolean | null;
+    /** GitHub: the token. S3: the SECRET access key. Never persisted outside the OS store. */
+    credential?: string | null;
+    /** S3: the access key ID, which is configuration rather than a secret. */
+    accessKey?: string | null;
+    /** S3: the endpoint. Left empty, the AWS endpoint for the region is used. */
+    endpoint?: string | null;
+    /** S3: the region. */
+    region?: string | null;
+  }) => invoke<void>('save_cloud_backup_target', { request }),
+
+  deleteCloudBackupTarget: (id: string) => invoke<void>('delete_cloud_backup_target', { id }),
+
+  /**
+   * Prove a cloud target is reachable, and that it satisfies section 17.2.
+   *
+   * A public GitHub repository is reachable and still not a usable backup target, so this reports the
+   * privacy fact rather than reachability alone.
+   */
+  testCloudBackupTarget: (id: string) => invoke<string>('test_cloud_backup_target', { id }),
+
+  /**
+   * Take a backup AND send it to the cloud targets (sections 17.7, 17.8).
+   *
+   * `acknowledgedFindings` is the user saying they have seen the scan's finding and still want THIS
+   * archive sent. Without it a finding skips the upload and the local archive is kept, which is what
+   * section 17.3 requires.
+   */
+  backupToCloud: (options?: { targetIds?: string[] | null; acknowledgedFindings?: boolean }) =>
+    invoke<CloudBackupResultView>('backup_to_cloud', {
+      targetIds: options?.targetIds ?? null,
+      acknowledgedFindings: options?.acknowledgedFindings ?? false,
+    }),
+
+  /** Re-send an existing archive to the cloud targets (section 17.7's retry path). */
+  resendBackupToCloud: (options: { archivePath: string; targetIds?: string[] | null }) =>
+    invoke<CloudBackupRunView>('resend_backup_to_cloud', {
+      archivePath: options.archivePath,
+      targetIds: options.targetIds ?? null,
+    }),
 
   /** Every release the project has, newest first. */
   listReleases: () => invoke<ReleaseView[]>('list_releases'),

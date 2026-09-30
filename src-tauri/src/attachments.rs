@@ -211,6 +211,8 @@ pub struct StorageTargetView {
     pub public_url_prefix: String,
     pub repository: Option<String>,
     pub branch: Option<String>,
+    /// S3: the access key ID, which is an identifier rather than a secret (§13.11 names both keys).
+    pub access_key: Option<String>,
     /// The HANDLE, never a value (§12).
     pub credential_ref: Option<String>,
     pub has_credential: bool,
@@ -229,6 +231,7 @@ impl StorageTargetView {
             public_url_prefix: config.public_url_prefix.clone(),
             repository: config.repository.clone(),
             branch: config.branch.clone(),
+            access_key: config.access_key.clone(),
             credential_ref: config.credential_ref.clone(),
             has_credential,
         }
@@ -250,6 +253,15 @@ pub struct SaveStorageTargetRequest {
     pub repository: Option<String>,
     #[serde(default)]
     pub branch: Option<String>,
+    /// S3: Endpoint, Region, Bucket and the access key ID (§13.11). The SECRET key is `credential`.
+    #[serde(default)]
+    pub endpoint: Option<String>,
+    #[serde(default)]
+    pub region: Option<String>,
+    #[serde(default)]
+    pub bucket: Option<String>,
+    #[serde(default)]
+    pub access_key: Option<String>,
     /// The credential VALUE, written to the OS store. Never persisted here (§12.2).
     #[serde(default)]
     pub credential: Option<String>,
@@ -292,6 +304,12 @@ pub fn save_storage_target(
     config.public_url_prefix = request.public_url_prefix.unwrap_or_default();
     config.repository = request.repository.filter(|value| !value.trim().is_empty());
     config.branch = request.branch.filter(|value| !value.trim().is_empty());
+    // §13.11's S3 fields. The access key ID is configuration; the SECRET key is `request.credential`,
+    // which was written to the OS store above and never reaches this file.
+    config.endpoint = request.endpoint.filter(|value| !value.trim().is_empty());
+    config.region = request.region.filter(|value| !value.trim().is_empty());
+    config.bucket = request.bucket.filter(|value| !value.trim().is_empty());
+    config.access_key = request.access_key.filter(|value| !value.trim().is_empty());
     // A kind that needs a credential gets the handle; the local directory kind does not, because a handle to
     // nothing would make the window report a missing credential for a target that needs none.
     config.credential_ref = match kind {

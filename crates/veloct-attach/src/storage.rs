@@ -102,6 +102,13 @@ pub struct StorageConfig {
     pub region: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bucket: Option<String>,
+    /// S3: the access key ID, which is an IDENTIFIER rather than a secret (§13.11 names both).
+    ///
+    /// The SECRET access key is a credential and lives in the OS store behind `credential_ref`, because
+    /// §12.2 forbids a credential value in a config file. The access key ID authenticates nothing on its
+    /// own — AWS prints it in the console and it travels in every signed request — so it is configuration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub access_key: Option<String>,
 
     /// GitHub: repository and branch.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -144,6 +151,7 @@ impl StorageConfig {
             endpoint: None,
             region: None,
             bucket: None,
+            access_key: None,
             repository: None,
             branch: None,
             instance: None,
@@ -369,6 +377,36 @@ pub fn object_key(config: &StorageConfig, file_name: &str) -> Result<String> {
     } else {
         Ok(format!("{prefix}/{file_name}"))
     }
+}
+
+/// A best-effort MIME type from a file name's extension.
+///
+/// This is the CANONICAL map, and `veloct_app::mime_type_for` delegates to it: it used to live one layer
+/// up, and the S3 adapter (§13.11) needs it too — an object stored without a `Content-Type` is served as
+/// `application/octet-stream`, so a picture would download instead of rendering.
+///
+/// Deliberately small and honest: it covers what a personal site actually attaches, and an unknown
+/// extension is `None` rather than a guess, because a WRONG `Content-Type` is worse than a missing one.
+pub fn content_type_for(file_name: &str) -> Option<String> {
+    let extension = file_name.rsplit_once('.').map(|(_, ext)| ext.to_ascii_lowercase())?;
+    let mime = match extension.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "avif" => "image/avif",
+        "svg" => "image/svg+xml",
+        "ico" => "image/x-icon",
+        "pdf" => "application/pdf",
+        "txt" | "md" => "text/plain",
+        "json" => "application/json",
+        "mp4" => "video/mp4",
+        "webm" => "video/webm",
+        "mp3" => "audio/mpeg",
+        "zip" => "application/zip",
+        _ => return None,
+    };
+    Some(mime.to_string())
 }
 
 /// The public URL for an object.

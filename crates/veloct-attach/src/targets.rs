@@ -22,90 +22,31 @@
 
 use std::path::{Path, PathBuf};
 
-use serde::{Deserialize, Serialize};
-
 use crate::storage::{
     object_key, public_url, LocalFileStore, PutOutcome, RemoteObject, StorageAdapter,
     StorageCapabilities, StorageConfig, StorageKind, StorageTarget,
 };
-use veloct_core::http::{HttpClient, HttpMethod, HttpRequest};
-use veloct_core::secret::Redacted;
+use veloct_core::http::HttpClient;
 use veloct_core::{Result, VeloctError};
+use veloct_github::{GitHubContents, WriteOutcome as GitHubWrite};
 
-/// The GitHub Contents API's base.
-pub const GITHUB_API: &str = "https://api.github.com";
-
-/// A repository, owner and name.
-///
-/// Parsed HERE rather than through a URL crate: the forms a user writes are `owner/name` and
-/// `https://github.com/owner/name`, which are a strip and a split, and a general URL parser would be a
-/// dependency for two string operations.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Repository {
-    pub owner: String,
-    pub name: String,
-}
-
-impl Repository {
-    /// Parse `owner/name`, `github.com/owner/name` or `https://github.com/owner/name`.
-    ///
-    /// A trailing `.git` and a trailing slash are accepted because both are what a user copies, and rejecting
-    /// them would be pedantry that produces a confusing error.
-    pub fn parse(text: &str) -> Result<Self> {
-        let trimmed = text.trim();
-        if trimmed.is_empty() {
-            return Err(VeloctError::Invalid(
-                "a GitHub target needs a repository, written as owner/name".into(),
-            ));
-        }
-
-        let without_scheme = trimmed
-            .strip_prefix("https://")
-            .or_else(|| trimmed.strip_prefix("http://"))
-            .unwrap_or(trimmed);
-        let without_host = without_scheme
-            .strip_prefix("github.com/")
-            .or_else(|| without_scheme.strip_prefix("www.github.com/"))
-            .unwrap_or(without_scheme);
-
-        let cleaned = without_host.trim_end_matches('/').trim_end_matches(".git");
-
-        let mut parts = cleaned.split('/');
-        let owner = parts.next().unwrap_or_default().trim();
-        let name = parts.next().unwrap_or_default().trim();
-        // A third segment means the user pasted a path INSIDE the repository, which is a different thing from
-        // the repository. Refusing is better than silently truncating to the wrong place.
-        if parts.next().is_some() {
-            return Err(VeloctError::Invalid(format!(
-                "{text:?} names a path inside a repository, not a repository; expected owner/name"
-            )));
-        }
-        if owner.is_empty() || name.is_empty() {
-            return Err(VeloctError::Invalid(format!("{text:?} is not owner/name")));
-        }
-        Ok(Self {
-            owner: owner.to_string(),
-            name: name.to_string(),
-        })
-    }
-
-    /// `owner/name`.
-    pub fn slug(&self) -> String {
-        format!("{}/{}", self.owner, self.name)
-    }
-}
+// The protocol itself lives in `veloct-github`, because `handoff.md` §17.4 makes a repository a CLOUD
+// BACKUP target as well as §13.13's attachment target, and one protocol written twice is one protocol
+// with two chances to be wrong. Re-exported so this crate's surface — and every caller that already
+// names `veloct_attach::Repository` — is unchanged.
+pub use veloct_github::{base64_encode, Repository, GITHUB_API};
 
 /// A GitHub repository as an attachment target (§13.13).
 ///
 /// The Contents API is used rather than git-over-HTTP: §13.13 makes a repository a place to PUT a file, not a
 /// place to clone, and a commit per attachment through git would need a working tree.
+///
+/// The protocol is `veloct_github::GitHubContents`; what this type adds is the ATTACHMENT policy — the
+/// configured public URL prefix, `raw.githubusercontent.com` as its fallback, and this crate's error
+/// wording.
 pub struct GitHubStore {
     config: StorageConfig,
-    repository: Repository,
-    /// A credential, wrapped so it cannot be printed by accident (handoff.md section 18.1).
-    token: Redacted,
-    branch: String,
-    client: std::sync::Arc<dyn HttpClient>,
+    contents: GitHubContents,
 }
 
 impl GitHubStore {
@@ -116,28 +57,17 @@ impl GitHubStore {
         branch: impl Into<String>,
         client: std::sync::Arc<dyn HttpClient>,
     ) -> Self {
-        // A branch is required by the API's write path, and an empty one would produce a request that fails
-        // with a message about a missing ref rather than about the configuration.
-        let branch = branch.into();
         Self {
             config,
-            repository,
-            token: Redacted::new(token.into()),
-            branch: if branch.trim().is_empty() {
-                "main".to_string()
-            } else {
-                branch
-            },
-            client,
+            // An empty branch becomes `main` inside the client, which is the one place that knows the
+            // write path requires a branch.
+            contents: GitHubContents::new(repository, token, branch, client),
         }
     }
 
     /// The API path for one object.
     pub fn contents_url(&self, key: &str) -> String {
-        format!(
-            "{GITHUB_API}/repos/{}/{}/contents/{key}",
-            self.repository.owner, self.repository.name
-        )
+        self.contents.contents_url(key)
     }
 
     /// The public URL for one object.
@@ -151,28 +81,22 @@ impl GitHubStore {
         }
         format!(
             "https://raw.githubusercontent.com/{}/{}/{key}",
-            self.repository.slug(),
-            self.branch
+            self.contents.repository().slug(),
+            self.contents.branch()
         )
     }
+}
 
-    /// A request with the headers every GitHub call needs.
-    fn request(&self, method: HttpMethod, url: String) -> HttpRequest {
-        HttpRequest::new(method, url)
-            .header("Authorization", format!("Bearer {}", self.token.expose()))
-            .header("Accept", "application/vnd.github+json")
-            .header("X-GitHub-Api-Version", "2022-11-28")
-            // The API rejects a request with no User-Agent.
-            .header("User-Agent", "veloct")
-    }
-
-    /// A refusal, as an error that names the status and NOT the body.
-    ///
-    /// A GitHub error body can echo the token back, and §18.1 keeps credentials out of messages.
-    fn refused(&self, what: &str, status: u16) -> VeloctError {
-        VeloctError::Attachment(format!(
-            "GitHub refused to {what}: HTTP {status}. Check the token's contents-write access and the branch."
-        ))
+/// Add this crate's context to a shared client's failure.
+///
+/// `veloct-github` is feature-neutral on purpose, because it serves §13.13 (an attachment) and §17.4 (a
+/// backup) and could not name either without mislabelling the other. The attachment wording is therefore
+/// added HERE, at the boundary that knows what it is. A condition that already names its own kind is passed
+/// through rather than wrapped twice.
+fn attachment_error(error: VeloctError) -> VeloctError {
+    match error {
+        VeloctError::Other(message) => VeloctError::Attachment(message),
+        other => other,
     }
 }
 
@@ -193,19 +117,7 @@ impl StorageAdapter for GitHubStore {
     }
 
     fn put(&self, key: &str, bytes: &[u8]) -> Result<PutOutcome> {
-        let body = serde_json::json!({
-            "message": format!("Add {key}"),
-            "content": base64_encode(bytes),
-            "branch": self.branch,
-        });
-        let request = self
-            .request(HttpMethod::Put, self.contents_url(key))
-            .json(body);
-
-        let response = self.client.execute(request)?;
-        if !response.is_success() {
-            return Err(self.refused("upload a file", response.status));
-        }
+        let outcome = self.contents.put(key, bytes).map_err(attachment_error)?;
 
         let object = RemoteObject {
             key: key.to_string(),
@@ -214,83 +126,34 @@ impl StorageAdapter for GitHubStore {
         };
         // The Contents API answers 201 for a create and 200 for an update, so the status distinguishes "wrote
         // it" from "replaced it", which is what §13.4's reuse report is about.
-        Ok(if response.status == 201 {
-            PutOutcome::Created(object)
-        } else {
-            PutOutcome::AlreadyPresent(object)
+        Ok(match outcome {
+            GitHubWrite::Created => PutOutcome::Created(object),
+            GitHubWrite::Updated => PutOutcome::AlreadyPresent(object),
         })
     }
 
     fn head(&self, key: &str) -> Result<Option<RemoteObject>> {
-        let request = self.request(HttpMethod::Get, self.contents_url(key));
-        let response = self.client.execute(request)?;
-        match response.status {
-            200 => {
-                // The size comes from the API's answer rather than from the URL, so a caller can compare it.
-                let size = response
-                    .json::<serde_json::Value>()
-                    .ok()
-                    .and_then(|value| value.get("size").and_then(|size| size.as_u64()))
-                    .unwrap_or(0);
-                Ok(Some(RemoteObject {
-                    key: key.to_string(),
-                    public_url: self.public_url_for(key),
-                    size_bytes: size,
-                }))
-            }
-            // A missing file is `None`, not an error: asking whether something is there is not a failure when
-            // the answer is no.
-            404 => Ok(None),
-            other => Err(VeloctError::Attachment(format!(
-                "GitHub could not answer whether {key} exists: HTTP {other}"
-            ))),
-        }
+        let found = self.contents.get(key).map_err(attachment_error)?;
+        Ok(found.map(|entry| RemoteObject {
+            key: key.to_string(),
+            public_url: self.public_url_for(key),
+            // The size comes from the API's answer rather than from the URL, so a caller can compare it.
+            size_bytes: entry.size_bytes,
+        }))
     }
 
     fn test_connection(&self) -> Result<String> {
-        let url = format!("{GITHUB_API}/repos/{}", self.repository.slug());
-        let response = self
-            .client
-            .execute(self.request(HttpMethod::Get, url))?;
-        if response.is_success() {
-            Ok(format!("{} is reachable", self.repository.slug()))
-        } else {
-            Err(self.refused("read the repository", response.status))
-        }
+        // The repository resource is the call that proves the token can read the repository at all. The
+        // privacy flag it also returns belongs to §17.2's BACKUP rule and is ignored here: an attachment
+        // repository is public by design, because §13.13 serves files out of it.
+        self.contents.repository_info().map_err(attachment_error)?;
+        Ok(format!("{} is reachable", self.contents.repository().slug()))
     }
 
     fn delete_remote(&self, key: &str) -> Result<()> {
-        // §13.8: deleting needs the file's current blob sha, which the API requires. Fetching it first is the
-        // documented two-step, and guessing it would fail.
-        let lookup = self.request(HttpMethod::Get, self.contents_url(key));
-        let response = self.client.execute(lookup)?;
-        if response.status == 404 {
-            // Already gone, which is what the caller wanted.
-            return Ok(());
-        }
-        if !response.is_success() {
-            return Err(self.refused("look up a file", response.status));
-        }
-        let sha = response
-            .json::<serde_json::Value>()
-            .ok()
-            .and_then(|value| value.get("sha").and_then(|sha| sha.as_str()).map(str::to_string))
-            .ok_or_else(|| {
-                VeloctError::Attachment(format!("GitHub's answer for {key} carried no sha"))
-            })?;
-
-        let request = self
-            .request(HttpMethod::Delete, self.contents_url(key))
-            .json(serde_json::json!({
-                "message": format!("Remove {key}"),
-                "sha": sha,
-                "branch": self.branch,
-            }));
-        let response = self.client.execute(request)?;
-        if !response.is_success() && response.status != 404 {
-            return Err(self.refused("delete a file", response.status));
-        }
-        Ok(())
+        // §13.8: deleting needs the file's current blob sha, which the API requires. The client owns the
+        // documented two-step, so guessing is impossible here rather than merely discouraged.
+        self.contents.delete(key).map_err(attachment_error)
     }
 }
 
@@ -381,9 +244,29 @@ pub fn target_from_config(
                 client,
             ))
         }
-        // §13.10's SFTP needs SSH, and §13.11's S3 needs SigV4, and §13.12's Lsky needs its own protocol. All
-        // three report rather than guess.
-        StorageKind::Sftp | StorageKind::S3 | StorageKind::LskyPro => {
+        StorageKind::S3 => {
+            // §13.11: Endpoint, Region, Bucket and the access key pair. The SECRET arrives as the
+            // resolved credential; the access key ID is configuration, which is why it is not here.
+            let secret = credential.ok_or_else(|| VeloctError::NotConfigured {
+                what: format!("the S3 target {}", config.name),
+                hint: Some(
+                    "an S3 target needs its SECRET access key stored as the target's credential; the \
+                     access key ID belongs in the target's configuration"
+                        .to_string(),
+                ),
+            })?;
+            // The clock is the system's here because this factory's job is to assemble an adapter; a test
+            // that checks a signature builds `S3Store` directly with a pinned clock instead.
+            Box::new(crate::s3::S3Store::new(
+                config.clone(),
+                secret,
+                client,
+                std::sync::Arc::new(veloct_core::SystemClock),
+            )?)
+        }
+        // §13.10's SFTP needs SSH and §13.12's Lsky needs its own protocol. Both report rather than
+        // guess, and ADR-0010 forbids replacing that with a plausible-looking request.
+        StorageKind::Sftp | StorageKind::LskyPro => {
             Box::new(UnsupportedStore::new(config.clone()))
         }
     };
@@ -411,51 +294,21 @@ pub fn local_root(project_root: &Path, target_id: &str) -> PathBuf {
         .join(target_id)
 }
 
-/// base64, for the GitHub Contents API.
-///
-/// Hand-written rather than a dependency: the Contents API needs standard base64 with padding, which is twenty
-/// lines, and a crate for it would be a crate to audit.
-pub fn base64_encode(bytes: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
-    for chunk in bytes.chunks(3) {
-        let b0 = chunk[0] as u32;
-        let b1 = *chunk.get(1).unwrap_or(&0) as u32;
-        let b2 = *chunk.get(2).unwrap_or(&0) as u32;
-        let triple = (b0 << 16) | (b1 << 8) | b2;
-        out.push(ALPHABET[((triple >> 18) & 0x3f) as usize] as char);
-        out.push(ALPHABET[((triple >> 12) & 0x3f) as usize] as char);
-        // The padding rules: one `=` when two bytes were available, two when only one.
-        if chunk.len() > 1 {
-            out.push(ALPHABET[((triple >> 6) & 0x3f) as usize] as char);
-        } else {
-            out.push('=');
-        }
-        if chunk.len() > 2 {
-            out.push(ALPHABET[(triple & 0x3f) as usize] as char);
-        } else {
-            out.push('=');
-        }
-    }
-    out
-}
-
 /// Whether a kind's adapter is implemented in this build.
 pub fn is_implemented(kind: StorageKind) -> bool {
-    matches!(kind, StorageKind::GitHub)
+    matches!(kind, StorageKind::GitHub | StorageKind::S3)
 }
 
 /// Why a kind has no adapter, in the user's terms.
 pub fn unimplemented_reason(kind: StorageKind) -> Option<&'static str> {
     match kind {
-        StorageKind::GitHub => None,
+        StorageKind::GitHub | StorageKind::S3 => None,
         StorageKind::Sftp => Some(
-            "SFTP 需要 SSH 实现,本构建出于依赖原因没有引入;请改用 GitHub 或服务器目录目标。",
+            "SFTP 需要 SSH 实现,本构建出于依赖原因没有引入;请改用 GitHub、S3 或服务器目录目标。",
         ),
-        StorageKind::S3 => Some("S3 需要 SigV4 签名,本构建尚未实现;请先使用 GitHub 或服务器目录目标。"),
-        StorageKind::LskyPro => {
-            Some("Lsky Pro 需要其专用上传令牌协议,本构建尚未实现;请先使用 GitHub 或服务器目录目标。")
-        }
+        StorageKind::LskyPro => Some(
+            "Lsky Pro 需要其专用上传令牌协议,本构建尚未实现;请先使用 GitHub、S3 或服务器目录目标。",
+        ),
     }
 }
 
@@ -472,7 +325,7 @@ pub fn url_for(config: &StorageConfig, key: &str) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use veloct_core::http::FakeHttpClient;
+    use veloct_core::http::{FakeHttpClient, HttpMethod};
 
     /// Only the fields a test cares about are set; the rest take their defaults.
     fn github_config(repo: Option<&str>, branch: Option<&str>, prefix: Option<&str>) -> StorageConfig {
@@ -705,10 +558,11 @@ mod tests {
     }
 
     #[test]
-    fn sftp_s3_and_lsky_report_that_they_have_no_adapter_instead_of_failing_obscurely() {
+    fn sftp_and_lsky_report_that_they_have_no_adapter_instead_of_failing_obscurely() {
         // A guessed protocol would fail for a reason nobody can read, and a silent no-op would look like a
-        // successful upload.
-        for kind in [StorageKind::Sftp, StorageKind::S3, StorageKind::LskyPro] {
+        // successful upload. S3 USED to be in this list and is no longer: §13.11's adapter landed with the
+        // SigV4 client, so the loop now covers the two kinds that genuinely have none.
+        for kind in [StorageKind::Sftp, StorageKind::LskyPro] {
             assert!(!is_implemented(kind), "{kind:?} is not implemented");
             let reason = unimplemented_reason(kind).expect("a reason");
             assert!(!reason.is_empty(), "{kind:?}");
@@ -731,6 +585,55 @@ mod tests {
         }
         assert!(is_implemented(StorageKind::GitHub));
         assert!(unimplemented_reason(StorageKind::GitHub).is_none());
+        assert!(is_implemented(StorageKind::S3));
+        assert!(unimplemented_reason(StorageKind::S3).is_none());
+    }
+
+    #[test]
+    fn an_s3_target_without_its_secret_is_reported_rather_than_sending_an_unsigned_request() {
+        // Section 13.11 names the access key AND the secret key. The ID is configuration; the secret is a
+        // credential, so an S3 target assembled with no credential must say so.
+        let mut config = StorageConfig::new("assets", "my bucket", StorageKind::S3);
+        config.bucket = Some("veloct-assets".to_string());
+        config.region = Some("us-east-1".to_string());
+        config.access_key = Some("AKIAIOSFODNN7EXAMPLE".to_string());
+        config.public_url_prefix = "https://cdn.example.com/".to_string();
+
+        let client = std::sync::Arc::new(FakeHttpClient::new()) as std::sync::Arc<dyn HttpClient>;
+        let error = target_from_config(config.clone(), None, std::sync::Arc::clone(&client))
+            .err()
+            .expect("a secret is required");
+        assert!(matches!(error, VeloctError::NotConfigured { .. }), "{error}");
+        assert!(
+            error.hint().unwrap_or_default().contains("SECRET"),
+            "{:?}",
+            error.hint()
+        );
+
+        // A bucket that is missing is reported too, and before any request is attempted.
+        let mut bucketless = config.clone();
+        bucketless.bucket = None;
+        let error = target_from_config(
+            bucketless,
+            Some("wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY".to_string()),
+            std::sync::Arc::clone(&client),
+        )
+        .err()
+        .expect("a bucket is required");
+        assert!(error.to_string().contains("no bucket"), "{error}");
+
+        // And with both in place the target is BUILT, with the capabilities §13.11 promises.
+        let target = target_from_config(
+            config,
+            Some("wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY".to_string()),
+            client,
+        )
+        .unwrap();
+        let capabilities = target.capabilities();
+        assert!(capabilities.verified);
+        assert!(capabilities.can_delete_remotely);
+        assert!(capabilities.can_test_connection);
+        assert!(capabilities.derives_public_url, "a prefix was configured");
     }
 
     #[test]

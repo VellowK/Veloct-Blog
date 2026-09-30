@@ -22,6 +22,7 @@ pub mod naming;
 pub mod network;
 pub mod pool;
 pub mod reference;
+pub mod s3;
 pub mod state;
 pub mod storage;
 pub mod targets;
@@ -43,13 +44,14 @@ pub use reference::{ReferenceIndex, ReferenceSet, ReferenceTarget};
 pub use state::{
     is_safe_orphan, AttachmentState, CacheStatus, ReferenceStatus, StorageTargetId, UploadStatus,
 };
+pub use s3::{s3_config, S3Store};
 pub use targets::{
     base64_encode, is_implemented, key_for, local_root, local_target, target_from_config,
     unimplemented_reason, url_for, GitHubStore, Repository, UnsupportedStore, GITHUB_API,
 };
 pub use storage::{
-    LocalFileStore, MemoryFileStore, ObjectRecord, PutOutcome, RemoteObject, StorageAdapter,
-    StorageCapabilities, StorageConfig, StorageKind, StorageTarget,
+    content_type_for, LocalFileStore, MemoryFileStore, ObjectRecord, PutOutcome, RemoteObject,
+    StorageAdapter, StorageCapabilities, StorageConfig, StorageKind, StorageTarget,
 };
 pub use transaction::{
     AddRequest, ApplyOutcome, ApplyRequest, AttachmentTransaction, TransactionResult,

@@ -1185,6 +1185,29 @@ button.primary {
   color: var(--danger-400);
 }
 
+/* Cloud backup targets (handoff.md sections 17.4, 17.6, 17.7). */
+.cloud-backup h4 {
+  margin: 10px 0 4px;
+  font-size: 13px;
+}
+
+.cloud-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cloud-confirm {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* A target's refusal reason and a finding's explanation are guidance, not decoration. */
+.cloud-backup .hint {
+  margin: 2px 0;
+}
+
 /* Deployment targets (handoff.md sections 10 and 14). */
 .deploy-panel {
   display: flex;

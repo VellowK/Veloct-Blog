@@ -16,9 +16,11 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
+use veloct_core::http::HttpClient;
 use veloct_core::{Result, VeloctError};
 
 /// The default number of backups kept per cloud target (`handoff.md` §17.6).
@@ -82,6 +84,16 @@ pub struct CloudTarget {
     pub endpoint: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub region: Option<String>,
+    /// S3: the access key ID, which is an IDENTIFIER rather than a secret.
+    ///
+    /// `handoff.md` §12.2 lists "S3 Secret" among the credential values that may never enter SQLite or a
+    /// config file, and the SECRET access key lives in the OS credential store behind `credential_ref`.
+    /// The access key ID is the other half of an S3 credential pair and authenticates nothing on its own —
+    /// AWS prints it in plain text in the console and it travels in every signed request's `Credential=`
+    /// field — so it is configuration. Stated rather than assumed, because this is exactly the kind of
+    /// distinction that gets copied wrongly.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub access_key: Option<String>,
 }
 
 fn default_retention() -> usize {
@@ -101,6 +113,7 @@ impl CloudTarget {
             credential_ref: None,
             endpoint: None,
             region: None,
+            access_key: None,
         }
     }
 
@@ -125,6 +138,34 @@ impl CloudTarget {
             if parts.len() != 2 || parts.iter().any(|part| part.trim().is_empty()) {
                 return Err(format!(
                     "the GitHub target {:?} must be in owner/repo form",
+                    self.location
+                ));
+            }
+        }
+        if self.kind == CloudTargetKind::S3 {
+            // A bucket name, not a path: a user who writes `bucket/path` means a bucket AND a prefix,
+            // and silently taking the first segment would send the archive somewhere they did not name.
+            if self.location.contains('/') {
+                return Err(format!(
+                    "the S3 target {:?} names a bucket, not a path; write the bucket alone and put the \
+                     directory in the prefix",
+                    self.location
+                ));
+            }
+            // The API address has to be derivable: a region builds the AWS endpoint, and anything else
+            // needs an explicit one.
+            let endpoint = self.endpoint.as_deref().unwrap_or("").trim();
+            let region = self.region.as_deref().unwrap_or("").trim();
+            if endpoint.is_empty() && region.is_empty() {
+                return Err(format!(
+                    "the S3 target {:?} needs an endpoint or a region, so its API address can be built",
+                    self.location
+                ));
+            }
+            if self.access_key.as_deref().unwrap_or("").trim().is_empty() {
+                return Err(format!(
+                    "the S3 target {:?} needs an access key ID; the SECRET key belongs in the credential \
+                     store, never here",
                     self.location
                 ));
             }
@@ -178,6 +219,9 @@ pub struct TargetResult {
     /// How many old backups were removed by the retention policy.
     #[serde(default)]
     pub pruned: usize,
+    /// How many copies this target holds AFTER the run, so the window can say so (§17.6).
+    #[serde(default)]
+    pub kept: usize,
 }
 
 /// A target's status in a run.
@@ -450,14 +494,29 @@ impl BackupTargetAdapter for MemoryTarget {
     }
 }
 
-/// Apply a target's retention policy.
+/// What a retention pass did.
+///
+/// Both numbers, because a caller reporting §17.6 to a user needs to answer "how many copies does this
+/// target hold now" as well as "what was deleted", and a listing that has already been fetched is the
+/// only place that answer exists.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PruneOutcome {
+    pub removed: usize,
+    /// The objects the target holds AFTER the pass.
+    pub kept: usize,
+}
+
+/// Apply a target's retention policy, reporting both what was removed and what survived.
 ///
 /// `handoff.md` §17.6: the oldest backups beyond the retention count are removed, PER TARGET. The
 /// count includes the backup just uploaded, so a retention of 3 means "this one plus two older".
 ///
 /// A listing failure is returned rather than ignored: silently keeping every backup would fill the
 /// user's bucket, and silently deleting without a listing would be worse.
-pub fn prune(adapter: &dyn BackupTargetAdapter, just_uploaded: Option<&str>) -> Result<usize> {
+pub fn prune_detailed(
+    adapter: &dyn BackupTargetAdapter,
+    just_uploaded: Option<&str>,
+) -> Result<PruneOutcome> {
     let retention = adapter.config().effective_retention();
     let mut objects = adapter.list()?;
 
@@ -485,7 +544,15 @@ pub fn prune(adapter: &dyn BackupTargetAdapter, just_uploaded: Option<&str>) -> 
         removed += 1;
     }
 
-    Ok(removed)
+    Ok(PruneOutcome {
+        removed,
+        kept: ordered.len() - removed,
+    })
+}
+
+/// [`prune_detailed`], for a caller that only needs the removals.
+pub fn prune(adapter: &dyn BackupTargetAdapter, just_uploaded: Option<&str>) -> Result<usize> {
+    Ok(prune_detailed(adapter, just_uploaded)?.removed)
 }
 
 /// A configured target and its adapter.
@@ -573,6 +640,7 @@ pub fn run_targets(
                     "this target is disabled".to_string()
                 }),
                 pruned: 0,
+                kept: 0,
             });
             continue;
         }
@@ -587,6 +655,7 @@ pub fn run_targets(
                 remote_path: None,
                 error: Some(reason),
                 pruned: 0,
+                kept: 0,
             });
             continue;
         }
@@ -597,8 +666,13 @@ pub fn run_targets(
                 // Retention runs per target AFTER a successful upload, and its own failure is
                 // recorded without turning the upload into a failure: the backup IS stored, and
                 // saying otherwise would invite the user to upload it again.
-                let pruned = match prune(handle.adapter.as_ref(), Some(&remote_path)) {
-                    Ok(pruned) => pruned,
+                let pruned: usize;
+                let kept: usize;
+                match prune_detailed(handle.adapter.as_ref(), Some(&remote_path)) {
+                    Ok(done) => {
+                        pruned = done.removed;
+                        kept = done.kept;
+                    }
                     Err(error) => {
                         results.push(TargetResult {
                             target_id: id.clone(),
@@ -609,10 +683,13 @@ pub fn run_targets(
                                 "the backup was stored, but the retention pass failed: {error}"
                             )),
                             pruned: 0,
+                            // The upload succeeded, so at least this one is there; the LISTING is what
+                            // failed, so a precise count would be a guess and is left at one.
+                            kept: 1,
                         });
                         continue;
                     }
-                };
+                }
 
                 results.push(TargetResult {
                     target_id: id.clone(),
@@ -621,6 +698,7 @@ pub fn run_targets(
                     remote_path: Some(remote_path),
                     error: None,
                     pruned,
+                    kept,
                 });
             }
             Err(error) => {
@@ -631,6 +709,7 @@ pub fn run_targets(
                     remote_path: None,
                     error: Some(error.to_string()),
                     pruned: 0,
+                    kept: 0,
                 });
             }
         }
@@ -644,6 +723,159 @@ pub fn run_targets(
         trigger,
         targets: results,
         subset: matches!(selection, TargetSelection::Subset(_)),
+    }
+}
+
+/// Whether this build has an adapter for a cloud target kind (`handoff.md` §17.4).
+pub fn is_implemented(kind: CloudTargetKind) -> bool {
+    matches!(kind, CloudTargetKind::GitHub | CloudTargetKind::S3)
+}
+
+/// Why a kind has no adapter, in the user's terms.
+///
+/// Both of §17.4's targets have one, so this is `None` for both — kept because a caller has to be able
+/// to ask, and because the next kind added here must answer rather than be assumed.
+pub fn unimplemented_reason(kind: CloudTargetKind) -> Option<&'static str> {
+    match kind {
+        CloudTargetKind::GitHub | CloudTargetKind::S3 => None,
+    }
+}
+
+/// An adapter that reports why a target cannot be used.
+///
+/// `handoff.md` §17.7 makes the targets independent, so a target that CANNOT be built must not stop the
+/// others from storing this backup — and it must not quietly disappear from the run either, because a
+/// user who configured it would then see a shorter list with no explanation. Every unusable condition —
+/// a kind with no adapter, a missing credential, a malformed configuration — therefore becomes a real
+/// handle that fails, at the point of use, with the reason.
+///
+/// This is the same shape `veloct_attach::UnsupportedStore` uses, for the same reason.
+pub struct ReportingTarget {
+    config: CloudTarget,
+    reason: String,
+}
+
+impl ReportingTarget {
+    pub fn new(config: CloudTarget, reason: impl Into<String>) -> Self {
+        Self {
+            config,
+            reason: reason.into(),
+        }
+    }
+
+    /// Why there is no usable adapter.
+    pub fn reason(&self) -> &str {
+        &self.reason
+    }
+
+    fn unavailable(&self) -> VeloctError {
+        VeloctError::not_configured(
+            format!(
+                "the {} backup target {}",
+                self.config.kind.as_str(),
+                self.config.id
+            ),
+            self.reason.clone(),
+        )
+    }
+}
+
+impl BackupTargetAdapter for ReportingTarget {
+    fn config(&self) -> &CloudTarget {
+        &self.config
+    }
+
+    fn upload(&self, _archive: &Path, _remote_name: &str) -> Result<String> {
+        Err(self.unavailable())
+    }
+
+    fn list(&self) -> Result<Vec<RemoteBackup>> {
+        // NOT an empty listing. "This target holds nothing" and "this target cannot be asked" are
+        // different facts, and retention decides what to delete from the answer.
+        Err(self.unavailable())
+    }
+
+    fn remove(&self, _remote_path: &str) -> Result<()> {
+        Err(self.unavailable())
+    }
+
+    fn test_connection(&self) -> Result<String> {
+        Err(self.unavailable())
+    }
+}
+
+/// A handle that reports a reason instead of carrying an adapter.
+fn reporting(target: &CloudTarget, reason: impl Into<String>) -> TargetHandle {
+    TargetHandle {
+        target: target.clone(),
+        adapter: Box::new(ReportingTarget::new(target.clone(), reason)),
+    }
+}
+
+/// Build the adapter for a configured cloud backup target.
+///
+/// The credential arrives separately and is never read from the configuration, because §12.2 keeps
+/// credential VALUES out of it. For S3 that credential is the SECRET access key; the access key ID is
+/// configuration (see [`CloudTarget::access_key`]).
+///
+/// `clock` is injected because a SigV4 signature is a function of its timestamp, so a deterministic test
+/// must be able to pin the time (ADR-0002).
+///
+/// This ALWAYS yields a handle. Every unusable condition — a kind with no adapter, a missing credential,
+/// a malformed location — becomes a handle whose adapter reports that (§17.7), rather than an error that
+/// would abandon the other targets along with it.
+pub fn adapter_from_target(
+    target: CloudTarget,
+    credential: Option<String>,
+    client: Arc<dyn HttpClient>,
+    clock: Arc<dyn veloct_core::Clock>,
+) -> TargetHandle {
+    if let Err(reason) = target.validate() {
+        return reporting(&target, format!("this target is not usable: {reason}"));
+    }
+
+    match target.kind {
+        CloudTargetKind::GitHub => {
+            let Some(token) = credential.filter(|token| !token.trim().is_empty()) else {
+                return reporting(
+                    &target,
+                    "a private GitHub repository needs a token with contents write access on it",
+                );
+            };
+            match crate::github::GitHubBackupTarget::new(target.clone(), token, client) {
+                Ok(adapter) => TargetHandle {
+                    target,
+                    adapter: Box::new(adapter),
+                },
+                Err(error) => reporting(&target, error.to_string()),
+            }
+        }
+        CloudTargetKind::S3 => {
+            let Some(secret) = credential.filter(|secret| !secret.trim().is_empty()) else {
+                return reporting(
+                    &target,
+                    "an S3 target needs its SECRET access key; the access key ID alone cannot sign a request",
+                );
+            };
+            let access_key = target
+                .access_key
+                .clone()
+                .filter(|key| !key.trim().is_empty())
+                .unwrap_or_default();
+            match crate::s3::S3BackupTarget::new(
+                target.clone(),
+                access_key,
+                secret,
+                client,
+                clock,
+            ) {
+                Ok(adapter) => TargetHandle {
+                    target,
+                    adapter: Box::new(adapter),
+                },
+                Err(error) => reporting(&target, error.to_string()),
+            }
+        }
     }
 }
 
@@ -759,7 +991,15 @@ mod tests {
         let mut target = CloudTarget::new(id, CloudTargetKind::S3, "veloct-private-backups");
         target.private_confirmed = true;
         target.region = Some("us-east-1".to_string());
+        // The access key ID is configuration; only the SECRET goes to the credential store.
+        target.access_key = Some("AKIAIOSFODNN7EXAMPLE".to_string());
         target
+    }
+
+    fn fixed_clock() -> std::sync::Arc<dyn veloct_core::Clock> {
+        std::sync::Arc::new(
+            veloct_core::clock::FixedClock::from_rfc3339("2013-05-24T00:00:00Z").unwrap(),
+        )
     }
 
     fn archive(dir: &TempDir) -> std::path::PathBuf {
@@ -1251,5 +1491,176 @@ mod tests {
         let target = MemoryTarget::new(github("gh"));
         let message = target.test_connection().unwrap();
         assert!(message.contains("vellow/private-backups"), "{message}");
+    }
+
+    #[test]
+    fn a_target_that_cannot_be_built_becomes_a_handle_that_reports_why() {
+        // Section 17.7 makes the targets independent, so an unusable target must not return an error that
+        // abandons the others — and it must not vanish from the run either, because a user who configured
+        // it would see a shorter list with no explanation.
+        let client = std::sync::Arc::new(veloct_core::http::FakeHttpClient::new())
+            as std::sync::Arc<dyn HttpClient>;
+
+        // A GitHub target with no credential.
+        let handle = adapter_from_target(
+            github("gh"),
+            None,
+            std::sync::Arc::clone(&client),
+            fixed_clock(),
+        );
+        assert_eq!(handle.target.id, "gh");
+        let error = handle.adapter.upload(Path::new("a.tar.gz"), "n").unwrap_err();
+        assert!(
+            matches!(error, VeloctError::NotConfigured { .. }),
+            "a missing credential is a configuration problem: {error}"
+        );
+        assert!(
+            error.hint().unwrap_or_default().contains("token"),
+            "the guidance is in the hint: {:?}",
+            error.hint()
+        );
+
+        // A GitHub target whose credential is present but empty is the same condition.
+        let handle = adapter_from_target(
+            github("gh"),
+            Some("   ".to_string()),
+            std::sync::Arc::clone(&client),
+            fixed_clock(),
+        );
+        assert!(handle.adapter.upload(Path::new("a.tar.gz"), "n").is_err());
+
+        // An S3 target needs the SECRET key: the access key ID alone cannot sign anything, and a target
+        // configured with only an ID must say so rather than send an unsigned request.
+        let handle = adapter_from_target(
+            s3("s3"),
+            None,
+            std::sync::Arc::clone(&client),
+            fixed_clock(),
+        );
+        let error = handle.adapter.upload(Path::new("a.tar.gz"), "n").unwrap_err();
+        assert!(
+            error.hint().unwrap_or_default().contains("SECRET"),
+            "the guidance is in the hint: {:?}",
+            error.hint()
+        );
+
+        // And an S3 target WITH one is built rather than reported: §17.4's second target is real now.
+        let handle = adapter_from_target(
+            s3("s3"),
+            Some("wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY".to_string()),
+            std::sync::Arc::clone(&client),
+            fixed_clock(),
+        );
+        assert_eq!(handle.target.id, "s3");
+        assert!(is_implemented(CloudTargetKind::S3));
+        assert!(unimplemented_reason(CloudTargetKind::S3).is_none());
+        assert!(is_implemented(CloudTargetKind::GitHub));
+        assert!(unimplemented_reason(CloudTargetKind::GitHub).is_none());
+        // It reaches the network rather than refusing locally: the fake answers 404 for the listing, so
+        // the failure names the bucket rather than the configuration.
+        let error = handle.adapter.test_connection().unwrap_err();
+        assert!(error.to_string().contains("veloct-private-backups"), "{error}");
+
+        // A malformed configuration is reported at the point of use rather than panicking or being skipped.
+        let mut broken = github("broken");
+        broken.location = "not-a-repository".to_string();
+        let handle = adapter_from_target(broken, Some("t".to_string()), client, fixed_clock());
+        assert_eq!(handle.target.id, "broken");
+        assert!(handle.adapter.upload(Path::new("a.tar.gz"), "n").is_err());
+    }
+
+    #[test]
+    fn an_unusable_target_does_not_stop_the_others_in_the_same_run() {
+        // Section 17.7's independence, over a real run: one target that cannot be built, one that works.
+        let dir = tempfile::TempDir::new().unwrap();
+        let archive = dir.path().join("a.tar.gz");
+        std::fs::write(&archive, b"ARCHIVE").unwrap();
+
+        let client = std::sync::Arc::new(veloct_core::http::FakeHttpClient::new())
+            as std::sync::Arc<dyn HttpClient>;
+        let handles = vec![
+            adapter_from_target(
+                s3("s3"),
+                // No SECRET, so this target cannot sign anything and must fail on its own.
+                None,
+                std::sync::Arc::clone(&client),
+                fixed_clock(),
+            ),
+            TargetHandle {
+                target: github("gh"),
+                adapter: Box::new(MemoryTarget::new(github("gh"))),
+            },
+        ];
+
+        let run = run_targets(
+            &handles,
+            &TargetSelection::AllEnabled,
+            &archive,
+            &"a".repeat(64),
+            7,
+            "2026-01-01T12:00:00Z",
+            crate::archive::BackupTrigger::Manual,
+        );
+
+        assert!(run.any_succeeded(), "the usable target still stored the backup");
+        assert_eq!(run.failures().len(), 1);
+        assert_eq!(run.failures()[0].target_id, "s3");
+        assert!(!run.is_complete(), "a failing target leaves the run incomplete");
+    }
+
+    #[test]
+    fn retention_reports_both_what_it_removed_and_what_survived() {
+        // Section 17.6's answer to "how many copies does this target hold now", which a listing that has
+        // already been fetched is the only place to get.
+        let config = github("gh");
+        let target = MemoryTarget::with_objects(
+            config,
+            vec![
+                RemoteBackup { path: "a".into(), created_at: "2026-01-01T00:00:00Z".into(), size_bytes: 1 },
+                RemoteBackup { path: "b".into(), created_at: "2026-01-02T00:00:00Z".into(), size_bytes: 1 },
+                RemoteBackup { path: "c".into(), created_at: "2026-01-03T00:00:00Z".into(), size_bytes: 1 },
+                RemoteBackup { path: "d".into(), created_at: "2026-01-04T00:00:00Z".into(), size_bytes: 1 },
+            ],
+        );
+
+        let done = prune_detailed(&target, None).unwrap();
+        assert_eq!(done.removed, 1, "the default retention is three");
+        assert_eq!(done.kept, 3);
+        assert_eq!(done.removed + done.kept, 4, "every object is accounted for");
+        // And the convenience wrapper still answers the older question.
+        assert_eq!(prune(&target, None).unwrap(), 0, "nothing left to remove");
+    }
+
+    #[test]
+    fn a_run_records_how_many_copies_each_target_holds_afterwards() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let archive = dir.path().join("a.tar.gz");
+        std::fs::write(&archive, b"ARCHIVE").unwrap();
+
+        let target = MemoryTarget::with_objects(
+            github("gh"),
+            vec![
+                RemoteBackup { path: "old-1".into(), created_at: "2026-01-01T00:00:00Z".into(), size_bytes: 1 },
+                RemoteBackup { path: "old-2".into(), created_at: "2026-01-02T00:00:00Z".into(), size_bytes: 1 },
+                RemoteBackup { path: "old-3".into(), created_at: "2026-01-03T00:00:00Z".into(), size_bytes: 1 },
+            ],
+        );
+        let handles = vec![TargetHandle {
+            target: github("gh"),
+            adapter: Box::new(target),
+        }];
+
+        let run = run_targets(
+            &handles,
+            &TargetSelection::AllEnabled,
+            &archive,
+            &"a".repeat(64),
+            7,
+            "2026-01-04T12:00:00Z",
+            crate::archive::BackupTrigger::Automatic,
+        );
+        assert!(run.is_complete(), "{}", run.summary());
+        assert_eq!(run.targets[0].kept, 3, "three survive a retention of three");
+        assert_eq!(run.targets[0].pruned, 1, "the upload made four, so one went");
     }
 }

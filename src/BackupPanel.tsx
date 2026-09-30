@@ -23,6 +23,9 @@ import {
   describeError,
   type BackupArchiveView,
   type BackupOutcomeView,
+  type CloudBackupResultView,
+  type CloudBackupRunView,
+  type CloudBackupTargetView,
   type RestoreAppliedView,
   type StagedRestoreView,
 } from './lib/api';
@@ -32,6 +35,59 @@ type Mode = 'full' | 'content_only';
 const MODE_LABEL: Record<Mode, string> = {
   full: '完整恢复(内容、配置、作品)',
   content_only: '仅内容恢复(保留配置与凭据)',
+};
+
+/** How the per-target results are drawn (section 17.7). */
+function targetMark(target: { succeeded: boolean; skipped: boolean }): string {
+  if (target.succeeded) return '✅';
+  return target.skipped ? '⏭' : '❌';
+}
+
+/**
+ * A cloud run's per-target report (handoff.md section 17.7).
+ *
+ * Three states rather than two: a target that was deliberately not attempted has nothing to retry, and
+ * drawing it with the same mark as one that broke would send the user looking for a fault that is not
+ * there.
+ */
+function CloudRunReport({ run }: { run: CloudBackupRunView }) {
+  return (
+    <div className="backup-result">
+      <p>{run.summary}</p>
+      <ul className="archive-list">
+        {run.targets.map((target) => (
+          <li key={target.target_id}>
+            <span className="archive-name">
+              {targetMark(target)} {target.target_id}
+            </span>
+            {target.succeeded && <span className="muted">该目标现保留 {target.kept} 份</span>}
+            {!target.succeeded && target.error && <span className="muted">{target.error}</span>}
+            {target.skipped && <span className="muted">未执行(无需重试)</span>}
+          </li>
+        ))}
+      </ul>
+      {!run.all_succeeded && run.nothing_stored && (
+        <p className="restore-note">没有任何云端目标保存了本次备份;本地备份仍然有效。</p>
+      )}
+      {run.index_note && <p className="restore-note">{run.index_note}</p>}
+    </div>
+  );
+}
+
+/** An empty form for a new cloud target (section 17.4). */
+const EMPTY_TARGET = {
+  id: '',
+  kind: 'github' as 'github' | 's3',
+  location: '',
+  prefix: '',
+  retention: 3,
+  privateConfirmed: false,
+  credential: '',
+  // S3 only. The access key ID is configuration; the SECRET access key goes in `credential`, and
+  // section 12 is why the two are asked for separately.
+  accessKey: '',
+  endpoint: '',
+  region: '',
 };
 
 export default function BackupPanel({ enabled }: { enabled: boolean }) {
@@ -46,13 +102,31 @@ export default function BackupPanel({ enabled }: { enabled: boolean }) {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
+  // The cloud backup targets (handoff.md section 17.4).
+  const [cloudTargets, setCloudTargets] = useState<CloudBackupTargetView[]>([]);
+  const [targetForm, setTargetForm] = useState({ ...EMPTY_TARGET });
+  const [selectedTargets, setSelectedTargets] = useState<string[]>([]);
+  const [cloudResult, setCloudResult] = useState<CloudBackupResultView | null>(null);
+  const [cloudRun, setCloudRun] = useState<CloudBackupRunView | null>(null);
+  const [connectionReport, setConnectionReport] = useState<Record<string, string>>({});
+  const [acknowledged, setAcknowledged] = useState(false);
+
   const reload = useCallback(async () => {
     if (!enabled) return;
     try {
-      const [list, dir] = await Promise.all([api.listBackups(), api.backupDirectory()]);
+      const [list, dir, targets] = await Promise.all([
+        api.listBackups(),
+        api.backupDirectory(),
+        api.cloudBackupTargets(),
+      ]);
       setArchives(list);
       setDirectory(dir);
       setExportDirectory((current) => current || dir);
+      setCloudTargets(targets);
+      // A target that was just removed must not stay selected, or the next run would skip it silently.
+      setSelectedTargets((current) =>
+        current.filter((id) => targets.some((target) => target.id === id)),
+      );
     } catch (caught) {
       setError(describeError(caught));
     }
@@ -196,9 +270,261 @@ export default function BackupPanel({ enabled }: { enabled: boolean }) {
         )}
       </section>
 
+      <section className="cloud-backup">
+        <h3>云端备份目标({cloudTargets.length}/3 默认保留)</h3>
+        <p className="muted hint">
+          handoff.md §17.4 只支持 GitHub 与 S3/S3-compatible 两种云端目标;§17.2 要求目标必须是<strong>私有</strong>的,
+          因为备份包未加密。凭据保存在操作系统凭据库,不进入 SQLite、日志或备份包(§12)。
+        </p>
+
+        {cloudTargets.length === 0 && <p className="muted">还没有配置云端目标,备份只写在本机。</p>}
+        <ul className="archive-list">
+          {cloudTargets.map((target) => (
+            <li key={target.id}>
+              <label className="cloud-pick">
+                <input
+                  type="checkbox"
+                  checked={selectedTargets.includes(target.id)}
+                  onChange={(event) =>
+                    setSelectedTargets((current) =>
+                      event.target.checked
+                        ? [...current, target.id]
+                        : current.filter((id) => id !== target.id),
+                    )
+                  }
+                />
+                <span className="archive-name">{target.id}</span>
+              </label>
+              <span className="muted">{target.label}</span>
+              <span className="muted">{target.location}</span>
+              {target.access_key && <span className="muted">ID {target.access_key}</span>}
+              {target.endpoint && <span className="muted">{target.endpoint}</span>}
+              {target.kind === 's3' && target.region && (
+                <span className="muted">{target.region}</span>
+              )}
+              <span className="muted">保留 {target.retention} 份</span>
+              {!target.has_credential && <span className="missing">缺少凭据</span>}
+              {!target.implemented && <span className="missing">本构建无适配器</span>}
+              {target.refusal_reason && <span className="missing">会被拒绝</span>}
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() =>
+                  void run(async () => {
+                    const said = await api.testCloudBackupTarget(target.id);
+                    setConnectionReport((current) => ({ ...current, [target.id]: said }));
+                  }, '连接测试已完成。')
+                }
+              >
+                测试连接
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() =>
+                  void run(async () => {
+                    await api.deleteCloudBackupTarget(target.id);
+                    setConnectionReport((current) =>
+                      Object.fromEntries(
+                        Object.entries(current).filter(([key]) => key !== target.id),
+                      ),
+                    );
+                  }, '目标已删除(它的历史备份记录会保留)。')
+                }
+              >
+                删除
+              </button>
+              {target.unimplemented_reason && (
+                <p className="muted hint">{target.unimplemented_reason}</p>
+              )}
+              {target.refusal_reason && <p className="muted hint">{target.refusal_reason}</p>}
+              {connectionReport[target.id] && (
+                <p className="muted hint">{connectionReport[target.id]}</p>
+              )}
+            </li>
+          ))}
+        </ul>
+
+        <h4>添加 / 修改目标</h4>
+        <div className="row">
+          <label>
+            <span>标识</span>
+            <input
+              value={targetForm.id}
+              spellCheck={false}
+              onChange={(event) => setTargetForm({ ...targetForm, id: event.target.value })}
+            />
+          </label>
+          <label>
+            <span>类型</span>
+            <select
+              value={targetForm.kind}
+              onChange={(event) =>
+                setTargetForm({ ...targetForm, kind: event.target.value as 'github' | 's3' })
+              }
+            >
+              <option value="github">GitHub(私有仓库)</option>
+              <option value="s3">S3 / S3-compatible</option>
+            </select>
+          </label>
+          <label>
+            <span>{targetForm.kind === 'github' ? 'owner/repo' : 'Bucket'}</span>
+            <input
+              value={targetForm.location}
+              spellCheck={false}
+              onChange={(event) => setTargetForm({ ...targetForm, location: event.target.value })}
+            />
+          </label>
+          <label>
+            <span>路径前缀</span>
+            <input
+              value={targetForm.prefix}
+              spellCheck={false}
+              onChange={(event) => setTargetForm({ ...targetForm, prefix: event.target.value })}
+            />
+          </label>
+          <label>
+            <span>保留份数</span>
+            <input
+              type="number"
+              min={1}
+              value={targetForm.retention}
+              onChange={(event) =>
+                setTargetForm({ ...targetForm, retention: Number(event.target.value) || 3 })
+              }
+            />
+          </label>
+        </div>
+        {targetForm.kind === 's3' && (
+          <div className="row">
+            <label>
+              <span>Access Key ID(标识符,可存配置)</span>
+              <input
+                value={targetForm.accessKey}
+                spellCheck={false}
+                onChange={(event) => setTargetForm({ ...targetForm, accessKey: event.target.value })}
+              />
+            </label>
+            <label>
+              <span>Endpoint(留空则用 AWS)</span>
+              <input
+                value={targetForm.endpoint}
+                spellCheck={false}
+                placeholder="http://127.0.0.1:9000"
+                onChange={(event) => setTargetForm({ ...targetForm, endpoint: event.target.value })}
+              />
+            </label>
+            <label>
+              <span>Region</span>
+              <input
+                value={targetForm.region}
+                spellCheck={false}
+                placeholder="us-east-1"
+                onChange={(event) => setTargetForm({ ...targetForm, region: event.target.value })}
+              />
+            </label>
+          </div>
+        )}
+        <div className="row">
+          <label>
+            <span>
+              {targetForm.kind === 's3'
+                ? 'Secret Access Key(仅写入系统凭据库)'
+                : 'GitHub Token(仅写入系统凭据库)'}
+            </span>
+            <input
+              type="password"
+              value={targetForm.credential}
+              autoComplete="off"
+              onChange={(event) => setTargetForm({ ...targetForm, credential: event.target.value })}
+            />
+          </label>
+          <label className="cloud-confirm">
+            <input
+              type="checkbox"
+              checked={targetForm.privateConfirmed}
+              onChange={(event) =>
+                setTargetForm({ ...targetForm, privateConfirmed: event.target.checked })
+              }
+            />
+            <span>我确认该目标是私有仓库 / 私有 bucket(§17.2 必需)</span>
+          </label>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() =>
+              void run(async () => {
+                await api.saveCloudBackupTarget({
+                  id: targetForm.id.trim(),
+                  kind: targetForm.kind,
+                  location: targetForm.location.trim(),
+                  prefix: targetForm.prefix.trim() || null,
+                  retention: targetForm.retention,
+                  privateConfirmed: targetForm.privateConfirmed,
+                  credential: targetForm.credential.trim() || null,
+                  accessKey: targetForm.accessKey.trim() || null,
+                  endpoint: targetForm.endpoint.trim() || null,
+                  region: targetForm.region.trim() || null,
+                });
+                setTargetForm({ ...EMPTY_TARGET });
+              }, '目标已保存。')
+            }
+          >
+            保存目标
+          </button>
+        </div>
+
+        <div className="row">
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() =>
+              void run(async () => {
+                setCloudRun(null);
+                setAcknowledged(false);
+                setCloudResult(
+                  await api.backupToCloud({
+                    // An empty selection means "every enabled target", which is what an automatic backup
+                    // does; a non-empty one is section 17.8's temporary subset.
+                    targetIds: selectedTargets.length > 0 ? selectedTargets : null,
+                    acknowledgedFindings: acknowledged,
+                  }),
+                );
+              }, '备份已完成。')
+            }
+          >
+            备份并上传到云端
+          </button>
+          <label className="cloud-confirm">
+            <input
+              type="checkbox"
+              checked={acknowledged}
+              onChange={(event) => setAcknowledged(event.target.checked)}
+            />
+            <span>我已查看 Secret 扫描结果,仍要上传本次备份(§17.3)</span>
+          </label>
+        </div>
+        <p className="muted hint">
+          {selectedTargets.length > 0
+            ? `本次只上传勾选的 ${selectedTargets.length} 个目标(§17.8)。`
+            : '未勾选任何目标:本次会上传全部已启用目标。'}
+        </p>
+
+        {cloudResult?.blocked_by_finding && (
+          <div className="secret-block" role="alert">
+            <p>{cloudResult.blocked_reason}</p>
+            <p className="muted">
+              确认后可以重新执行“备份并上传到云端”,或对下面已有的备份使用“重发到云端”。
+            </p>
+          </div>
+        )}
+
+        {cloudResult?.run && <CloudRunReport run={cloudResult.run} />}
+        {cloudRun && <CloudRunReport run={cloudRun} />}
+      </section>
+
       <section>
-        <h3>历史备份({archives.length})</h3>
-        {archives.length === 0 && <p className="muted">还没有备份。</p>}
+        <h3>历史备份({archives.length})</h3>        {archives.length === 0 && <p className="muted">还没有备份。</p>}
         <ul className="archive-list">
           {archives.map((archive) => (
             <li key={archive.path}>
@@ -222,6 +548,25 @@ export default function BackupPanel({ enabled }: { enabled: boolean }) {
                 disabled={busy}
               >
                 暂存恢复
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  void run(async () => {
+                    // Section 17.7's retry path: an archive that already exists is re-sent rather than
+                    // taken again, so a target that was unreachable does not cost a second backup.
+                    setCloudResult(null);
+                    setCloudRun(
+                      await api.resendBackupToCloud({
+                        archivePath: archive.path,
+                        targetIds: selectedTargets.length > 0 ? selectedTargets : null,
+                      }),
+                    );
+                  }, '已重新发送到云端目标。')
+                }
+                disabled={busy || cloudTargets.length === 0}
+              >
+                重发到云端
               </button>
             </li>
           ))}

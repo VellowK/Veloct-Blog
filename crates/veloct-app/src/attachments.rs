@@ -670,28 +670,11 @@ impl AttachmentService {
 
 /// A best-effort MIME type from the file extension.
 ///
-/// Deliberately small and honest: it covers what a personal site actually attaches, and an unknown extension
-/// is `None` rather than a guess, because a wrong `Content-Type` is worse than a missing one.
+/// A DELEGATION to `veloct_attach::content_type_for`, which is where the canonical map lives now: the S3
+/// adapter needs the same answer when it sets an object's `Content-Type`, and two maps would be two
+/// chances to disagree. The name and the signature are unchanged, so every caller here is unaffected.
 pub fn mime_type_for(file_name: &str) -> Option<String> {
-    let extension = file_name.rsplit_once('.').map(|(_, ext)| ext.to_ascii_lowercase())?;
-    let mime = match extension.as_str() {
-        "png" => "image/png",
-        "jpg" | "jpeg" => "image/jpeg",
-        "gif" => "image/gif",
-        "webp" => "image/webp",
-        "avif" => "image/avif",
-        "svg" => "image/svg+xml",
-        "ico" => "image/x-icon",
-        "pdf" => "application/pdf",
-        "txt" | "md" => "text/plain",
-        "json" => "application/json",
-        "mp4" => "video/mp4",
-        "webm" => "video/webm",
-        "mp3" => "audio/mpeg",
-        "zip" => "application/zip",
-        _ => return None,
-    };
-    Some(mime.to_string())
+    veloct_attach::content_type_for(file_name)
 }
 
 /// Every attachment id in the state file, for a caller that wants them without the views.
@@ -1303,23 +1286,32 @@ mod tests {
 
     #[test]
     fn an_upload_through_a_target_with_no_adapter_reports_what_to_do() {
-        // S3, Lsky Pro and SFTP have no adapter in this build. The failure is a `NOT_CONFIGURED` carrying the
-        // reason, not a mysterious protocol error.
+        // Lsky Pro has no adapter in this build. The failure is a `NOT_CONFIGURED` carrying the reason, not
+        // a mysterious protocol error.
+        //
+        // This test used S3 as its example until §13.11's adapter landed. S3 now behaves like GitHub: a
+        // target that cannot be BUILT (no credential) returns an error from `target_from_config` rather
+        // than a target whose store reports at upload time, and `an_s3_target_without_its_secret_...` in
+        // `veloct-attach` asserts that. Lsky Pro is the kind that genuinely has no adapter.
         let dir = project();
         let source = write_file(dir.path(), "photo.png", b"BYTES");
         let mut service = AttachmentService::open(dir.path()).unwrap();
         let (view, _) = service
-            .add_file(&source, "s3", "default", NOW, &[1, 2, 3, 4, 5, 6])
+            .add_file(&source, "lsky", "default", NOW, &[1, 2, 3, 4, 5, 6])
             .unwrap();
 
         let client = std::sync::Arc::new(veloct_core::http::FakeHttpClient::new())
             as std::sync::Arc<dyn veloct_core::http::HttpClient>;
-        let config = veloct_attach::StorageConfig::new("s3", "my bucket", veloct_attach::StorageKind::S3);
+        let config = veloct_attach::StorageConfig::new("lsky", "my album", veloct_attach::StorageKind::LskyPro);
         let target = veloct_attach::target_from_config(config, None, client).unwrap();
 
         let error = service.upload(&view.id, &target, NOW).unwrap_err();
         assert_eq!(error.code(), "NOT_CONFIGURED");
-        assert!(error.hint().unwrap_or_default().contains("S3"), "{error} / {:?}", error.hint());
+        assert!(
+            error.hint().unwrap_or_default().contains("Lsky"),
+            "{error} / {:?}",
+            error.hint()
+        );
         assert!(
             !target.capabilities().verified,
             "the capabilities say so before a caller tries"

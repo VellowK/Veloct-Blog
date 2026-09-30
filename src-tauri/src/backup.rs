@@ -18,7 +18,6 @@ use veloct_app::{
 };
 
 use crate::state::AppState;
-
 /// A staged restore, held in memory until the user confirms.
 ///
 /// Kept as its own struct rather than a path so the confirmation cannot be forged: the staging directory is
@@ -345,6 +344,35 @@ pub fn run_auto_backup_if_due(
         serde_json::to_vec_pretty(&record).unwrap_or_default().as_slice(),
     )?;
 
+    // Section 17.7's cloud half. Section 17.3 is what orders these two steps: the local archive is
+    // already written, and a finding BLOCKS the automatic upload rather than failing the backup. A user
+    // who wants to send an archive the scan flagged does it deliberately through `backup_to_cloud`, which
+    // takes an explicit acknowledgement.
+    let targets = if outcome.needs_acknowledgement {
+        Vec::new()
+    } else {
+        match cloud_run(
+            &project,
+            &outcome,
+            None,
+            veloct_backup::BackupTrigger::Automatic,
+        ) {
+            Ok(run) => run.targets,
+            Err(error) => {
+                // The upload failing must not lose the local archive that is already on disk, so the
+                // failure is logged and reported as "no target stored it" rather than raised.
+                let _ = project.log(
+                    veloct_logging::LogEvent::warning(
+                        veloct_logging::Category::Backup,
+                        "automatic backup could not reach the cloud targets",
+                    )
+                    .with_field("error", error.to_string()),
+                );
+                Vec::new()
+            }
+        }
+    };
+
     let _ = project.log(
         veloct_logging::LogEvent::info(veloct_logging::Category::Backup, "automatic backup written")
             .with_field("archive", &outcome.archive_path)
@@ -358,9 +386,7 @@ pub fn run_auto_backup_if_due(
     Ok(Some(veloct_app::AutoBackupOutcome {
         archive_path: outcome.archive_path,
         archive_sha256: outcome.archive_sha256,
-        // Section 17.7's cloud targets are not wired yet, and reporting an empty list is honest: the LOCAL
-        // archive exists and no cloud copy was attempted.
-        targets: Vec::new(),
+        targets,
         needs_acknowledgement: outcome.needs_acknowledgement,
     }))
 }
@@ -371,6 +397,336 @@ fn seconds_now() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_secs())
         .unwrap_or(0)
+}
+
+/// A cloud backup target as the window saves it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SaveCloudBackupTargetRequest {
+    pub id: String,
+    /// `github` or `s3` (`handoff.md` §17.4).
+    pub kind: String,
+    /// GitHub: `owner/repo`. S3: the bucket.
+    pub location: String,
+    #[serde(default)]
+    pub prefix: Option<String>,
+    #[serde(default)]
+    pub retention: Option<usize>,
+    /// The user's confirmation that the target is private (§17.2). Required before a run will use it.
+    #[serde(default)]
+    pub private_confirmed: bool,
+    #[serde(default)]
+    pub enabled: Option<bool>,
+    /// The credential VALUE, written to the OS store. Never persisted in SQLite (§12.2).
+    #[serde(default)]
+    pub credential: Option<String>,
+    #[serde(default)]
+    pub endpoint: Option<String>,
+    #[serde(default)]
+    pub region: Option<String>,
+    /// S3: the access key ID. An IDENTIFIER rather than a secret — the SECRET access key goes to the OS
+    /// store with `credential` (see `CloudTarget::access_key` for why the two are treated differently).
+    #[serde(default)]
+    pub access_key: Option<String>,
+}
+
+/// The configured cloud backup targets (§17.4).
+#[tauri::command]
+pub fn cloud_backup_targets(
+    state: State<'_, AppState>,
+) -> Result<Vec<veloct_app::CloudBackupTargetView>, CommandError> {
+    let project = state.project()?;
+    let clock = veloct_core::SystemClock;
+    let targets = veloct_app::read_targets(project.root.as_path(), &clock)?;
+    Ok(targets
+        .iter()
+        .map(|target| {
+            let has = target
+                .credential_ref
+                .as_deref()
+                .map(|handle| crate::credentials::get_or_none(handle).is_some())
+                .unwrap_or(false);
+            veloct_app::CloudBackupTargetView::of(target, has)
+        })
+        .collect())
+}
+
+/// Add or update a cloud backup target.
+#[tauri::command]
+pub fn save_cloud_backup_target(
+    state: State<'_, AppState>,
+    request: SaveCloudBackupTargetRequest,
+) -> Result<(), CommandError> {
+    let project = state.project()?;
+    let clock = veloct_core::SystemClock;
+    let kind = veloct_app::parse_cloud_kind(&request.kind)?;
+
+    // The handle comes from ONE function, so the string written here and the string read at run time
+    // cannot drift apart and silently orphan every saved credential.
+    let handle = veloct_app::credential_handle(&request.id);
+    if let Some(secret) = request.credential.filter(|value| !value.trim().is_empty()) {
+        crate::credentials::set(&handle, secret.trim())?;
+    }
+
+    let mut target = veloct_backup::CloudTarget::new(&request.id, kind, &request.location);
+    target.prefix = request.prefix.filter(|value| !value.trim().is_empty());
+    target.private_confirmed = request.private_confirmed;
+    target.enabled = request.enabled.unwrap_or(true);
+    target.endpoint = request.endpoint.filter(|value| !value.trim().is_empty());
+    target.region = request.region.filter(|value| !value.trim().is_empty());
+    target.access_key = request.access_key.filter(|value| !value.trim().is_empty());
+    // A retention of zero would delete the archive the run just uploaded, so the documented default
+    // stands rather than being honoured.
+    target.retention = request
+        .retention
+        .filter(|retention| *retention > 0)
+        .unwrap_or(veloct_backup::DEFAULT_RETENTION);
+    // Every supported kind needs a credential, so the handle is recorded; whether a VALUE exists yet is
+    // what the window reports separately.
+    target.credential_ref = Some(handle);
+
+    veloct_app::save_target(project.root.as_path(), &target, &clock)?;
+
+    let _ = project.log(
+        veloct_logging::LogEvent::info(veloct_logging::Category::Backup, "cloud backup target saved")
+            .with_field("target_id", &request.id)
+            .with_field("kind", kind.as_str())
+            .with_field(
+                "implemented",
+                veloct_backup::is_implemented(kind).to_string(),
+            ),
+    );
+    Ok(())
+}
+
+/// Remove a cloud backup target and its stored credential.
+///
+/// The `backups` rows for it are KEPT: they are the record of what was already sent there, which is
+/// exactly what a user needs when deciding whether the remote copies can be deleted.
+#[tauri::command]
+pub fn delete_cloud_backup_target(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<(), CommandError> {
+    let project = state.project()?;
+    let clock = veloct_core::SystemClock;
+    if !veloct_app::delete_target(project.root.as_path(), &id, &clock)? {
+        return Err(crate::commands::command_invalid(format!(
+            "there is no cloud backup target {id}"
+        )));
+    }
+    let _ = crate::credentials::remove(&veloct_app::credential_handle(&id));
+    Ok(())
+}
+
+/// Prove a cloud target is reachable, and that it satisfies §17.2.
+///
+/// A public GitHub repository is reachable and still not a usable backup target, so reachability alone
+/// would be a misleading success.
+#[tauri::command]
+pub fn test_cloud_backup_target(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<String, CommandError> {
+    let project = state.project()?;
+    let clock = veloct_core::SystemClock;
+    let targets = veloct_app::read_targets(project.root.as_path(), &clock)?;
+    let target = targets
+        .iter()
+        .find(|target| target.id == id)
+        .cloned()
+        .ok_or_else(|| {
+            crate::commands::command_invalid(format!("there is no cloud backup target {id}"))
+        })?;
+
+    let client = std::sync::Arc::new(veloct_core::http::ReqwestHttpClient::with_default_timeout(
+        std::time::Duration::from_secs(60),
+    )?);
+    let lookup = |handle: &str| crate::credentials::get_or_none(handle);
+    // The clock is injected down to the S3 adapter, whose signature is a function of its timestamp.
+    let handle = veloct_app::handles_for(&[target], &lookup, client, std::sync::Arc::new(clock))
+        .into_iter()
+        .next()
+        .ok_or_else(|| crate::commands::command_invalid("the target could not be built"))?;
+
+    let said = handle.adapter.test_connection()?;
+    let _ = project.log(
+        veloct_logging::LogEvent::info(veloct_logging::Category::Backup, "cloud backup target tested")
+            .with_field("target_id", &id)
+            .with_field("result", &said),
+    );
+    Ok(said)
+}
+
+/// What a cloud backup produced, alongside the local archive that made it possible.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CloudBackupResultView {
+    /// The local archive, which exists whether or not any upload happened (§17.3).
+    pub backup: BackupOutcomeView,
+    /// The per-target outcome, absent when a finding blocked the upload.
+    pub run: Option<veloct_app::CloudBackupRunView>,
+    /// Whether a secret finding blocked the upload (§17.3).
+    pub blocked_by_finding: bool,
+    /// Why it was blocked, in the user's terms.
+    pub blocked_reason: Option<String>,
+}
+
+/// Take a backup AND send it to the configured cloud targets (§17.7, §17.8, §17.9).
+///
+/// Two things this deliberately does differently from [`manual_backup`]:
+///
+/// * **The local archive is taken first and is never lost.** §17.3's ordering is the contract's, not an
+///   implementation detail: a finding, or an upload failure, must not cost the user their backup.
+/// * **A finding requires an acknowledgement to upload.** `acknowledged_findings` is the user saying they
+///   have seen the finding and still want this archive sent; without it the upload is skipped and the
+///   reason is returned. That is §17.3's "the user must confirm before the risky upload", and it is why
+///   this is a separate command from [`manual_backup`] rather than a flag on it.
+#[tauri::command]
+pub fn backup_to_cloud(
+    state: State<'_, AppState>,
+    target_ids: Option<Vec<String>>,
+    acknowledged_findings: bool,
+) -> Result<CloudBackupResultView, CommandError> {
+    let project = state.project()?;
+    let clock = veloct_core::SystemClock;
+    let backup = veloct_app::manual_backup(project.root.as_path(), &clock)?;
+
+    if backup.needs_acknowledgement && !acknowledged_findings {
+        let reason = format!(
+            "secret scan 在本次备份中发现 {} 处疑似凭据,自动上传已被阻止(handoff.md §17.3)。\
+             本地备份已写入;确认后可以再上传。",
+            backup.secret_findings.len()
+        );
+        let _ = project.log(
+            veloct_logging::LogEvent::warning(
+                veloct_logging::Category::Backup,
+                "cloud upload blocked by a secret finding",
+            )
+            .with_field("archive", &backup.archive_path)
+            .with_field("findings", backup.secret_findings.len().to_string()),
+        );
+        return Ok(CloudBackupResultView {
+            backup,
+            run: None,
+            blocked_by_finding: true,
+            blocked_reason: Some(reason),
+        });
+    }
+
+    let subset = target_ids.filter(|ids| !ids.is_empty());
+    let run = cloud_run(&project, &backup, subset, veloct_backup::BackupTrigger::Manual)?;
+
+    let _ = project.log(
+        veloct_logging::LogEvent::info(veloct_logging::Category::Backup, "cloud backup finished")
+            .with_field("archive", &backup.archive_path)
+            .with_field("summary", &run.summary),
+    );
+
+    Ok(CloudBackupResultView {
+        backup,
+        run: Some(run),
+        blocked_by_finding: false,
+        blocked_reason: None,
+    })
+}
+
+/// Send an archive that already exists to the selected cloud targets (§17.7).
+///
+/// This is the retry path: §17.7 gives every target its own copy, so a target that failed — or that was
+/// not reachable at the time — is re-sent without taking and storing a SECOND local archive of the same
+/// project state.
+#[tauri::command]
+pub fn resend_backup_to_cloud(
+    state: State<'_, AppState>,
+    archive_path: String,
+    target_ids: Option<Vec<String>>,
+) -> Result<veloct_app::CloudBackupRunView, CommandError> {
+    let project = state.project()?;
+    let path = std::path::PathBuf::from(&archive_path);
+    if !path.is_file() {
+        return Err(crate::commands::command_invalid(format!(
+            "{archive_path} is not a file"
+        )));
+    }
+
+    // The identity comes from the archive's OWN manifest where the manifest carries it, and from the
+    // bytes on disk where it does not. `archive_sha256` is not stored in the manifest — it is the digest
+    // of the finished archive, which only exists after the manifest was written — so it is recomputed the
+    // same way `write_archive` computed it, which yields the same value for unchanged bytes and is
+    // therefore the identity the original upload already used.
+    let manifest = veloct_app::read_manifest(&path)?;
+    let bytes = std::fs::read(&path).map_err(|error| veloct_core::VeloctError::io(&path, error))?;
+    let backup = BackupOutcomeView {
+        archive_path: path.to_string_lossy().to_string(),
+        archive_bytes: bytes.len() as u64,
+        archive_sha256: veloct_core::sha256_hex(&bytes),
+        file_count: manifest.files.len(),
+        total_bytes: manifest.files.iter().map(|entry| entry.size_bytes).sum(),
+        skipped: Vec::new(),
+        secret_findings: veloct_app::describe_scan(&manifest.secret_scan),
+        needs_acknowledgement: manifest.needs_acknowledgement(),
+        history_note: veloct_app::history_note(&manifest.secret_scan),
+        created_at: manifest.created_at.clone(),
+    };
+
+    let subset = target_ids.filter(|ids| !ids.is_empty());
+    let run = cloud_run(&project, &backup, subset, veloct_backup::BackupTrigger::Manual)?;
+    let _ = project.log(
+        veloct_logging::LogEvent::info(veloct_logging::Category::Backup, "backup re-sent to cloud")
+            .with_field("archive", &archive_path)
+            .with_field("summary", &run.summary),
+    );
+    Ok(run)
+}
+
+/// Run the configured targets for an archive that already exists.
+///
+/// Shared by the automatic rule, the manual command and the re-send command, so §17.7's independence and
+/// the credential lookup cannot differ between the three paths.
+fn cloud_run(
+    project: &std::sync::Arc<crate::state::OpenProject>,
+    backup: &BackupOutcomeView,
+    target_ids: Option<Vec<String>>,
+    trigger: veloct_backup::BackupTrigger,
+) -> Result<veloct_app::CloudBackupRunView, CommandError> {
+    let clock = veloct_core::SystemClock;
+    let selection = match target_ids {
+        Some(ids) if !ids.is_empty() => veloct_backup::TargetSelection::Subset(ids),
+        _ => veloct_backup::TargetSelection::AllEnabled,
+    };
+
+    // The timeout is generous because an archive can be tens of megabytes and the Contents API takes it
+    // base64-encoded inside a JSON body, which is a slow request on a domestic connection.
+    let client = std::sync::Arc::new(veloct_core::http::ReqwestHttpClient::with_default_timeout(
+        std::time::Duration::from_secs(300),
+    )?);
+    let lookup = |handle: &str| crate::credentials::get_or_none(handle);
+
+    let path = std::path::PathBuf::from(&backup.archive_path);
+    let scan_status = if backup.secret_findings.is_empty() {
+        "clean"
+    } else {
+        "findings"
+    };
+
+    let run = veloct_app::run_against_targets(
+        project.root.as_path(),
+        veloct_app::ArchiveRef {
+            path: &path,
+            sha256: &backup.archive_sha256,
+            bytes: backup.archive_bytes,
+            created_at: &backup.created_at,
+            trigger,
+        },
+        &selection,
+        &lookup,
+        client,
+        veloct_app::ScanNote {
+            status: scan_status,
+            hits: backup.secret_findings.len(),
+        },
+        std::sync::Arc::new(clock),
+    )?;
+    Ok(run)
 }
 
 /// Parse a restore mode.

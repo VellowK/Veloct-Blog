@@ -164,10 +164,18 @@ impl IdleDecision {
 pub const DEFAULT_CLOUD_RETENTION: usize = 3;
 
 /// One target's result in an automatic run (`handoff.md` §17.7).
+///
+/// Three outcomes, not two. `veloct_backup::TargetStatus` already distinguishes a target that FAILED from
+/// one that was deliberately not attempted — it was not selected, it is disabled, or it was refused for
+/// not being private — and flattening the two here would report a target with nothing to retry as though
+/// it had tried and broken, or a target refused for a fixable reason as though it had succeeded.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TargetUploadOutcome {
     pub target_id: String,
     pub succeeded: bool,
+    /// Whether the target was deliberately not attempted, with the reason in `error`.
+    #[serde(default)]
+    pub skipped: bool,
     /// Why not, when it did not succeed.
     pub error: Option<String>,
     /// How many archives this target now holds after its retention was applied.
@@ -179,6 +187,7 @@ impl TargetUploadOutcome {
         Self {
             target_id: target_id.into(),
             succeeded: true,
+            skipped: false,
             error: None,
             kept,
         }
@@ -188,10 +197,74 @@ impl TargetUploadOutcome {
         Self {
             target_id: target_id.into(),
             succeeded: false,
+            skipped: false,
             error: Some(error.into()),
             kept: 0,
         }
     }
+
+    /// A target that was not attempted, and why.
+    pub fn skipped(target_id: impl Into<String>, reason: impl Into<String>) -> Self {
+        Self {
+            target_id: target_id.into(),
+            succeeded: false,
+            skipped: true,
+            error: Some(reason.into()),
+            kept: 0,
+        }
+    }
+}
+
+/// One target's result in the shape the window shows.
+///
+/// `veloct_backup::run_targets` is the orchestration that decides it — §17.7's independence, the
+/// per-target retention pass and the refusal of a target that is not private all live there. This only
+/// translates its result, so there is no second copy of the rule.
+pub fn target_upload_outcome(result: &veloct_backup::TargetResult) -> TargetUploadOutcome {
+    use veloct_backup::TargetStatus;
+    match result.status {
+        TargetStatus::Succeeded => TargetUploadOutcome::ok(&result.target_id, result.kept),
+        TargetStatus::Failed => TargetUploadOutcome::failed(
+            &result.target_id,
+            result
+                .error
+                .clone()
+                .unwrap_or_else(|| "the target failed without reporting a reason".to_string()),
+        ),
+        TargetStatus::Skipped | TargetStatus::Pending => TargetUploadOutcome::skipped(
+            &result.target_id,
+            result
+                .error
+                .clone()
+                .unwrap_or_else(|| "the target was not attempted".to_string()),
+        ),
+    }
+}
+
+/// Upload a finished archive to the selected cloud targets (`handoff.md` §17.7, §17.8).
+///
+/// The caller supplies the archive it has ALREADY written, together with the identity it recorded for it.
+/// That ordering is the contract's: §17.3's scan and the local archive come first, and an upload is the
+/// step that a finding blocks.
+pub fn upload_to_targets(
+    handles: &[veloct_backup::TargetHandle],
+    selection: &veloct_backup::TargetSelection,
+    archive: &std::path::Path,
+    archive_sha256: &str,
+    archive_bytes: u64,
+    created_at: &str,
+    trigger: veloct_backup::BackupTrigger,
+) -> Vec<TargetUploadOutcome> {
+    let run = veloct_backup::run_targets(
+        handles,
+        selection,
+        archive,
+        archive_sha256,
+        archive_bytes,
+        created_at,
+        trigger,
+    );
+    run.targets.iter().map(target_upload_outcome).collect()
 }
 
 /// A whole automatic run's outcome.
@@ -218,17 +291,39 @@ impl AutoBackupOutcome {
     }
 
     /// The targets that failed, whose copies are independent of the successful ones.
+    ///
+    /// A target that was deliberately not attempted is NOT here: it has nothing to retry, and
+    /// [`Self::skipped`] is where a user finds it.
     pub fn failed(&self) -> Vec<&str> {
         self.targets
             .iter()
-            .filter(|target| !target.succeeded)
+            .filter(|target| !target.succeeded && !target.skipped)
             .map(|target| target.target_id.as_str())
             .collect()
     }
 
-    /// Whether EVERY target failed. Not the same as "the backup failed": the local archive exists.
+    /// The targets that were deliberately not attempted, and the reasons.
+    pub fn skipped(&self) -> Vec<&TargetUploadOutcome> {
+        self.targets.iter().filter(|target| target.skipped).collect()
+    }
+
+    /// Whether EVERY target that was attempted failed. Not the same as "the backup failed": the local
+    /// archive exists. A run where everything was skipped is also not "all failed" — nothing was tried.
     pub fn all_targets_failed(&self) -> bool {
-        !self.targets.is_empty() && self.targets.iter().all(|target| !target.succeeded)
+        !self.targets.is_empty()
+            && self
+                .targets
+                .iter()
+                .all(|target| !target.succeeded && !target.skipped)
+            && self.targets.iter().any(|target| !target.skipped)
+    }
+
+    /// Whether no target stored this backup, whether because they failed or because none was attempted.
+    ///
+    /// The question a caller asks before telling a user their project is off-machine. §17.7 keeps the
+    /// LOCAL archive either way, so this is never "the backup failed".
+    pub fn nothing_stored(&self) -> bool {
+        !self.targets.is_empty() && self.succeeded().is_empty()
     }
 
     /// A summary in the shape §17.7 illustrates.
@@ -241,11 +336,14 @@ impl AutoBackupOutcome {
             .targets
             .iter()
             .map(|target| {
-                format!(
-                    "{} {}",
-                    target.target_id,
-                    if target.succeeded { "✅" } else { "❌" }
-                )
+                let mark = if target.succeeded {
+                    "✅"
+                } else if target.skipped {
+                    "⏭"
+                } else {
+                    "❌"
+                };
+                format!("{} {mark}", target.target_id)
             })
             .collect();
         format!("{local} · {}", lines.join(" · "))

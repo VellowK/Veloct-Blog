@@ -323,6 +323,14 @@ export default function AttachmentPanel({
             <li key={target.id}>
               <span className="name">{target.name}</span>
               <span className="muted">{target.kind}</span>
+              {target.kind === 's3' && (
+                // Section 13.11's S3 fields, so a user can see WHICH bucket and key a target points at.
+                // The access key ID is an identifier; the SECRET key is never shown, only whether it exists.
+                <>
+                  {target.repository && <span className="muted">{target.repository}</span>}
+                  {target.access_key && <span className="muted">ID {target.access_key}</span>}
+                </>
+              )}
               {!target.implemented && (
                 // A target with no adapter says so BEFORE an upload is attempted, and says what to use instead.
                 <span className="warn" title={target.unimplemented_reason ?? ''}>

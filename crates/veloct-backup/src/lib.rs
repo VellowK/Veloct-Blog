@@ -19,7 +19,9 @@
 #![forbid(unsafe_code)]
 
 pub mod archive;
+pub mod github;
 pub mod restore;
+pub mod s3;
 pub mod secrets;
 pub mod selection;
 pub mod targets;
@@ -38,8 +40,13 @@ pub use secrets::{
     ScanSurface,
 };
 pub use selection::{absolute, select, BackupSelection, SkippedPath, EXCLUSIONS};
+pub use github::{
+    archive_created_at, is_backup_name, GitHubBackupTarget, BACKUP_NAME_PREFIX, BACKUP_NAME_SUFFIX,
+};
+pub use s3::{s3_config, S3BackupTarget};
 pub use targets::{
-    by_id, prune, remote_name, run_targets, AutoBackupTimer, BackupRun, BackupTargetAdapter,
-    CloudTarget, CloudTargetKind, MemoryTarget, TargetHandle, TargetResult, TargetSelection,
-    TargetStatus, DEFAULT_RETENTION, IDLE_BEFORE_AUTOMATIC_BACKUP,
+    adapter_from_target, by_id, is_implemented, prune, prune_detailed, remote_name, run_targets,
+    unimplemented_reason, AutoBackupTimer, BackupRun, BackupTargetAdapter, CloudTarget,
+    CloudTargetKind, MemoryTarget, PruneOutcome, ReportingTarget, TargetHandle, TargetResult,
+    TargetSelection, TargetStatus, DEFAULT_RETENTION, IDLE_BEFORE_AUTOMATIC_BACKUP,
 };
