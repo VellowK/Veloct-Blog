@@ -1,0 +1,15 @@
+[package]
+name = "veloct-github"
+description = "The GitHub Contents API, as one client shared by attachment storage (13.13) and cloud backup (17.4)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+veloct-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

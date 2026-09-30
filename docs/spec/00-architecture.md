@@ -49,6 +49,8 @@ crates/
   veloct-deploy      logical deployment targets: cloudflare / edgeone-cn / edgeone-intl / 1panel
   veloct-ai          providers, feature→(provider,model) mapping, global fallback, SSE streaming
   veloct-attach      cache pool, 3-axis state, reference set, dedup, storage adapters
+  veloct-github      the GitHub Contents API (shared by section 13.13 and section 17.4)
+  veloct-s3          S3 / S3-compatible over SigV4 (shared by section 13.11 and section 17.4)
   veloct-backup      consistent snapshot, secret scan, archive, cloud targets, restore
   veloct-app         orchestration: services, DTOs, Tauri command handlers
 src-tauri/           thin Tauri 2 shell (windows, capabilities, command registry)
@@ -252,5 +254,86 @@ emitted straight into `dist/`, those two paths collided and the work body **over
 page**, destroying the very page that provides the sandboxed embed. Setting `outDir` to `dist/site`
 and telling the build integration the absolute `dist` root removes the collision, and a check in
 `scripts/verify-build.mjs` asserts the two roots stay separate.
+
+## ADR-0015 — The GitHub Contents API is one crate, shared by two unrelated contracts
+
+`handoff.md` names GitHub twice, for two products that share nothing but a protocol:
+
+| Clause | What GitHub is there | What matters |
+|---|---|---|
+| §13.13 | an **attachment storage target** | mutable public files, dedup, a public URL prefix |
+| §17.4 | a **cloud backup target** | a PRIVATE repository, listing, retention (§17.6) |
+
+Decision: the protocol lives once, in **`crates/veloct-github`** (`GitHubContents`). It owns the
+contents URL, the `Authorization`/`Accept`/`X-GitHub-Api-Version`/`User-Agent` headers, the base64
+body, the two-step delete, the directory listing, and the `private` flag. It owns **no policy**: a key
+format, a listing's meaning and whether a public URL is derived at all stay with the dependent.
+
+Reasons, in the order they mattered:
+
+- **A second copy of a protocol is a second chance for it to be wrong.** This project removed a
+  duplicate §17.5 idle rule one round earlier for exactly this reason.
+- The extraction is PROVEN faithful by what did not change: `veloct-attach`'s 184 tests, including the
+  ones that assert exact URLs and request bodies, passed untouched because `GitHubStore` now delegates
+  and the moved names are re-exported.
+- The dependency is a leaf and points in one direction: `veloct-attach` and `veloct-backup` both depend
+  on `veloct-github`, which depends only on `veloct-core`. Neither storage crate depends on the other.
+
+Consequences:
+
+- `CONTENTS_API_MAX_BYTES` (100 MB) is stated where the protocol is, because the failure it prevents is
+  an out-of-memory crash rather than a clean HTTP error — the body is the object base64-encoded inside
+  JSON. `veloct-backup` refuses above it, with no request, and says a large project needs a target that
+  streams.
+- Errors from this crate are feature-neutral (`VeloctError::Other`). Each dependent adds its own
+  classification at its own boundary, because a shared client cannot name one contract's error kind
+  without mislabelling the other's.
+- `put_on_branch` / `delete_on_branch` exist because the two dependents know the branch differently:
+  §13.13's target has a user-configured one, while §17.4's has none — asking a user to name a branch for
+  a backup repository would be inventing configuration, so the repository's own default is used.
+
+## ADR-0016 — S3/S3-compatible is one pure-Rust client; OpenSSL stays excluded (**implemented**)
+
+`handoff.md` names S3 twice — §13.11 as an **attachment storage target** and §17.4 as a **cloud backup
+target** — and "S3-compatible" is the operative word: MinIO, Cloudflare R2 and Backblaze B2 all speak this
+API at a user-supplied endpoint. As with GitHub in ADR-0015, the protocol lives **once**, in
+**`crates/veloct-s3`**, and the two dependents own their own policy.
+
+Decision, taken before the code and unchanged by writing it:
+
+- The signature is **RustCrypto `hmac` + the existing `sha2`**, and requests go through the existing
+  `veloct_core::http` seam. **No `openssl-sys`, no vendor SDK.** The root `Cargo.toml` excludes git2's
+  `https`/`ssh` features for exactly this reason (they pull OpenSSL onto Windows/MSVC), and a
+  general-purpose S3 SDK can drag in the same stack. XML for the `LIST` response is `quick-xml`, also
+  pure Rust. Both are new dependencies and both are justified against that standing reason.
+- The payload hash is **computed**, not the `UNSIGNED-PAYLOAD` literal. The literal is only valid over
+  TLS, and a self-hosted MinIO is usually plain `http://`. The file is streamed
+  (`HttpBody::File`) and hashed in a first bounded-chunk pass, so memory does not scale with the archive.
+
+What the code settled that the decision could not:
+
+- **The addressing style is derived from the configuration.** No endpoint → `S3Config::aws`, virtual
+  hosted (`bucket.s3.<region>.amazonaws.com`). A user-supplied endpoint → path style (`host/bucket/key`),
+  because that is what a self-hosted service expects and getting it wrong is a signature failure rather
+  than a 404 a user could read. An endpoint may carry a base path, and that path is signed because S3
+  signs the path it is given.
+- **The access key ID is configuration; only the SECRET key is a credential.** §12.2 lists "S3 Secret"
+  among the values that may never enter SQLite or a config file. The access key ID authenticates nothing
+  alone — AWS prints it in the console and it travels in every request's `Credential=` field — so it is a
+  column/field, and the secret goes to the OS store behind `credential_ref`. Recorded here because the
+  distinction is the kind of thing that gets copied wrongly in either direction.
+- **The timestamp is injected.** A SigV4 signature is a function of its timestamp, so `Arc<dyn Clock>`
+  reaches both adapters and a test pins the instant to reproduce a published vector (ADR-0002).
+
+**Verification.** The tests are AWS's OWN published examples, which the documentation offers "as a test
+suite to verify your code" — GET Object, PUT Object, GET Bucket Lifecycle and List Objects, whose
+canonical request, `StringToSign` and final signature are all published
+(<https://docs.aws.amazon.com/AmazonS3/latest/developerguide/sig-v4-header-based-auth.html>). All four
+reproduce exactly, in `veloct-s3::sigv4`, along with the URI-encoding rules, the scope binding and the
+signing-key derivation. Nothing here has been run against a live bucket, and the matrix says so.
+
+Status: **implemented** for both §17.4 (backup) and §13.11 (attachment storage);
+`unimplemented_reason` now answers `None` for S3 in both crates, which is asserted rather than assumed.
+
 
 

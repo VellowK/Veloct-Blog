@@ -888,6 +888,7 @@ checksum = "9ed9a281f7bc9b7576e61468ba615a66a5c8cfdff42420a70aa82701a3b1e292"
 dependencies = [
  "block-buffer 0.10.4",
  "crypto-common 0.1.7",
+ "subtle",
 ]
 
 [[package]]
@@ -1712,7 +1713,16 @@ version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4aaa26c720c68b866f2c96ef5c1264b3e6f473fe5d4ce61cd44bbe913e553018"
 dependencies = [
- "hmac",
+ "hmac 0.13.0",
+]
+
+[[package]]
+name = "hmac"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6c49c37c09c17a53d937dfbb742eb3a961d65a994e6bcdcf37e7399d0cc8ab5e"
+dependencies = [
+ "digest 0.10.7",
 ]
 
 [[package]]
@@ -3005,7 +3015,7 @@ checksum = "2896bade328c13f7042a297ea5ac5b0951f6cf989dea5f32c2fd98da398195cb"
 dependencies = [
  "base64 0.23.1",
  "indexmap 2.14.2",
- "quick-xml",
+ "quick-xml 0.42.0",
  "serde",
  "time",
 ]
@@ -3174,6 +3184,15 @@ name = "pulldown-cmark-escape"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "007d8adb5ddab6f8e3f491ac63566a7d5002cc7ed73901f72057943fa71ae1ae"
+
+[[package]]
+name = "quick-xml"
+version = "0.38.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b66c2058c55a409d601666cffe35f04333cf1013010882cec174a7467cd4e21c"
+dependencies = [
+ "memchr",
+]
 
 [[package]]
 name = "quick-xml"
@@ -5158,6 +5177,8 @@ dependencies = [
  "thiserror 2.0.21",
  "time",
  "veloct-core",
+ "veloct-github",
+ "veloct-s3",
  "veloct-storage",
  "walkdir",
 ]
@@ -5177,6 +5198,8 @@ dependencies = [
  "time",
  "veloct-core",
  "veloct-git",
+ "veloct-github",
+ "veloct-s3",
  "veloct-storage",
  "walkdir",
  "zip",
@@ -5285,6 +5308,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "veloct-github"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tempfile",
+ "veloct-core",
+]
+
+[[package]]
 name = "veloct-logging"
 version = "0.1.0"
 dependencies = [
@@ -5341,6 +5374,19 @@ dependencies = [
  "veloct-markdown",
  "veloct-storage",
  "walkdir",
+]
+
+[[package]]
+name = "veloct-s3"
+version = "0.1.0"
+dependencies = [
+ "hmac 0.12.1",
+ "quick-xml 0.38.4",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "veloct-core",
 ]
 
 [[package]]

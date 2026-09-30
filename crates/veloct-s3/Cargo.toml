@@ -1,0 +1,21 @@
+[package]
+name = "veloct-s3"
+description = "S3 / S3-compatible over AWS Signature Version 4, as one client shared by attachment storage (13.11) and cloud backup (17.4)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+veloct-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+# RustCrypto, pure Rust. ADR-0016 records the decision: no vendor SDK and no `openssl-sys`, because the
+# workspace deliberately excludes OpenSSL on Windows/MSVC (see the root Cargo.toml).
+hmac = "0.12"
+sha2 = { workspace = true }
+# XML, for the S3 LIST response. Pure Rust, no C dependency.
+quick-xml = "0.38"
+
+[dev-dependencies]
+tempfile = { workspace = true }

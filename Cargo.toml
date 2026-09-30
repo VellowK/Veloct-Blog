@@ -13,6 +13,8 @@ members = [
   "crates/veloct-deploy",
   "crates/veloct-ai",
   "crates/veloct-attach",
+  "crates/veloct-github",
+  "crates/veloct-s3",
   "crates/veloct-backup",
   "crates/veloct-app",
   "src-tauri",
@@ -40,6 +42,8 @@ veloct-sidecar = { path = "crates/veloct-sidecar" }
 veloct-deploy = { path = "crates/veloct-deploy" }
 veloct-ai = { path = "crates/veloct-ai" }
 veloct-attach = { path = "crates/veloct-attach" }
+veloct-github = { path = "crates/veloct-github" }
+veloct-s3 = { path = "crates/veloct-s3" }
 veloct-backup = { path = "crates/veloct-backup" }
 veloct-app = { path = "crates/veloct-app" }
 

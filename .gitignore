@@ -38,6 +38,17 @@ desktop.ini
 # Scratch commit-message files written while composing a commit.
 /commit-msg*.txt
 
+# --- a live credential a human pasted into the working directory ---
+# `Git.md` holds a real GitHub personal access token and a repository URL. It is a note to the operator, not
+# source, and it was NOT ignored until now: `git add -A` would have written a working token into this
+# repository's history, where deleting the file afterwards does not remove it. Nothing in Veloct reads this
+# file — credentials live in the OS store by handle (`handoff.md` §12), and the live smoke test reads its
+# token from the environment (`VELOCT_LIVE_GITHUB_TOKEN`). Ignore it, and ignore the same class of note by
+# shape so the next one is safe without anyone remembering this rule.
+/Git.md
+/*token*.md
+/*secret*.md
+
 # --- temporary experiment left over from diagnosing Cargo registry access ---
 /.cargo/
 dist-ui/
