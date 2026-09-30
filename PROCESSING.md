@@ -25,7 +25,7 @@ round found a rule in the same position (§5.10.1: a validation arm whose only r
 
 | Fact | Value |
 |---|---|
-| Last commit | `2496604 Make the section 13 storage targets configurable, and expose section 13.8's cleanup` |
+| Last commit these numbers describe | `2496604 Make the section 13 storage targets configurable, and expose section 13.8's cleanup` — **every commit after it changes documentation only**, so it is still the last commit that touches code |
 | Working tree | **CLEAN** — the §13 round and the storage-kind follow-up are committed as `2496604`; the only commit after it carries this recording (§1.1) |
 | Rust tests | **1324 passed, 0 failed, 5 ignored** (+29 over `bf75265`'s 1295; 17 workspace crates + `src-tauri`) |
 | Frontend tests | **71 passed** (vitest: 24 `frontmatter` + 47 `storageTargetForm`) |
