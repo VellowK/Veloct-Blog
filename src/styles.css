@@ -1390,3 +1390,68 @@ button.primary {
 .attachment-panel .ok {
   color: var(--accent-400);
 }
+
+.attachment-panel .missing {
+  color: var(--danger-400);
+}
+
+/* The storage-target form (handoff.md sections 13.1, 13.11, 13.13; PROCESSING.md section 5.5). */
+.storage-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.attachment-panel h4 {
+  margin: 10px 0 4px;
+  font-size: 13px;
+  color: var(--ink-300);
+}
+
+/* A control's guidance is part of its label, so it is read together with it. */
+.attachment-panel label > .field-hint {
+  font-size: 11px;
+  color: var(--ink-400);
+}
+
+/* Why a kind has no adapter in this build (sections 13.10 and 13.12), and what a kind switch did not keep. */
+.kind-notice {
+  margin: 0;
+  font-size: 12px;
+}
+
+.kind-notice.warn {
+  color: var(--accent-400);
+}
+
+.kind-notice.info {
+  color: var(--ink-400);
+}
+
+/* Section 13.2.2's reason, next to the control it explains. */
+.eligibility-reason {
+  font-size: 11px;
+  color: var(--ink-400);
+}
+
+/* Deleting a target also removes its credential, so it is an explicit step in the panel rather than a
+   dialog a stray keypress could dismiss. */
+.target-confirm {
+  flex-basis: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 8px;
+  border: 1px solid var(--danger-400);
+  border-radius: 6px;
+}
+
+.target-confirm p {
+  margin: 0;
+  font-size: 12px;
+}
+
+.attachment-panel .danger {
+  border-color: var(--danger-400);
+  color: var(--danger-400);
+}

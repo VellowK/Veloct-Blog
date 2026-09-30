@@ -117,6 +117,17 @@ pub struct UploadEligibility {
     pub reason: Option<String>,
 }
 
+/// What an explicit remote cleanup produced (`handoff.md` §13.8).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct RemoteDeleteView {
+    /// The attachment after the cleanup: no longer remote, and uploadable again.
+    pub attachment: AttachmentView,
+    /// The target the object was ACTUALLY on, read from its record rather than from the caller's claim.
+    pub storage_target_id: String,
+    pub key: String,
+    pub public_url: String,
+}
+
 /// One recorded remote object.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ObjectView {
@@ -124,6 +135,13 @@ pub struct ObjectView {
     pub key: String,
     pub url: String,
     pub bytes: u64,
+    /// The target the object is ACTUALLY on.
+    ///
+    /// Exposed because an upload may name a target other than the one the attachment was added for, and a
+    /// remote cleanup refuses to delete an object from a target the caller only believes holds it. A caller
+    /// that wants to tidy an object finds the right target here rather than guessing from the attachment's
+    /// own `storage_target_id`.
+    pub storage_target_id: String,
 }
 
 /// What an add produced.
@@ -370,6 +388,40 @@ impl AttachmentService {
         })
     }
 
+    /// Remove ONE remote object from the target that actually holds it (`handoff.md` §13.8).
+    ///
+    /// `remove` deletes the record and the cached bytes and deliberately leaves the remote file alone; this
+    /// is the OTHER half — the explicit request a user makes when they want a remote object tidied. Every
+    /// refusal (no recorded object, a target other than the one holding it, a kind that cannot delete) comes
+    /// from the transaction, before the adapter is reached, so a refused call removes nothing.
+    ///
+    /// The cached bytes and the reference records are left ALONE: §13.8 removes the remote object, not the
+    /// user's record of the file.
+    pub fn delete_remote_object(
+        &mut self,
+        id: &str,
+        target: &veloct_attach::StorageTarget,
+    ) -> Result<RemoteDeleteView> {
+        let attachment_id = AttachmentId::new(id);
+        let outcome = self.transaction.delete_remote_object(&attachment_id, target)?;
+        // Durable BEFORE the caller sees it: a crash between the remote delete and the state write would
+        // otherwise leave the record claiming an object that no longer exists.
+        self.save()?;
+
+        let attachment = self
+            .transaction
+            .pool()
+            .get(&attachment_id)
+            .cloned()
+            .ok_or_else(|| VeloctError::Invalid(format!("no attachment {id}")))?;
+        Ok(RemoteDeleteView {
+            attachment: AttachmentView::of(&attachment, self.transaction.references()),
+            storage_target_id: outcome.storage_target_id.as_str().to_string(),
+            key: outcome.key,
+            public_url: outcome.public_url,
+        })
+    }
+
     /// Whether an attachment may be uploaded, and why not when it may not.
     ///
     /// Exposed rather than left to the state machine inside the transaction, so a UI can disable the button
@@ -405,6 +457,7 @@ impl AttachmentService {
                 key: record.key.clone(),
                 url: record.public_url.clone(),
                 bytes: record.size_bytes,
+                storage_target_id: record.storage_target_id.as_str().to_string(),
             })
             .collect()
     }
@@ -1153,20 +1206,42 @@ mod tests {
     // ---------------------------------------------------------------------------------------------
 
     /// A local directory target rooted in the fixture, with a public URL prefix so the URL is derivable.
+    ///
+    /// Its kind is `Local`: a directory on this machine is not an SSH server, which is the confusion the
+    /// dedicated kind ends.
     fn local_target(dir: &Path) -> veloct_attach::StorageTarget {
-        let mut config =
-            veloct_attach::StorageConfig::new("local", "on this machine", veloct_attach::StorageKind::Sftp);
-        config.key_prefix = Some("uploads".to_string());
-        config.public_url_prefix = "https://example.com/files/".to_string();
-        veloct_attach::local_target(config, &dir.join("remote-root"))
+        veloct_attach::local_target(local_config(), &dir.join("remote-root"))
     }
 
     fn local_config() -> veloct_attach::StorageConfig {
-        let mut config =
-            veloct_attach::StorageConfig::new("local", "on this machine", veloct_attach::StorageKind::Sftp);
+        let mut config = veloct_attach::StorageConfig::new(
+            "local",
+            "on this machine",
+            veloct_attach::StorageKind::Local,
+        );
         config.key_prefix = Some("uploads".to_string());
         config.public_url_prefix = "https://example.com/files/".to_string();
         config
+    }
+
+    /// A local target over the project's OWN upload directory, built the way the shell builds it.
+    fn project_local_target(dir: &Path, target_id: &str) -> veloct_attach::StorageTarget {
+        let mut config = veloct_attach::StorageConfig::new(
+            target_id,
+            "on this machine",
+            veloct_attach::StorageKind::Local,
+        );
+        config.key_prefix = Some("uploads".to_string());
+        config.public_url_prefix = "https://example.com/files/".to_string();
+        veloct_attach::local_target(config, &veloct_attach::local_root(dir, target_id))
+    }
+
+    /// A target whose protocol has no adapter, so its `capabilities().can_delete_remotely` is false.
+    fn unsupported_target(kind: veloct_attach::StorageKind, id: &str) -> veloct_attach::StorageTarget {
+        let client = std::sync::Arc::new(veloct_core::http::FakeHttpClient::new())
+            as std::sync::Arc<dyn veloct_core::http::HttpClient>;
+        let config = veloct_attach::StorageConfig::new(id, "no adapter", kind);
+        veloct_attach::target_from_config(config, None, client, None).unwrap()
     }
 
     #[test]
@@ -1303,7 +1378,7 @@ mod tests {
         let client = std::sync::Arc::new(veloct_core::http::FakeHttpClient::new())
             as std::sync::Arc<dyn veloct_core::http::HttpClient>;
         let config = veloct_attach::StorageConfig::new("lsky", "my album", veloct_attach::StorageKind::LskyPro);
-        let target = veloct_attach::target_from_config(config, None, client).unwrap();
+        let target = veloct_attach::target_from_config(config, None, client, None).unwrap();
 
         let error = service.upload(&view.id, &target, NOW).unwrap_err();
         assert_eq!(error.code(), "NOT_CONFIGURED");
@@ -1351,6 +1426,7 @@ mod tests {
             config,
             Some("token".to_string()),
             client as std::sync::Arc<dyn veloct_core::http::HttpClient>,
+            None,
         )
         .unwrap();
 
@@ -1363,7 +1439,9 @@ mod tests {
             "{}",
             upload.remote_url
         );
-        assert!(service.objects().iter().any(|object| object.url == upload.remote_url));
+        assert!(service.objects().iter().any(|object| object.url == upload.remote_url
+            && object.storage_target_id == "github"),
+            "the object records the target it is actually on, so a cleanup can name it");
     }
 
     #[test]
@@ -1408,5 +1486,144 @@ mod tests {
         let target = veloct_attach::local_target(local_config(), &root);
         let upload = service.upload(&view.id, &target, NOW).unwrap();
         assert!(root.join(&upload.remote_key).is_file());
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Section 13.8's EXPLICIT remote cleanup. `remove` leaves the remote file alone; this is the other half.
+    // ---------------------------------------------------------------------------------------------
+
+    #[test]
+    fn an_explicit_remote_delete_removes_the_real_file_under_the_projects_upload_directory() {
+        // PROCESSING.md section 2.4's lesson: assert the BYTES, not a size a fake recorded. The local target
+        // is the only one that writes real bytes, so this is where the whole path is proven.
+        let dir = project();
+        let source = write_file(dir.path(), "photo.png", b"BYTES");
+        let mut service = AttachmentService::open(dir.path()).unwrap();
+        let (view, _) = service
+            .add_file(&source, "local", "default", NOW, &[1, 2, 3, 4, 5, 6])
+            .unwrap();
+        // A citation exists, so the test can show that the cleanup leaves the user's records alone.
+        service.record_reference(&view.id, "article-a", None).unwrap();
+
+        let target = project_local_target(dir.path(), "local");
+        let upload = service.upload(&view.id, &target, NOW).unwrap();
+        let remote = veloct_attach::local_root(dir.path(), "local").join(&upload.remote_key);
+        assert_eq!(
+            std::fs::read(&remote).unwrap(),
+            b"BYTES",
+            "{} exists with the uploaded bytes",
+            remote.display()
+        );
+
+        let deleted = service.delete_remote_object(&view.id, &target).unwrap();
+
+        assert!(!remote.exists(), "{} is gone", remote.display());
+        assert_eq!(deleted.storage_target_id, "local");
+        assert_eq!(deleted.key, upload.remote_key);
+        assert_eq!(deleted.public_url, upload.remote_url);
+
+        // The attachment no longer claims to be remote, and the Markdown falls back to the cache path.
+        assert!(deleted.attachment.remote_url.is_none());
+        assert!(deleted.attachment.remote_key.is_none());
+        assert_eq!(deleted.attachment.upload_status, "PENDING");
+        let markdown = service.markdown_for(&view.id).unwrap();
+        assert!(markdown.contains(CACHE_DIR), "{markdown}");
+
+        // The object record is gone; the cached bytes and the reference records are NOT.
+        assert!(service.objects().is_empty(), "no object is recorded any more");
+        assert!(
+            dir.path().join(CACHE_DIR).join(&view.cache_path).is_file(),
+            "the cached bytes are the user's own file and are left alone"
+        );
+        assert_eq!(
+            service.get(&view.id).unwrap().reference_count,
+            1,
+            "the reference records are left alone: section 13.8 removes the remote object, not the record"
+        );
+    }
+
+    #[test]
+    fn a_remote_delete_that_names_a_different_target_removes_nothing() {
+        // The record's own target decides which file may be deleted. A caller's belief about where the
+        // object is must never be what removes it.
+        let dir = project();
+        let source = write_file(dir.path(), "photo.png", b"BYTES");
+        let mut service = AttachmentService::open(dir.path()).unwrap();
+        let (view, _) = service
+            .add_file(&source, "local-a", "default", NOW, &[1, 2, 3, 4, 5, 6])
+            .unwrap();
+
+        let actual = project_local_target(dir.path(), "local-a");
+        let upload = service.upload(&view.id, &actual, NOW).unwrap();
+        let remote = veloct_attach::local_root(dir.path(), "local-a").join(&upload.remote_key);
+        assert!(remote.is_file());
+
+        // A second, genuinely different target with its own directory.
+        let other = project_local_target(dir.path(), "local-b");
+        let error = service
+            .delete_remote_object(&view.id, &other)
+            .unwrap_err();
+        assert!(error.to_string().contains("local-a"), "{error}");
+
+        assert!(remote.is_file(), "the object on the real target still exists");
+        assert_eq!(service.objects().len(), 1, "and its record is still there");
+        assert!(service.get(&view.id).unwrap().remote_url.is_some());
+    }
+
+    #[test]
+    fn a_target_that_cannot_delete_remotely_refuses_the_cleanup_with_its_reason() {
+        // ADR-0010: a cleanup that removed nothing must not be reported as one that removed something.
+        let dir = project();
+        let source = write_file(dir.path(), "photo.png", b"BYTES");
+        let mut service = AttachmentService::open(dir.path()).unwrap();
+        let (view, _) = service
+            .add_file(&source, "local", "default", NOW, &[1, 2, 3, 4, 5, 6])
+            .unwrap();
+        let actual = project_local_target(dir.path(), "local");
+        let upload = service.upload(&view.id, &actual, NOW).unwrap();
+        let remote = veloct_attach::local_root(dir.path(), "local").join(&upload.remote_key);
+
+        // Section 13.10's SFTP kind has no adapter in this build, so it cannot delete either.
+        let sftp = unsupported_target(veloct_attach::StorageKind::Sftp, "server");
+        let error = service.delete_remote_object(&view.id, &sftp).unwrap_err();
+        assert_eq!(error.code(), "NOT_CONFIGURED");
+        assert!(
+            error.hint().unwrap_or_default().contains("SSH"),
+            "{error} / {:?}",
+            error.hint()
+        );
+
+        assert!(remote.is_file(), "nothing was removed");
+        assert_eq!(service.objects().len(), 1);
+    }
+
+    #[test]
+    fn a_deleted_attachment_can_be_uploaded_again_end_to_end() {
+        // A deleted object must not leave the attachment permanently stuck: section 13.2.2 forbids repeating
+        // a SUCCEEDED upload, and after the cleanup nothing is remote, so the upload is allowed again.
+        let dir = project();
+        let source = write_file(dir.path(), "photo.png", b"BYTES");
+        let mut service = AttachmentService::open(dir.path()).unwrap();
+        let (view, _) = service
+            .add_file(&source, "local", "default", NOW, &[1, 2, 3, 4, 5, 6])
+            .unwrap();
+        let target = project_local_target(dir.path(), "local");
+        let first = service.upload(&view.id, &target, NOW).unwrap();
+        let root = veloct_attach::local_root(dir.path(), "local");
+        assert!(root.join(&first.remote_key).is_file());
+
+        service.delete_remote_object(&view.id, &target).unwrap();
+
+        let eligibility = service.upload_eligibility(&view.id).unwrap();
+        assert!(eligibility.can_upload, "{:?}", eligibility.reason);
+        assert_eq!(eligibility.upload_status, "PENDING");
+
+        let second = service.upload(&view.id, &target, NOW).unwrap();
+        // Section 13.7: the same content reuses the same remote name, so the re-upload cannot orphan the URL
+        // an article may already cite.
+        assert_eq!(second.remote_key, first.remote_key);
+        assert_eq!(std::fs::read(root.join(&second.remote_key)).unwrap(), b"BYTES");
+        assert_eq!(service.objects().len(), 1, "exactly one object again");
+        assert_eq!(service.get(&view.id).unwrap().remote_url.as_deref(), Some(second.remote_url.as_str()));
     }
 }

@@ -54,6 +54,6 @@ pub use storage::{
     StorageAdapter, StorageCapabilities, StorageConfig, StorageKind, StorageTarget,
 };
 pub use transaction::{
-    AddRequest, ApplyOutcome, ApplyRequest, AttachmentTransaction, TransactionResult,
-    UploadOutcome,
+    AddRequest, ApplyOutcome, ApplyRequest, AttachmentTransaction, RemoteDeleteOutcome,
+    TransactionResult, UploadOutcome,
 };

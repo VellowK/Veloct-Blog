@@ -23,7 +23,7 @@ pub mod project;
 
 pub use attachments::{
     attachment_ids, mime_type_for, AddOutcome, AttachmentService, AttachmentView, ObjectView,
-    UploadEligibility, UploadView, MAX_ATTACHMENT_BYTES,
+    RemoteDeleteView, UploadEligibility, UploadView, MAX_ATTACHMENT_BYTES,
 };
 pub use backup::{
     apply_restore, backup, backup_directory, describe_scan, export_to, history_note, list_archives,

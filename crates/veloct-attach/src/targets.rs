@@ -11,14 +11,17 @@
 //!
 //! * **GitHub (§13.13) is implemented**, over the documented Contents API. It is the target whose protocol is
 //!   small enough to get right without a new dependency, and §13.13 asks for it by name.
+//! * **S3 (§13.11) is implemented**, over `veloct-s3`'s SigV4 client (ADR-0016).
 //! * **SFTP (§13.10) is NOT implemented.** The workspace deliberately has no `ssh` feature because it pulls
 //!   OpenSSL onto Windows/MSVC (see the root `Cargo.toml`), so SFTP needs a dependency decision that is not a
 //!   storage adapter's to make. [`UnsupportedStore`] reports that in the user's terms.
-//! * **S3 (§13.11) and Lsky Pro (§13.12) are NOT implemented**: S3 needs SigV4 signing and Lsky Pro needs its
-//!   own upload-token protocol, and both are reported rather than attempted.
-//! * **A local directory IS supported**, through the crate's own `LocalFileStore`. It needs no credential and
-//!   no network, so it is both genuinely useful (§13.10's "server storage" where the server is this machine)
-//!   and the target an upload can be tested END TO END against.
+//! * **Lsky Pro (§13.12) is NOT implemented**: it needs its own upload-token protocol, and it is reported
+//!   rather than attempted.
+//! * **A local directory IS supported**, as its own [`StorageKind::Local`] — NOT as SFTP. It needs no
+//!   credential and no network, so it is both genuinely useful (§13.10's "server storage" where the server is
+//!   this machine) and the target an upload can be tested END TO END against. It used to be reached only by
+//!   an SFTP target that had no host and no credential, which meant an SFTP configuration silently became a
+//!   local one; the shell no longer does that and the two kinds are distinct.
 
 use std::path::{Path, PathBuf};
 
@@ -206,7 +209,16 @@ impl StorageAdapter for UnsupportedStore {
     }
 
     fn delete_remote(&self, _key: &str) -> Result<()> {
-        Ok(())
+        // A silent `Ok` here would report a successful remote cleanup that removed NOTHING, which is
+        // exactly the false success ADR-0010 forbids and the failure §13.8's explicit command exists to
+        // avoid. The refusal carries the same §13.10/§13.12 gap as `put`, so both layers say the same
+        // thing. `capabilities().can_delete_remotely` is false for this store, and a caller is expected
+        // to have asked first.
+        Err(VeloctError::not_configured(
+            format!("the {} target {}", self.config.kind.as_str(), self.config.name),
+            unimplemented_reason(self.config.kind)
+                .unwrap_or("this target kind has no adapter in this build"),
+        ))
     }
 }
 
@@ -215,10 +227,16 @@ impl StorageAdapter for UnsupportedStore {
 /// The credential arrives separately and is never read from the configuration, because §12.2 keeps credentials
 /// out of it. A kind with no adapter yields a target whose adapter REPORTS that, so the failure happens at the
 /// upload with a message the user can act on rather than at construction with one they cannot.
+///
+/// `project_root` is the directory a LOCAL target writes inside (`local_root`). It is passed rather than
+/// assumed because a local target's bytes belong to the project — guessing the working directory here would
+/// scatter uploads wherever the process happened to start. A caller that has no project root gets an explicit
+/// refusal for a `Local` target rather than a directory it did not mean.
 pub fn target_from_config(
     config: StorageConfig,
     credential: Option<String>,
     client: std::sync::Arc<dyn HttpClient>,
+    project_root: Option<&Path>,
 ) -> Result<StorageTarget> {
     let adapter: Box<dyn StorageAdapter> = match config.kind {
         StorageKind::GitHub => {
@@ -265,9 +283,25 @@ pub fn target_from_config(
             )?)
         }
         // §13.10's SFTP needs SSH and §13.12's Lsky needs its own protocol. Both report rather than
-        // guess, and ADR-0010 forbids replacing that with a plausible-looking request.
+        // guess, and ADR-0010 forbids replacing that with a plausible-looking request. An SFTP target
+        // with no host and no credential lands HERE and says so, rather than being quietly rewritten
+        // into a local directory.
         StorageKind::Sftp | StorageKind::LskyPro => {
             Box::new(UnsupportedStore::new(config.clone()))
+        }
+        StorageKind::Local => {
+            // §13.10's "server storage" where the server is this machine. No credential and no network,
+            // so it is also the target the whole upload-and-delete path is proven against.
+            let project_root = project_root.ok_or_else(|| VeloctError::NotConfigured {
+                what: format!("the local target {}", config.name),
+                hint: Some(
+                    "a local directory target writes inside the project (.veloct/uploads/<target id>), \
+                     so the project root has to be known when the target is built"
+                        .to_string(),
+                ),
+            })?;
+            let root = local_root(project_root, config.id.as_str());
+            Box::new(LocalFileStore::new(config.clone(), root))
         }
     };
 
@@ -295,14 +329,25 @@ pub fn local_root(project_root: &Path, target_id: &str) -> PathBuf {
 }
 
 /// Whether a kind's adapter is implemented in this build.
+///
+/// DERIVED from [`unimplemented_reason`], which is the single source of the rule: a kind is implemented exactly
+/// when it has no gap reason to report. That function's `match` is exhaustive, so a kind added to
+/// [`StorageKind`] has to be answered there before the crate compiles — and answering it there is answering it
+/// here too, because there is no second split to remember. Do NOT reintroduce one: a `matches!` list here, or
+/// any other restatement of which kinds work, is exactly how a kind ends up reported as implemented while also
+/// carrying a §5.3/§5.4 gap reason.
 pub fn is_implemented(kind: StorageKind) -> bool {
-    matches!(kind, StorageKind::GitHub | StorageKind::S3)
+    unimplemented_reason(kind).is_none()
 }
 
 /// Why a kind has no adapter, in the user's terms.
+///
+/// The explicit `match` stays, because the REASON's text is the part a user acts on: §5.3/§5.4's gaps have to
+/// say what to use instead, and a derived reason could not say it. This is the one place the
+/// implemented/unimplemented split is written down; [`is_implemented`] reads it rather than repeating it.
 pub fn unimplemented_reason(kind: StorageKind) -> Option<&'static str> {
     match kind {
-        StorageKind::GitHub | StorageKind::S3 => None,
+        StorageKind::GitHub | StorageKind::S3 | StorageKind::Local => None,
         StorageKind::Sftp => Some(
             "SFTP 需要 SSH 实现,本构建出于依赖原因没有引入;请改用 GitHub、S3 或服务器目录目标。",
         ),
@@ -537,6 +582,7 @@ mod tests {
             github_config(None, None, None),
             Some("t".to_string()),
             std::sync::Arc::clone(&client),
+            None,
         )
         .err()
         .expect("a repository is required");
@@ -546,6 +592,7 @@ mod tests {
             github_config(Some("vellow/assets"), None, None),
             None,
             std::sync::Arc::clone(&client),
+            None,
         )
         .err()
         .expect("a token is required");
@@ -574,7 +621,7 @@ mod tests {
             };
             let client = std::sync::Arc::new(FakeHttpClient::new()) as std::sync::Arc<dyn HttpClient>;
             let target =
-                target_from_config(config, None, std::sync::Arc::clone(&client)).unwrap();
+                target_from_config(config, None, std::sync::Arc::clone(&client), None).unwrap();
             let error = target.store("a.png", b"x").unwrap_err();
             assert!(
                 matches!(error, VeloctError::NotConfigured { .. }),
@@ -587,6 +634,83 @@ mod tests {
         assert!(unimplemented_reason(StorageKind::GitHub).is_none());
         assert!(is_implemented(StorageKind::S3));
         assert!(unimplemented_reason(StorageKind::S3).is_none());
+        // The local directory is implemented TOO, and by its own kind rather than by degrading SFTP.
+        assert!(is_implemented(StorageKind::Local));
+        assert!(unimplemented_reason(StorageKind::Local).is_none());
+    }
+
+    #[test]
+    fn an_unconfigured_sftp_target_reports_the_gap_rather_than_becoming_a_local_directory() {
+        // This is the defect the two kinds exist to end: a `sftp` target with no host and no credential
+        // used to be handed a LOCAL directory adapter by the shell, so it uploaded successfully to the
+        // machine it was running on and reported a remote URL that no server serves.
+        let config = StorageConfig::new("server", "my server", StorageKind::Sftp);
+        let client = std::sync::Arc::new(FakeHttpClient::new()) as std::sync::Arc<dyn HttpClient>;
+        let target = target_from_config(config, None, std::sync::Arc::clone(&client), None).unwrap();
+
+        assert_eq!(target.config().kind, StorageKind::Sftp);
+        assert!(!target.capabilities().verified, "the gap is visible before a caller tries");
+        assert!(
+            !target.capabilities().can_delete_remotely,
+            "and nothing can be deleted there either"
+        );
+        let error = target.store("a.png", b"x").unwrap_err();
+        assert_eq!(error.code(), "NOT_CONFIGURED");
+        // The §13.10 gap, in the user's terms, rather than a directory that silently accepted the bytes.
+        assert!(error.hint().unwrap_or_default().contains("SSH"), "{:?}", error.hint());
+    }
+
+    #[test]
+    fn an_unsupported_target_refuses_a_remote_delete_rather_than_reporting_a_silent_success() {
+        // ADR-0010: a delete that removed nothing must not look like one that removed something.
+        let config = StorageConfig::new("server", "my server", StorageKind::Sftp);
+        let target = UnsupportedStore::new(config);
+        let error = target.delete_remote("uploads/a.png").unwrap_err();
+        assert_eq!(error.code(), "NOT_CONFIGURED");
+        assert!(
+            !target.capabilities().can_delete_remotely,
+            "and the capability says so before a caller asks"
+        );
+    }
+
+    #[test]
+    fn a_local_kind_builds_a_target_inside_the_projects_own_upload_directory() {
+        // The `Local` arm of `target_from_config`, over the same root the shell derives.
+        let project = tempfile::TempDir::new().unwrap();
+        let mut config = StorageConfig::new("on-this-machine", "Local", StorageKind::Local);
+        config.key_prefix = Some("uploads".to_string());
+        config.public_url_prefix = "https://example.com/files/".to_string();
+        let client = std::sync::Arc::new(FakeHttpClient::new()) as std::sync::Arc<dyn HttpClient>;
+        let target = target_from_config(
+            config,
+            None,
+            std::sync::Arc::clone(&client),
+            Some(project.path()),
+        )
+        .unwrap();
+
+        assert_eq!(target.namespace(), "local:uploads");
+        assert!(target.capabilities().verified);
+        let outcome = target.store("photo.png", b"BYTES").unwrap();
+        let written = local_root(project.path(), "on-this-machine").join(&outcome.object().key);
+        assert_eq!(std::fs::read(&written).unwrap(), b"BYTES", "{}", written.display());
+        assert!(outcome.object().public_url.starts_with("https://example.com/files/"));
+    }
+
+    #[test]
+    fn a_local_kind_without_a_project_root_is_refused_rather_than_guessing_a_directory() {
+        // The bytes belong to the project; guessing the process's working directory would scatter them.
+        let config = StorageConfig::new("on-this-machine", "Local", StorageKind::Local);
+        let client = std::sync::Arc::new(FakeHttpClient::new()) as std::sync::Arc<dyn HttpClient>;
+        let error = target_from_config(config, None, client, None)
+            .err()
+            .expect("a project root is required");
+        assert_eq!(error.code(), "NOT_CONFIGURED");
+        assert!(
+            error.hint().unwrap_or_default().contains("project root"),
+            "{:?}",
+            error.hint()
+        );
     }
 
     #[test]
@@ -600,7 +724,7 @@ mod tests {
         config.public_url_prefix = "https://cdn.example.com/".to_string();
 
         let client = std::sync::Arc::new(FakeHttpClient::new()) as std::sync::Arc<dyn HttpClient>;
-        let error = target_from_config(config.clone(), None, std::sync::Arc::clone(&client))
+        let error = target_from_config(config.clone(), None, std::sync::Arc::clone(&client), None)
             .err()
             .expect("a secret is required");
         assert!(matches!(error, VeloctError::NotConfigured { .. }), "{error}");
@@ -617,6 +741,7 @@ mod tests {
             bucketless,
             Some("wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY".to_string()),
             std::sync::Arc::clone(&client),
+            None,
         )
         .err()
         .expect("a bucket is required");
@@ -627,6 +752,7 @@ mod tests {
             config,
             Some("wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY".to_string()),
             client,
+            None,
         )
         .unwrap();
         let capabilities = target.capabilities();
@@ -639,9 +765,11 @@ mod tests {
     #[test]
     fn a_local_target_writes_a_real_file_and_serves_a_url() {
         // The one target that needs no credential and no network, so an upload can be tested end to end.
+        // Its kind is `Local`, not `Sftp`: this fixture used to label a directory on disk as an SSH server,
+        // which is the same confusion the two kinds now make impossible.
         let dir = tempfile::TempDir::new().unwrap();
         let config = StorageConfig {
-            kind: StorageKind::Sftp,
+            kind: StorageKind::Local,
             name: "on this machine".to_string(),
             key_prefix: Some("uploads".to_string()),
             public_url_prefix: "https://example.com/files/".to_string(),

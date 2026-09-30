@@ -198,6 +198,10 @@ pub fn sync_attachment_index(state: State<'_, AppState>) -> Result<usize, Comman
 }
 
 /// One configured storage target, as the window lists it.
+///
+/// Every field here is CONFIGURATION or a HANDLE (`handoff.md` §12.2). No field may ever carry a credential
+/// VALUE: the SECRET access key and every other secret live in the OS store behind `credential_ref`, and the
+/// window learns only whether one exists (`has_credential`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageTargetView {
     pub id: String,
@@ -211,6 +215,11 @@ pub struct StorageTargetView {
     pub public_url_prefix: String,
     pub repository: Option<String>,
     pub branch: Option<String>,
+    /// S3: Endpoint, Region and Bucket (`handoff.md` §13.11). Without these the form could not show what a
+    /// saved S3 target was saved WITH, so editing one would silently rewrite it to a different target.
+    pub endpoint: Option<String>,
+    pub region: Option<String>,
+    pub bucket: Option<String>,
     /// S3: the access key ID, which is an identifier rather than a secret (§13.11 names both keys).
     pub access_key: Option<String>,
     /// The HANDLE, never a value (§12).
@@ -231,6 +240,9 @@ impl StorageTargetView {
             public_url_prefix: config.public_url_prefix.clone(),
             repository: config.repository.clone(),
             branch: config.branch.clone(),
+            endpoint: config.endpoint.clone(),
+            region: config.region.clone(),
+            bucket: config.bucket.clone(),
             access_key: config.access_key.clone(),
             credential_ref: config.credential_ref.clone(),
             has_credential,
@@ -285,6 +297,45 @@ pub fn storage_targets(state: State<'_, AppState>) -> Result<Vec<StorageTargetVi
         .collect())
 }
 
+/// One storage kind's adapter status, as the window's kind list needs it (`handoff.md` §13.10–§13.13).
+///
+/// These are facts about the BUILD, not about a project, which is why they carry no target id and no
+/// credential handle: this is the answer a user needs before there is any target of that kind to look at.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StorageKindView {
+    /// The stored spelling — exactly `StorageKind::as_str`, which `parse` accepts back and which
+    /// `save_storage_target` takes as the `kind`.
+    pub kind: String,
+    /// Whether this build has an adapter for the kind (`veloct_attach::is_implemented`).
+    pub implemented: bool,
+    /// Why not, in the user's terms, when it does not (`veloct_attach::unimplemented_reason`).
+    /// PROCESSING.md §5.3/§5.4's declared gaps, verbatim — never softened here.
+    pub unimplemented_reason: Option<String>,
+}
+
+/// Every storage kind this build knows, with its adapter status.
+///
+/// Deliberately takes NO project state. Whether a KIND has an adapter is a fact about this build rather than
+/// about the project, so this answers on a project with zero targets — which is exactly when the window needs
+/// it, because a kind with no adapter cannot usefully be saved (an SFTP target needs a host, Lsky needs an
+/// instance), so `storage_targets` can never report §5.3/§5.4's gap for a user who has not already configured
+/// the very thing that does not work.
+///
+/// The kinds come from `StorageKind::ALL` and both answers come from the crate's own `is_implemented` /
+/// `unimplemented_reason`: a list or an answer restated here would be a second source of truth for
+/// §13.10–§13.13, and the window cannot tell which of two answers is wrong.
+#[tauri::command]
+pub fn storage_kinds() -> Vec<StorageKindView> {
+    veloct_attach::StorageKind::ALL
+        .iter()
+        .map(|kind| StorageKindView {
+            kind: kind.as_str().to_string(),
+            implemented: veloct_attach::is_implemented(*kind),
+            unimplemented_reason: veloct_attach::unimplemented_reason(*kind).map(str::to_string),
+        })
+        .collect()
+}
+
 /// Add or update a storage target.
 #[tauri::command]
 pub fn save_storage_target(
@@ -294,9 +345,16 @@ pub fn save_storage_target(
     let project = state.project()?;
     let kind = parse_storage_kind(&request.kind)?;
 
+    // A local directory target reads no credential, so a value submitted for one is NOT written to the OS
+    // store: storing a secret that nothing references is worse than ignoring an input the kind cannot use.
+    // Every other kind keeps the handle, whether or not a value arrives with this save (an omitted value
+    // means "leave the stored one alone").
+    let needs_credential = kind != veloct_attach::StorageKind::Local;
     let handle = crate::credentials::handle_for(&format!("storage:{}", request.id));
-    if let Some(secret) = request.credential.filter(|value| !value.trim().is_empty()) {
-        crate::credentials::set(&handle, secret.trim())?;
+    if needs_credential {
+        if let Some(secret) = request.credential.filter(|value| !value.trim().is_empty()) {
+            crate::credentials::set(&handle, secret.trim())?;
+        }
     }
 
     let mut config = veloct_attach::StorageConfig::new(&request.id, &request.name, kind);
@@ -312,12 +370,7 @@ pub fn save_storage_target(
     config.access_key = request.access_key.filter(|value| !value.trim().is_empty());
     // A kind that needs a credential gets the handle; the local directory kind does not, because a handle to
     // nothing would make the window report a missing credential for a target that needs none.
-    config.credential_ref = match kind {
-        veloct_attach::StorageKind::Sftp
-        | veloct_attach::StorageKind::S3
-        | veloct_attach::StorageKind::LskyPro
-        | veloct_attach::StorageKind::GitHub => Some(handle),
-    };
+    config.credential_ref = if needs_credential { Some(handle) } else { None };
 
     let mut list = read_storage_targets(project.root.as_path())?;
     match list.iter_mut().find(|existing| existing.id.as_str() == request.id) {
@@ -391,22 +444,13 @@ pub fn upload_attachment(
         .as_deref()
         .and_then(crate::credentials::get_or_none);
 
-    // A LOCAL target writes into the project's own `.veloct/uploads`, which is §13.10's server storage for a
-    // user whose server is this machine. It is also the one target that needs no network.
-    let target = match config.kind {
-        veloct_attach::StorageKind::Sftp if credential.is_none() && config.host.is_none() => {
-            veloct_attach::local_target(
-                config.clone(),
-                &veloct_attach::local_root(project.root.as_path(), config.id.as_str()),
-            )
-        }
-        _ => {
-            let client = veloct_core::http::ReqwestHttpClient::with_default_timeout(
-                std::time::Duration::from_secs(300),
-            )?;
-            veloct_attach::target_from_config(config.clone(), credential, std::sync::Arc::new(client))?
-        }
-    };
+    // A LOCAL target writes into the project's own `.veloct/uploads/<target id>`, which is §13.10's server
+    // storage for a user whose server is this machine.
+    //
+    // An SFTP target is NOT routed to a local directory, whatever it is configured with. Doing that used to
+    // make an unconfigured `sftp` target upload to the machine it was running on and report a URL no server
+    // serves; an SFTP target now reaches `UnsupportedStore`, which reports the §13.10 gap (PROCESSING.md §5.3).
+    let target = storage_target_for(&config, credential, project.root.as_path())?;
 
     let upload = project
         .attachments()
@@ -432,17 +476,79 @@ pub fn attachment_objects(
     Ok(objects)
 }
 
+/// Remove ONE remote object, on the target that actually holds it (`handoff.md` §13.8).
+///
+/// `remove_attachment` is the other half and deliberately leaves the remote file alone, so this is the only
+/// way a user can ask for a remote object to be tidied. The attachment, its cached bytes and its reference
+/// records stay: §13.8 removes the remote object, not the user's record of the file.
+///
+/// Refusals, all BEFORE anything is removed:
+///
+/// * a target whose `capabilities().can_delete_remotely` is false is refused with its own §13.10/§13.12 gap,
+///   rather than reporting a cleanup that removed nothing (ADR-0010);
+/// * a target other than the one the object's record names is refused, because the caller's belief about
+///   where the object is must not decide what is deleted;
+/// * an attachment with no recorded object has nothing to remove.
+#[tauri::command]
+pub fn delete_remote_object(
+    state: State<'_, AppState>,
+    id: String,
+    storage_target_id: String,
+) -> Result<veloct_app::RemoteDeleteView, CommandError> {
+    let project = state.project()?;
+
+    let list = read_storage_targets(project.root.as_path())?;
+    let config = list
+        .iter()
+        .find(|config| config.id.as_str() == storage_target_id)
+        .cloned()
+        .ok_or_else(|| {
+            command_invalid(format!(
+                "there is no storage target {storage_target_id}; configure one first"
+            ))
+        })?;
+
+    let credential = config
+        .credential_ref
+        .as_deref()
+        .and_then(crate::credentials::get_or_none);
+
+    // Built the same way an upload builds it, so the target a delete talks to is the target an upload
+    // wrote to.
+    let target = storage_target_for(&config, credential, project.root.as_path())?;
+
+    let deleted = {
+        let mut attachments = project.attachments();
+        attachments.delete_remote_object(&id, &target)?
+    };
+
+    let _ = project.log(
+        veloct_logging::LogEvent::warning(
+            veloct_logging::Category::Attachment,
+            "remote attachment object removed",
+        )
+        .with_field("id", &id)
+        .with_field("target_id", &deleted.storage_target_id)
+        .with_field("remote_key", &deleted.key),
+    );
+    Ok(deleted)
+}
+
 /// Parse a storage kind.
+///
+/// The crate owns the names (`StorageKind::parse`), so the window cannot accept a spelling the model does
+/// not; `server` is kept here because this command surface accepted it as the §13.10 spelling before the
+/// `local` kind existed, and it means the REMOTE server, not a directory on this machine.
 pub fn parse_storage_kind(text: &str) -> Result<veloct_attach::StorageKind, CommandError> {
-    match text.trim().to_ascii_lowercase().as_str() {
-        "sftp" | "server" | "local" => Ok(veloct_attach::StorageKind::Sftp),
-        "s3" => Ok(veloct_attach::StorageKind::S3),
-        "lsky" | "lskypro" => Ok(veloct_attach::StorageKind::LskyPro),
-        "github" => Ok(veloct_attach::StorageKind::GitHub),
-        other => Err(command_invalid(format!(
-            "unknown storage kind {other:?}; expected one of sftp, s3, lsky, github"
-        ))),
+    let normalized = text.trim().to_ascii_lowercase();
+    if normalized == "server" {
+        return Ok(veloct_attach::StorageKind::Sftp);
     }
+    veloct_attach::StorageKind::parse(&normalized).ok_or_else(|| {
+        command_invalid(format!(
+            "unknown storage kind {normalized:?}; expected one of sftp, local (dir/directory), s3, lsky, github"
+        ))
+    })
 }
 
 /// Where the storage targets are stored.
@@ -488,6 +594,40 @@ fn require_id(id: &str) -> Result<(), CommandError> {
         return Err(command_invalid("an attachment id is required"));
     }
     Ok(())
+}
+
+/// The storage target an upload or a remote cleanup talks to, built from a stored configuration.
+///
+/// Extracted from the two commands so the ROUTING is testable without a WebView: the defect it closes was a
+/// routing decision — an SFTP target with no host and no credential was handed a LOCAL directory adapter, so
+/// it "uploaded" to the machine it was running on — and a routing decision that nothing can exercise is how
+/// that survived. Both commands call this, so an upload and a delete can never disagree about which target
+/// they mean.
+fn storage_target_for(
+    config: &veloct_attach::StorageConfig,
+    credential: Option<String>,
+    project_root: &std::path::Path,
+) -> Result<veloct_attach::StorageTarget, CommandError> {
+    match config.kind {
+        // The one target with no protocol and no network: a directory inside the project, which
+        // `local_root` derives from the project root and the target id. It needs no credential, so none is
+        // read for it.
+        veloct_attach::StorageKind::Local => Ok(veloct_attach::local_target(
+            config.clone(),
+            &veloct_attach::local_root(project_root, config.id.as_str()),
+        )),
+        _ => {
+            let client = veloct_core::http::ReqwestHttpClient::with_default_timeout(
+                std::time::Duration::from_secs(300),
+            )?;
+            Ok(veloct_attach::target_from_config(
+                config.clone(),
+                credential,
+                std::sync::Arc::new(client),
+                Some(project_root),
+            )?)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -541,5 +681,289 @@ mod tests {
         };
         let json = serde_json::to_string(&view).unwrap();
         assert!(json.contains("needs_confirmation"), "{json}");
+    }
+
+    #[test]
+    fn the_window_parses_every_kind_including_the_local_directory() {
+        // The command surface must accept the kind names the model does, and `local` / `dir` / `directory`
+        // must reach the LOCAL kind rather than the SFTP one — that conflation is the bug this closes.
+        assert_eq!(
+            parse_storage_kind("local").unwrap(),
+            veloct_attach::StorageKind::Local
+        );
+        assert_eq!(
+            parse_storage_kind(" dir ").unwrap(),
+            veloct_attach::StorageKind::Local,
+            "a user naming a directory means the directory target"
+        );
+        assert_eq!(
+            parse_storage_kind("DIRECTORY").unwrap(),
+            veloct_attach::StorageKind::Local
+        );
+        assert_eq!(
+            parse_storage_kind("sftp").unwrap(),
+            veloct_attach::StorageKind::Sftp
+        );
+        // `server` was this surface's spelling for the §13.10 remote server and keeps meaning that.
+        assert_eq!(
+            parse_storage_kind("server").unwrap(),
+            veloct_attach::StorageKind::Sftp
+        );
+        assert_eq!(
+            parse_storage_kind("s3").unwrap(),
+            veloct_attach::StorageKind::S3
+        );
+        assert_eq!(
+            parse_storage_kind("github").unwrap(),
+            veloct_attach::StorageKind::GitHub
+        );
+        assert_eq!(
+            parse_storage_kind("lskypro").unwrap(),
+            veloct_attach::StorageKind::LskyPro
+        );
+
+        let error = parse_storage_kind("webdav").unwrap_err();
+        assert!(error.to_string().contains("webdav"), "{error}");
+        assert!(error.to_string().contains("local"), "{error}");
+    }
+
+    #[test]
+    fn an_unconfigured_sftp_target_is_never_routed_to_a_local_directory() {
+        // THE regression test for the defect: a `sftp` target with no host and no credential used to be handed
+        // a local directory adapter by the upload command, so it uploaded to the machine it was running on and
+        // reported a remote URL. It must now reach the store that REPORTS the section 13.10 gap.
+        let project = tempfile::TempDir::new().unwrap();
+        let config = veloct_attach::StorageConfig::new("server", "my server", veloct_attach::StorageKind::Sftp);
+        let target = storage_target_for(&config, None, project.path()).unwrap();
+
+        assert_eq!(target.config().kind, veloct_attach::StorageKind::Sftp);
+        assert!(
+            !target.capabilities().verified,
+            "the window can see the gap before an upload is attempted"
+        );
+        assert!(
+            !target.capabilities().can_delete_remotely,
+            "and an explicit remote cleanup is refused there too"
+        );
+        let error = target.store("photo.png", b"BYTES").unwrap_err();
+        assert_eq!(error.code(), "NOT_CONFIGURED");
+        assert!(
+            error.hint().unwrap_or_default().contains("SSH"),
+            "{error} / {:?}",
+            error.hint()
+        );
+        // And nothing was written into the project.
+        assert!(!veloct_attach::local_root(project.path(), "server").exists());
+    }
+
+    #[test]
+    fn a_local_target_is_built_inside_the_projects_upload_directory_and_needs_no_credential() {
+        let project = tempfile::TempDir::new().unwrap();
+        let mut config =
+            veloct_attach::StorageConfig::new("on-this-machine", "Local", veloct_attach::StorageKind::Local);
+        config.key_prefix = Some("uploads".to_string());
+        config.public_url_prefix = "https://example.com/files/".to_string();
+        // No credential is passed, which is the point: a local target must not need one.
+        let target = storage_target_for(&config, None, project.path()).unwrap();
+
+        assert!(target.capabilities().verified);
+        assert!(target.capabilities().can_delete_remotely);
+        let outcome = target.store("photo.png", b"BYTES").unwrap();
+        let written = veloct_attach::local_root(project.path(), "on-this-machine")
+            .join(&outcome.object().key);
+        assert_eq!(
+            std::fs::read(&written).unwrap(),
+            b"BYTES",
+            "{} exists with the uploaded bytes",
+            written.display()
+        );
+
+        // And the same helper reaches the real bytes for an explicit cleanup.
+        target.delete_remote(&outcome.object().key).unwrap();
+        assert!(!written.exists(), "{} is gone", written.display());
+    }
+
+    #[test]
+    fn an_s3_targets_view_carries_the_fields_a_form_needs_and_no_credential_value() {
+        // A form that cannot see endpoint/region/bucket cannot edit what it saved: saving again would
+        // silently rewrite the target.
+        let mut config =
+            veloct_attach::StorageConfig::new("s3-main", "S3 main", veloct_attach::StorageKind::S3);
+        config.endpoint = Some("https://s3.example.com".to_string());
+        config.region = Some("us-east-1".to_string());
+        config.bucket = Some("veloct-assets".to_string());
+        config.key_prefix = Some("uploads".to_string());
+        config.public_url_prefix = "https://cdn.example.com".to_string();
+        config.access_key = Some("AKIAIOSFODNN7EXAMPLE".to_string());
+        config.credential_ref = Some("keychain:storage/s3-main".to_string());
+
+        let view = StorageTargetView::of(&config, true);
+        assert_eq!(view.endpoint.as_deref(), Some("https://s3.example.com"));
+        assert_eq!(view.region.as_deref(), Some("us-east-1"));
+        assert_eq!(view.bucket.as_deref(), Some("veloct-assets"));
+        assert_eq!(view.path_prefix.as_deref(), Some("uploads"));
+        assert_eq!(view.access_key.as_deref(), Some("AKIAIOSFODNN7EXAMPLE"));
+
+        // Section 12.2: the SECRET access key lives in the OS store, and this view carries only the HANDLE and
+        // the boolean. The field list is asserted EXACTLY, so a second field that carried a value would have to
+        // change this test on purpose rather than slip in.
+        let json = serde_json::to_value(&view).unwrap();
+        let mut keys: Vec<&str> = json
+            .as_object()
+            .expect("a view is an object")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            vec![
+                "access_key",
+                "branch",
+                "bucket",
+                "credential_ref",
+                "endpoint",
+                "has_credential",
+                "id",
+                "implemented",
+                "kind",
+                "name",
+                "path_prefix",
+                "public_url_prefix",
+                "region",
+                "repository",
+                "unimplemented_reason",
+            ],
+            "the view's fields are configuration and a HANDLE, never a credential value"
+        );
+        assert_eq!(json["credential_ref"], "keychain:storage/s3-main");
+        assert_eq!(json["has_credential"], true);
+    }
+
+    #[test]
+    fn a_local_targets_view_is_implemented_and_carries_no_credential() {
+        // The window must be able to offer the local directory kind instead of an SFTP target that silently
+        // became one, and it must not ask for a credential the kind cannot use.
+        let config =
+            veloct_attach::StorageConfig::new("on-this-machine", "Local", veloct_attach::StorageKind::Local);
+        let view = StorageTargetView::of(&config, config.has_credential());
+
+        assert_eq!(view.kind, "local");
+        assert!(view.implemented);
+        assert!(view.unimplemented_reason.is_none());
+        assert!(view.credential_ref.is_none());
+        assert!(
+            !view.has_credential,
+            "a local directory needs no credential, and the window must not report a missing one"
+        );
+    }
+
+    #[test]
+    fn the_remote_cleanup_command_is_registered_with_the_window() {
+        // Section 13.8's cleanup was missing at BOTH layers: `StorageAdapter::delete_remote` existed and no
+        // command exposed it. This asserts the registration the way the shell declares it, so the command
+        // cannot be written and then left unreachable.
+        let registry = include_str!("lib.rs");
+        assert!(
+            registry.contains("attachments::delete_remote_object"),
+            "delete_remote_object must be in the invoke_handler list"
+        );
+    }
+
+    #[test]
+    fn storage_kinds_reports_every_kind_and_agrees_with_the_crate_for_all_of_them() {
+        // The command must DELEGATE, not restate: for every kind in the canonical list its answer is compared
+        // against the crate function the window's whole notion of "does this kind work" comes from. A second
+        // copy of that knowledge is the defect this command exists to remove, and this is the assertion that
+        // would catch it — a restated list would drift the moment one side is edited.
+        let views = storage_kinds();
+        assert_eq!(views.len(), veloct_attach::StorageKind::ALL.len());
+
+        for view in &views {
+            let kind = veloct_attach::StorageKind::parse(&view.kind)
+                .unwrap_or_else(|| panic!("{} is not a spelling `parse` accepts back", view.kind));
+            assert_eq!(
+                view.implemented,
+                veloct_attach::is_implemented(kind),
+                "{}: implemented must be the crate's answer",
+                view.kind
+            );
+            assert_eq!(
+                view.unimplemented_reason.as_deref(),
+                veloct_attach::unimplemented_reason(kind),
+                "{}: the gap reason must be the crate's own words",
+                view.kind
+            );
+        }
+
+        // Every kind the crate knows is reported exactly once, in the canonical list's order.
+        let spellings: Vec<&str> = views.iter().map(|view| view.kind.as_str()).collect();
+        let expected: Vec<&str> = veloct_attach::StorageKind::ALL
+            .iter()
+            .map(|kind| kind.as_str())
+            .collect();
+        assert_eq!(spellings, expected);
+    }
+
+    #[test]
+    fn storage_kinds_answers_without_any_project_state() {
+        // The whole point: a kind-level fact about the BUILD, so a project with no target at all still learns
+        // which kinds have an adapter. This function takes no `State`, which is what makes that structural
+        // rather than a promise.
+        let views = storage_kinds();
+        assert!(
+            !views.is_empty(),
+            "the window needs the kind list before any target exists"
+        );
+        for view in &views {
+            assert!(!view.kind.trim().is_empty());
+            if !view.implemented {
+                assert!(
+                    view.unimplemented_reason
+                        .as_deref()
+                        .map(|reason| !reason.trim().is_empty())
+                        .unwrap_or(false),
+                    "{} is not implemented, so it must say why",
+                    view.kind
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn storage_kinds_reports_sftp_and_lsky_as_gaps_and_the_rest_as_working() {
+        // PROCESSING.md §5.3/§5.4 keep both as reported gaps; §5.5's window has to be able to say so BEFORE a
+        // target of that kind is saved, which is the case a target list alone cannot answer.
+        let views = storage_kinds();
+        for spelling in ["sftp", "lsky"] {
+            let view = views
+                .iter()
+                .find(|view| view.kind == spelling)
+                .unwrap_or_else(|| panic!("{spelling} must be reported"));
+            assert!(!view.implemented, "{spelling} has no adapter in this build");
+            let reason = view
+                .unimplemented_reason
+                .as_deref()
+                .unwrap_or_else(|| panic!("{spelling} must report its gap"));
+            assert!(!reason.trim().is_empty(), "{spelling}");
+        }
+        for spelling in ["local", "s3", "github"] {
+            let view = views
+                .iter()
+                .find(|view| view.kind == spelling)
+                .unwrap_or_else(|| panic!("{spelling} must be reported"));
+            assert!(view.implemented, "{spelling} has an adapter");
+            assert!(view.unimplemented_reason.is_none(), "{spelling}");
+        }
+    }
+
+    #[test]
+    fn the_storage_kinds_command_is_registered_with_the_window() {
+        // A command the window cannot invoke is the gap this task exists to close, so the registration is
+        // asserted where the shell declares it.
+        assert!(
+            include_str!("lib.rs").contains("attachments::storage_kinds"),
+            "storage_kinds must be in the invoke_handler list"
+        );
     }
 }

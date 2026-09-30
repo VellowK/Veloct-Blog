@@ -536,11 +536,30 @@ export interface StorageTargetView {
   public_url_prefix: string;
   repository: string | null;
   branch: string | null;
+  /** S3: Endpoint, Region and Bucket, so a form can show what it saved (section 13.11). Blank endpoint means AWS. */
+  endpoint: string | null;
+  region: string | null;
+  bucket: string | null;
   /** S3: the access key ID, which is an identifier and not a secret. */
   access_key: string | null;
   /** The HANDLE, never a value (section 12). */
   credential_ref: string | null;
   has_credential: boolean;
+}
+
+/**
+ * One storage KIND's adapter status (handoff.md sections 13.10-13.13).
+ *
+ * A fact about this build rather than about a project: no target id, no credential handle. This is what lets
+ * the window report PROCESSING.md §5.3/§5.4's gap before any target of that kind has been saved.
+ */
+export interface StorageKindView {
+  /** The stored spelling, exactly what `saveStorageTarget` accepts back as `kind`. */
+  kind: string;
+  /** Whether this build has an adapter for the kind. */
+  implemented: boolean;
+  /** Why not, in the build's own words, when it does not. Never softened. */
+  unimplemented_reason: string | null;
 }
 
 /** What an upload produced (section 13.3). */
@@ -550,6 +569,20 @@ export interface UploadView {
   reused: boolean;
   remote_url: string;
   remote_key: string;
+}
+
+/**
+ * What an explicit remote cleanup produced (section 13.8).
+ *
+ * The attachment is still in the pool: section 13.8 removes the REMOTE object, not the user's record of the
+ * file, so the cached bytes and the reference records stay and the attachment may be uploaded again.
+ */
+export interface RemoteDeleteView {
+  attachment: AttachmentView;
+  /** The target the object was ACTUALLY on, read from its record rather than from the caller's claim. */
+  storage_target_id: string;
+  key: string;
+  public_url: string;
 }
 
 export interface UploadEligibility {
@@ -564,6 +597,8 @@ export interface ObjectView {
   key: string;
   url: string;
   bytes: number;
+  /** The target the object is ACTUALLY on, so `deleteRemoteObject` can name it. */
+  storage_target_id: string;
 }
 
 /** The automatic backup rule's state (handoff.md section 17.5). */
@@ -929,6 +964,16 @@ export const api = {
   /** The configured storage targets. Never carries a credential value (section 12.1). */
   storageTargets: () => invoke<StorageTargetView[]>('storage_targets'),
 
+  /**
+   * Every storage kind this build knows, with its adapter status (sections 13.10-13.13).
+   *
+   * Reads no project state deliberately: whether a KIND has an adapter is a fact about the build, so this
+   * answers before a target of that kind exists — which is where PROCESSING.md §5.3/§5.4's gap has to be
+   * visible. `storageTargets` can only report a saved target, and a kind with no adapter is exactly the kind a
+   * user cannot usefully save (an SFTP target needs a host, Lsky needs an instance).
+   */
+  storageKinds: () => invoke<StorageKindView[]>('storage_kinds'),
+
   saveStorageTarget: (options: {
     id: string;
     name: string;
@@ -963,6 +1008,15 @@ export const api = {
       },
     }),
 
+  /**
+   * Remove a storage target.
+   *
+   * This ALSO removes that target's stored credential from the OS store, so the window's confirmation has to
+   * say so: recreating the target later means entering the credential again.
+   *
+   * It does NOT remove anything already uploaded to the target: section 13.8 forbids deleting a remote file as
+   * a side effect. Use `deleteRemoteObject` for that, one object at a time.
+   */
   deleteStorageTarget: (id: string) => invoke<void>('delete_storage_target', { id }),
 
   /** Whether an attachment may be uploaded, so the button can be disabled WITH a reason. */
@@ -976,6 +1030,21 @@ export const api = {
    */
   uploadAttachment: (id: string, storageTargetId: string) =>
     invoke<UploadView>('upload_attachment', { id, storageTargetId }),
+
+  /**
+   * Remove ONE remote object, on the target that actually holds it (section 13.8's explicit cleanup).
+   *
+   * `removeAttachment` deletes the record and the cached bytes and deliberately leaves the remote file alone;
+   * this is the only path that asks for the remote object to go. It is refused — removing nothing — when the
+   * target cannot delete remotely (SFTP and Lsky Pro report their gap) or when `storageTargetId` is not the
+   * target the object's record names, so pass the target the object is actually on: the attachment's own
+   * `storage_target_id` for the ordinary flow (add and upload to the same target), or the matching
+   * `storage_target_id` from `attachmentObjects()` when it is not.
+   *
+   * The attachment, its cached bytes and its reference records are left alone, and it becomes uploadable again.
+   */
+  deleteRemoteObject: (id: string, storageTargetId: string) =>
+    invoke<RemoteDeleteView>('delete_remote_object', { id, storageTargetId }),
 
   /** The recorded remote objects. */
   attachmentObjects: () => invoke<ObjectView[]>('attachment_objects'),

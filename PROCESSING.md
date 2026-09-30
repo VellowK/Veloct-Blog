@@ -10,13 +10,15 @@ locked product contract and always wins, and `docs/spec/*` records the decisions
 3. `README.md` — how to build and test on this machine.
 4. `docs/spec/00-architecture.md` — the ADRs, including the two added by these rounds (ADR-0015, ADR-0016).
 
-**Before changing anything**, run §3.1 and make the six numbers match. The working tree is DIRTY (§1.1),
-and deciding what to do about that is the first thing this file asks of you, because every number in it
-describes uncommitted work.
+**Before changing anything**, run §3.1 and make the six numbers match. The working tree is DIRTY (§1.1):
+the cloud-target and AI rounds are committed, and the §13 storage-target round is not — so this file's
+numbers describe that one uncommitted round, and deciding what to do about it is the first thing this
+file asks of you.
 
 **The single most useful habit for this repository:** when a contract clause says a feature exists,
 `grep` for a caller before believing it. Two of the three rounds here found their work that way — a whole
-model (`CloudTarget`, `Provider::list_models`) implemented, tested, and called by nothing.
+model (`CloudTarget`, `Provider::list_models`) implemented, tested, and called by nothing — and the §13
+round found a rule in the same position (§5.10.1: a validation arm whose only reader is a test).
 
 ---
 
@@ -24,25 +26,35 @@ model (`CloudTarget`, `Provider::list_models`) implemented, tested, and called b
 
 | Fact | Value |
 |---|---|
-| Last commit | `f5c372a Add PROCESSING.md: the state of Veloct for the next agent` |
-| Working tree | **DIRTY** — three rounds of work are uncommitted. See §1.1, and decide about it FIRST |
-| Rust tests | **1295 passed, 0 failed** (17 workspace crates + `src-tauri`) |
-| Frontend tests | **24 passed** (vitest) |
+| Last commit | `bf75265 Record the four commits and correct PROCESSING.md to the working tree it describes` |
+| Working tree | **DIRTY** — the §13 storage-target round is uncommitted (11 modified paths, 2 new). See §1.1 |
+| Rust tests | **1317 passed, 0 failed** (+22; 17 workspace crates + `src-tauri`) |
+| Frontend tests | **65 passed** (vitest: 24 `frontmatter` + 41 new `storageTargetForm`) |
 | `clippy --workspace --all-targets` | **0 warnings** |
-| Site build verifier | **46/46 checks** |
-| Test matrix | **198 rows at `I`, 0 at `P`** (171 + 12 for GitHub + 9 for S3 + 6 for §11.2/§11.5) |
-| Shell commands registered | **70** (60 + 6 cloud-backup + 4 AI-model commands) |
+| Site build verifier | **46/46 checks** — **NOT re-run this round**: `site/` is untouched by it, and §J names the command behind every number here |
+| Test matrix | **207 rows at `I`, 0 at `P`** (198 + 9 for §13's form and cleanup), out of **227** rows across tables A–G |
+| Shell commands registered | **71** (70 + `delete_remote_object`) |
 
 Every command above exits **0** on success. That matters and is itself a recent fix — see §2.
 
-**These numbers were re-run at the end of the last round, and NOTHING in the code has changed since** —
-the only edit afterwards was to this file. So they describe the current source exactly, and §3.1 should
-reproduce them; if it does not, something outside this repository changed and that is the first thing to
-find out.
+**These numbers describe the revision §13's round left on disk**, and the only edits afterwards were
+to `docs/spec/02-test-matrix.md` and this file. **One thing has changed since**: `storage_kinds`
+(§5.5's follow-up, below) landed in `crates/veloct-attach`, `src-tauri` and `src` while these
+documents were being written, so §1 is one increment behind the tree. That is stated rather than
+hidden: for reference, a re-run over that later tree exited **0** with **1324 Rust tests and 71
+frontend tests** — those are NOT this table's numbers, and `docs/spec/02-test-matrix.md` §J says
+which run they came from and why they are not recorded as the totals. The next task re-runs §3.1
+over the finished tree and makes them the totals.
 
 ### 1.1 What these rounds changed
 
-Three increments. The first two close §17.4; the third wires §11.2 and §11.5.
+**COMMITTED, and therefore reproducible from a checkout.** Four commits carry the cloud-target and AI
+rounds — `050a3c5` (the GitHub/S3 half of §17.4 and §13.11), `57003e5` (the §18.1 redaction),
+`61ffde7` (§11.2's model discovery and §11.5's connection test) and `7df0625` (the tree the previous
+version of this file described) — and `bf75265` then recorded them and corrected this file. Together
+they were 104 new tests (1191 → 1295) and a clean clippy, and §J of the matrix holds the run whose
+tree hash those commits match. They contain three increments. The first two close §17.4; the third
+wires §11.2 and §11.5.
 
 1. **GitHub** — the pre-existing `CloudTarget` / `BackupTargetAdapter` model got a real adapter, the
    targets moved into SQLite's `backup_targets`, each run into `backups` (§22.7), and §17.2 is now
@@ -54,18 +66,7 @@ Three increments. The first two close §17.4; the third wires §11.2 and §11.5.
    above `veloct-ai`** to four commands and a settings panel. Wiring it up **exposed a real §18.1 leak**
    (§2.8): a provider's 401 body echoes the key, and that body was becoming the error message.
 
-**What is still NOT done is in §5**, and the honest summary is: SFTP and Lsky Pro have no adapter, no
-remote operation has ever touched a live service, and the attachment panel still has no target FORM
-(§5.5). Nothing above should be read as a claim that Veloct is complete.
-
-**Uncommitted on purpose.** 104 new tests pass (1191 → 1295) and clippy is clean, but a commit is the
-user's call, so `git status` is the truth and this file must not claim a commit that does not exist.
-`git status --short` shows **34 entries** — 28 modified files and 6 new paths. The many `*.log` files in
-the working directory are this session's captured verification output, and `.gitignore` line 25 ignores
-`*.log`, so they are NOT part of the change set; they are safe to read (they are the raw evidence for the
-numbers in §1) and safe to delete.
-
-**The files these rounds added**, so the next agent knows what is new without reading the whole diff:
+The files those rounds ADDED, so the next agent knows what was new without reading the whole diff:
 
 ```text
 crates/veloct-github/                 NEW  the GitHub Contents API, shared by §13.13 and §17.4
@@ -76,13 +77,43 @@ crates/veloct-attach/src/s3.rs        NEW  the §13.11 S3 attachment target
 crates/veloct-app/src/cloud_backup.rs NEW  cloud targets in SQLite + the §22.7 run record
 ```
 
-Everything else is edits to existing files; `git diff --stat` lists them, and the two docs that record
-the decisions are `docs/spec/00-architecture.md` (ADR-0015, ADR-0016) and `docs/spec/02-test-matrix.md`
-(rows `C11`, `D104`–`D129`, each naming the test AND the command that was run).
+Everything else there was edits to existing files, recorded in `docs/spec/00-architecture.md`
+(ADR-0015, ADR-0016) and as matrix rows `C11` and `D104`–`D129`.
 
-**The matrix at 198 `I` / 0 `P` is a claim about recorded evidence, not proof that §28 is met.**
+**UNCOMMITTED, and therefore NOT yet reproducible from a checkout: the §13 storage-target round.**
+`git status` is the truth, and this file must not claim a commit that does not exist.
+
+4. **§13's storage targets, and §13.8's explicit remote cleanup** — the local directory became a kind
+   of its own (`StorageKind::Local`) instead of the thing an unconfigured SFTP target SILENTLY degraded
+   into; `upload_attachment` and the new `delete_remote_object` build their target through ONE routing
+   helper, so the two can never disagree; the object record now names the target the bytes actually
+   reached rather than the one the attachment was added for; §13.8's cleanup exists at both layers
+   (transaction → service → Tauri command → button) with three refusals that each remove nothing; and
+   the window gained the storage-target FORM plus §13.2.2's eligibility reason, read BEFORE an upload
+   is offered. **+22 Rust tests (1295 → 1317) and +41 frontend tests (24 → 65)**, clippy clean,
+   `build:ui` clean. §5.5 is what this closed; §5.10 is what it left.
+
+`git status --short` shows **13 entries** — 11 modified paths and 2 new ones:
+
+```text
+crates/veloct-attach/src/lib.rs,storage.rs,targets.rs,transaction.rs   the Local kind, the target routing model, §13.8's transaction
+crates/veloct-app/src/attachments.rs,lib.rs                            the service half: delete_remote_object, RemoteDeleteView, ObjectView.storage_target_id
+src-tauri/src/attachments.rs,lib.rs                                    the two commands, storage_target_for, the registered command
+src/AttachmentPanel.tsx,lib/api.ts,styles.css                          the form, the cleanup confirm step, the eligibility reason
+src/lib/storageTargetForm.ts                                           NEW  the form's decisions, as a pure module (41 tests)
+tests/storageTargetForm.test.ts                                        NEW  those 41 tests
+```
+
+The many `*.log` files in the working directory are this session's captured verification output, and
+`.gitignore` line 25 ignores `*.log`, so they are NOT part of the change set; they are safe to read
+(they are the raw evidence for the numbers in §1) and safe to delete.
+
+**The matrix at 207 `I` / 0 `P` is a claim about recorded evidence, not proof that §28 is met.**
 It has been wrong in that direction before: at one point it read 93 `I` while the desktop
 workbench did not exist at all. When you find a gap, the matrix row is what is wrong.
+The rows this round added (D130–D138) each name the test AND the crate, and where a row cannot
+assert something (an untested refusal, a command body no test drives) it says so in the row as a
+**stated limit** rather than implying coverage — `docs/spec/02-test-matrix.md` §I makes that the rule.
 
 ---
 
@@ -225,10 +256,10 @@ Two things to keep:
 ### 3.1 The commands to run before claiming anything
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\cargo.ps1 test --workspace     # exit 0, 1295 passed
+powershell -ExecutionPolicy Bypass -File .\scripts\cargo.ps1 test --workspace     # exit 0, 1317 passed, 5 ignored
 powershell -ExecutionPolicy Bypass -File .\scripts\cargo.ps1 clippy --workspace --all-targets
 powershell -ExecutionPolicy Bypass -File .\scripts\build-sidecar.ps1 -Check
-cmd /c "npm.cmd run test:ui"                                                       # 24 passed
+cmd /c "npm.cmd run test:ui"                                                       # 65 passed
 cmd /c "npm.cmd run build:ui"                                                      # tsc clean
 # in site/:
 $env:VELOCT_BUILD_TIME="2026-01-01T12:00:00.000Z"; npm.cmd run build; node scripts/verify-build.mjs
@@ -247,10 +278,12 @@ when you touch the areas they cover:
 
 ## 4. What IS implemented
 
-All numbers are test counts. The matrix holds **218 rows across tables A-G** (A 23, B 14,
-C 12, D 131, E 21, F 6, G 11) plus a separate **20-row H table** which IS the `handoff.md` §28
-acceptance checklist, one row per headline requirement. **198 of the A-G rows carry a status and
-all 198 are `I`**; the remaining 20 are table headers or rows whose status lives in a linked row.
+All numbers are test counts. The matrix holds **227 rows across tables A-G** (A 23, B 14,
+C 12, D 140, E 21, F 6, G 11) plus a separate **20-row H table** which IS the `handoff.md` §28
+acceptance checklist, one row per headline requirement. **207 of the A-G rows carry a status and
+all 207 are `I`**; the remaining 20 are table headers or rows whose status lives in a linked row.
+The nine new ones are `D130`–`D138`, which are §13's form, the local kind, the end of the
+unconfigured-SFTP degradation, §13.8's explicit cleanup and §13.2.2's reason.
 
 **The H table is the one to read when judging completion.** It is short, it mirrors §28 clause
 by clause, and each row names the evidence it requires.
@@ -268,13 +301,13 @@ by clause, and each row names the evidence it requires.
 | `veloct-sidecar` | The Astro launcher: resolves the bundled Node from the sidecar path, NEVER `PATH` (ADR-0005) |
 | `veloct-deploy` | Three logical targets × main/works sub-targets, Cloudflare adapter, manual exports, roll-up (`partial` vs `failed`), re-send, **SEO push lifecycle** |
 | `veloct-ai` | Providers, per-feature model mapping, CANCELLED-safe fallback, context, apply plans, **the page creator**, **model discovery + a connection test whose failure message is redacted at the source** (§2.8) |
-| `veloct-attach` | Three independent state axes, reference sets, dedup, cache pool, upload transaction, **GitHub and S3 attachment targets (both delegating to their protocol crate)**, and the canonical MIME map |
+| `veloct-attach` | Three independent state axes, reference sets, dedup, cache pool, upload transaction, **GitHub, S3 and the local-directory attachment targets (`StorageKind::Local`, §13.10 where the server is this machine)**, **§13.8's explicit `delete_remote_object` — the only path that removes a remote object**, and the canonical MIME map |
 | `veloct-github` | The GitHub Contents API, ONCE: `Repository`, `GitHubContents` (put/get/list/delete/repository_info), `base64_encode`, the 100 MB ceiling. No policy — that stays with the dependent (ADR-0015) |
 | `veloct-s3` | S3 / S3-compatible, ONCE: SigV4 (`CanonicalRequest`, `uri_encode`, the signing-key chain), and `S3Client` (streamed put, HEAD, paginated LIST, DELETE, a signed connection test). No policy either (ADR-0016) |
 | `veloct-backup` | Selection rules, gzip archive + manifest, secret scan, staging restore, retention, target orchestration, **the GitHub and S3 cloud backup targets — §17.2 verified against the repository, and S3's streamed upload plus the bucket's own timestamps** |
 | `veloct-app` | Orchestration services: attachments, backup/restore, deploy, autobackup, **cloud backup targets in SQLite + the run record**, plus `CommandError` |
-| `src-tauri` | The Tauri shell: **70 registered commands**, `AppState`, preview wiring, credential store (keyring), sidecar resolution |
-| `src/` | The workbench: 3-pane layout, **Tiptap WYSIWYG** editor with a Markdown view, draggable split with a REAL Astro iframe preview, autosave, conflict UI, log page, **AI settings with model discovery, a connection test and a model list**, page creator, attachments, publish, backups (including cloud targets), deploy |
+| `src-tauri` | The Tauri shell: **71 registered commands**, `AppState`, preview wiring, credential store (keyring), sidecar resolution, **the storage-target commands including §13.8's `delete_remote_object`** |
+| `src/` | The workbench: 3-pane layout, **Tiptap WYSIWYG** editor with a Markdown view, draggable split with a REAL Astro iframe preview, autosave, conflict UI, log page, **AI settings with model discovery, a connection test and a model list**, page creator, attachments **with the storage-target FORM, §13.8's remote cleanup and §13.2.2's eligibility reason**, publish, backups (including cloud targets), deploy |
 
 **Verified end-to-end against real processes**, not only unit tests:
 
@@ -294,7 +327,7 @@ believing any summary, including this one. Judged against the evidence that exis
 | # | Requirement | Honest verdict |
 |---|---|---|
 | H1 | Create and manage a project | **done** — `ProjectService`, 70 shell commands |
-| H2 | Markdown edit, autosave 2 s / 30 s / save-on-close | **done** — `src/lib/autosave.ts`, 24 frontend tests |
+| H2 | Markdown edit, autosave 2 s / 30 s / save-on-close | **done** — `src/lib/autosave.ts`, 65 frontend tests |
 | H3 | SQLite index rebuilds | **done** — `veloct-storage::rebuild` |
 | H4 | Real Astro live preview, same project as production | **done** — sidecar smoke test: HTTP 200, article route 200 |
 | H5 | WIP control, stable URL, finished redirect | **done** |
@@ -307,7 +340,7 @@ believing any summary, including this one. Judged against the evidence that exis
 | H12 | One build per publish, all targets share it | **done** |
 | H13 | Failed target re-publish by original Release | **done** — `resendable_sub_targets` |
 | H14 | 1Panel manual upload of current `dist` | **done** as a manual export |
-| H15 | Attachments: cache pool, **sftp, s3, lsky**, github, remote image | **PARTIAL — sftp and lsky still have NO adapter.** GitHub, **S3** and the local directory work; the pool, dedup and references work; remote image search (`network.rs`) exists but has no command. §13.11's S3 target is verified against AWS's own published SigV4 vectors |
+| H15 | Attachments: cache pool, **sftp, s3, lsky**, github, remote image | **PARTIAL, and this round moved it: the local directory is a kind of its own, the unconfigured-SFTP-to-local degradation is gone, and §13.8's explicit remote cleanup now exists at both layers.** What is STILL PARTIAL and exactly why: **(1) `sftp` and (2) `lsky` have NO adapter** — both can be configured and both report their gap instead of guessing a protocol (§5.3, §5.4), so §13.10's SSH and §13.12's Lsky half of this clause is unmet; **(3) remote image** search exists in `veloct-attach::network` but has no command and no button, so §13.14 is unusable from the window (§5.9, shared with H10); **(4) nothing has ever contacted a live service** — GitHub and S3 are asserted against a fake HTTP client and the local kind writes to the filesystem (§5.8). The pool, the three axes, dedup, multi-reference and §13.8's no-auto-delete rule are done (B1–B14, D16, D91–D93, D116–D123, D130–D138) |
 | H16 | Dedup safe, multi-reference safe, no auto remote delete | **done** |
 | H17 | Auto backup, manual backup, local export, full restore, content-only restore | **PARTIAL — all five work, and BOTH of §17.4's cloud targets are now real: GitHub (§17.2 verified against the repository on every upload) and S3 (§13.11's client, a streamed upload, the bucket's own timestamps). Targets live in SQLite's `backup_targets`, each run is recorded per target in `backups` (§22.7), and §17.3's finding blocks the upload while the local archive survives. What is still missing is NOT the target model — see §5.8: no live service has ever been contacted** |
 | H18 | No secret in config/log/backup; scan before backup | **done** — scan runs BEFORE the archive is written; and see §2.8, where wiring a feature found a leak on a path review had missed |
@@ -321,9 +354,9 @@ answer to "is §28 met" today. Nothing above should be read as a claim that Velo
 
 ## 5. What is NOT implemented
 
-Ordered by how much of §28 they block. **§5.1, §5.2 and §5.6 are CLOSED** — they are kept, clearly
+Ordered by how much of §28 they block. **§5.1, §5.2, §5.5 and §5.6 are CLOSED** — they are kept, clearly
 marked, because earlier versions of this file called them the biggest gaps and a reader looking for those
-sentences must find out what happened to them. The OPEN items are §5.3, §5.4, §5.5, §5.7, §5.8, §5.9.
+sentences must find out what happened to them. The OPEN items are §5.3, §5.4, §5.7, §5.8, §5.9 and §5.10.
 
 **Judge §28 against the H table in `docs/spec/02-test-matrix.md`, not against this list.** This list is
 where the gaps are argued; the H table is what says whether they matter.
@@ -383,41 +416,55 @@ MSVC, or keep reporting the gap. **Do not add a guessed protocol.**
 Declared unimplemented and reported. Needs Lsky's own upload-token protocol, which is not verified
 in `docs/spec/03-upstream-facts.md`. Same rule: verify the protocol or keep reporting.
 
-### 5.5 The attachment panel has no target FORM — the most visible gap in §13
+### 5.5 CLOSED: the attachment panel's target FORM, and §13.8's explicit remote cleanup
 
-Verified by search rather than remembered, and stated precisely because the imprecise version is
-misleading:
+Kept here rather than deleted, because the old text called this **the most visible gap in §13** and a
+reader looking for that sentence must find out what happened to it. **It is no longer a gap.** The old
+table said `saveStorageTarget`, `deleteStorageTarget` and `uploadEligibility` "exist in `api.ts`, called
+by no component", and that §13.8's cleanup was "missing at BOTH layers". Re-verified the same way, by
+search:
 
-| What | State |
+| What | State now |
 |---|---|
-| `api.uploadAttachment` | **called** by `src/AttachmentPanel.tsx` — uploading TO a target works |
-| `api.storageTargets` | **called** — the panel lists them, with their kind and whether a credential exists |
-| `api.saveStorageTarget` | exists in `api.ts`, **called by no component** |
-| `api.deleteStorageTarget` | exists in `api.ts`, **called by no component** |
-| `api.uploadEligibility` | exists in `api.ts`, **called by no component** |
+| `api.saveStorageTarget` | **called** — `src/AttachmentPanel.tsx`'s 创建目标 / 保存修改, through `storageTargetForm.ts::buildSaveRequest` |
+| `api.deleteStorageTarget` | **called** — a two-step 删除 confirmation that says the credential goes too |
+| `api.uploadEligibility` | **called** — for every attachment on every reload, and the reason is rendered beside the button |
+| `api.deleteRemoteObject` | **NEW, and called** — §13.8's cleanup, per attachment, refused unless the target really holds the object |
 
-So every §13.1 kind can be configured through the command surface and **none of them through the
-window**: a user cannot create a target, cannot remove one, and is not told before an attempt whether an
-upload is even eligible (§13.2.2's reason is available and unshown). §13.11's S3 fields have no way in at
-all.
+What closed it, and where to look:
 
-**§13.8's explicit remote cleanup is missing at BOTH layers.** `StorageAdapter::delete_remote` is
-implemented by the GitHub and S3 stores and asserted by the matrix (`D16`), but **no Tauri command exposes
-it** — verified by search, not by memory — so the only path from the window is `remove_attachment`, which
-removes the record and the CACHED bytes and deliberately leaves the remote object alone. That is exactly
-right for §13.8's rule, and it means a user who wants to tidy a remote object has no way to ask. Both a
-command and a button are missing.
+- **The form** is `src/AttachmentPanel.tsx` + `src/lib/storageTargetForm.ts` (NEW, 41 vitest tests in
+  `tests/storageTargetForm.test.ts`). Which fields a kind asks for, what a blank credential means, why a
+  draft cannot be saved, which filled values a kind switch will NOT submit, and why the upload button is
+  disabled are all decided in that pure module, because this repository has no React test renderer and a
+  rule that lives in JSX is a rule nothing checks. §13.11's S3 fields (`endpoint`, `region`, `bucket`,
+  `accessKey`, the secret) finally have a way in — and `StorageTargetView` had to GAIN
+  `endpoint`/`region`/`bucket` first, because a form that cannot see what it saved would silently rewrite
+  the target on the next save.
+- **§13.8's cleanup at both layers**: `AttachmentTransaction::delete_remote_object` →→
+  `AttachmentService::delete_remote_object` →→ the registered Tauri command `delete_remote_object` →→
+  `api.deleteRemoteObject` →→ 仅删除远程对象. It refuses, removing NOTHING, on a target whose
+  `capabilities().can_delete_remotely` is false (SFTP and Lsky report their own §13.10/§13.12 gap), on a
+  target other than the one the object's RECORD names, and on an attachment with no recorded object. On
+  success the remote object and its record go, `remote_url`/`remote_key` are cleared, the upload axis
+  returns to `PENDING`, and **the cached bytes and the reference records are untouched** — §13.8 removes
+  the remote object, not the user's record of the file. That the local target's delete removes the real
+  BYTES from disk is asserted at two layers (§2.4's lesson).
+- **The defect that made the local path invisible is fixed**: an `sftp` target with no host and no
+  credential used to be handed a LOCAL directory adapter, so an unconfigured SFTP target "uploaded" to
+  the machine it was running on and reported a URL no server serves. `StorageKind::Local` now exists as
+  its own kind and `storage_target_for` routes every upload and every delete through one decision.
+- **The delete button's decision** the old text asked for was taken: `delete_storage_target` also
+  removes the target's credential from the OS store, so the confirmation says so, and says the remote
+  files are NOT deleted.
 
-The commands, the DTOs and the `api.ts` calls all already carry the fields (`endpoint`, `region`,
-`bucket`, `access_key`, `credential`, `path_prefix`, `public_url_prefix`). What is missing is the form.
-Small, self-contained, and the reason §28's H15 stays PARTIAL for the *user-facing* half even after S3
-landed.
-
-**Definition of done for this item:** a form that creates or updates a target, a delete button, and the
-eligibility reason shown before an upload is attempted. The delete button needs a decision rather than an
-oversight: `delete_storage_target` also removes that target's credential from the OS store, so the button
-should say so, and §13.8's separate remote-cleanup command (above) is a second, smaller piece. Neither is
-large — but each needs its own matrix row and recorded command, like every other `I` in this repository.
+**What is still not here, stated rather than papered over:** SFTP and Lsky Pro remain adapterless
+(§5.3, §5.4); the window could not answer "does this kind have an adapter?" before a target of that kind
+was saved, which is why a follow-up (`storage_kinds`, a command that reports each kind's
+`implemented`/`unimplemented_reason` from the crate rather than from a copy) landed while this file was
+being written — it is **not** covered by §1's numbers; and the smaller limits this round left are §5.10.
+`docs/spec/02-test-matrix.md` rows `D130`–`D138` are the recorded evidence, each naming the test AND the
+crate.
 
 ### 5.6 CLOSED: AI model discovery (§11.2) and the connection test (§11.5)
 
@@ -481,6 +528,38 @@ pages build into `dist/works` on a separate origin, but a user cannot import a w
 screenshot, or search for a remote image from the window. Each is a command plus a button, and
 each is small.
 
+### 5.10 Smaller gaps THIS round left, stated rather than papered over
+
+Four, each found by search or by running the thing, and each recorded as a **stated limit** in the
+matrix row that covers it — see `docs/spec/02-test-matrix.md` §I for what that means.
+
+1. **`StorageConfig::validate` has NO production caller.** `grep '\.validate()'` finds it in tests
+   only (checked against the revision §J records — the `storage_kinds` follow-up was editing this exact
+   area while this file was written, so re-check it). That matters because this round ADDED a `Local` arm
+   to it (refusing a prefix that names a drive letter or a UNC root) and a test for that arm, so the rule
+   looks enforced and is not: the window enforces the same thing in
+   `storageTargetForm.ts::validateDraft`, and any other writer is caught at the first
+   `put`/`head`/`delete_remote` by `veloct_core::paths::ensure_within`. Nothing escapes — the write is
+   refused rather than landing outside the root — but the comment on the new arm ("refused here rather
+   than discovered at the first write") describes something that does not happen, and the `..`,
+   leading-`/` and public-URL-prefix rules the function has always held are in the same position.
+   `save_storage_target` thus trusts the window, unlike `save_document`'s path in `commands.rs`, whose
+   comment is explicitly the opposite ("re-validates the draft rather than trusting that the UI
+   checked"). **The fix is a decision, not a line**: calling `validate()` on save would also start
+   refusing an SFTP target saved without a host, which today is the only way to record §13.10's gap in
+   the target list.
+2. **One of §13.8's three refusals has no test.** "the attachment has no recorded object" exists in
+   `crates/veloct-attach/src/transaction.rs` and nothing drives it (grepping its message finds the
+   code and no test). The other two refusals, and both directions of §13.8's rule, are asserted at two
+   layers.
+3. **`delete_storage_target`'s warning is asserted; the credential removal is not.** That
+   `credentials::remove` is called is one line in `src-tauri/src/attachments.rs`; no test proves it,
+   so row `D137` claims only what the window says.
+4. **§13.8's cleanup can leave an article pointing at a URL that no longer resolves.** The
+   confirmation says the Markdown is not touched, and §13.8 does not ask for a rewrite — but a user
+   who cleans up an object a published article cites gets a broken image and no automatic repair.
+   Worth a decision if it ever bites.
+
 ---
 
 ## 6. Things that have been true and are worth preserving
@@ -511,21 +590,34 @@ These are the habits that produced the found bugs, and they are easy to lose.
 5. **Prefer a real command over a claim.** Every matrix row at `I` names the test that proves it,
    and several name `#[ignore]`d runs against real processes. If you add a row, add the command.
 
+6. **Grep for a CALLER before believing a rule, not only before believing a field.** This is how §5.10.1
+   was found, and the entry it deserves is next to §2.6 rather than buried: this round added a
+   `StorageConfig::validate` arm and a test for it, which made a refusal look enforced while
+   `grep '\.validate()'` showed that no production path calls the function at all. A rule whose only
+   reader is a test is documentation with a green tick beside it. **And when a row cannot prove
+   something, write it in the row.** The nine rows this round added say "**Stated limit**" where a
+   refusal, a command body or a credential removal is asserted by inspection or at another layer;
+   `docs/spec/02-test-matrix.md` §I makes that the rule, and a row that quietly implied more would be
+   the drift the whole file exists to prevent.
+
 ---
 
 ## 7. Suggested order for the next agent
 
 **Step 0, before any of the below:** run §3.1 and make the six results match §1. If they do not, find out
-why before building on them. Then decide what to do about the dirty working tree (§1.1) — every number in
-this file describes uncommitted work, and a `git checkout` would erase three rounds of it.
+why before building on them — §1 is one increment behind the tree (§1.1 explains which), so re-run it and
+update §1 and the matrix's §J together. Then decide what to do about the dirty working tree (§1.1): the
+cloud-target and AI rounds are COMMITTED (`050a3c5`, `57003e5`, `61ffde7`, `7df0625`, `bf75265`) and the
+§13 storage-target round is not, and a `git checkout` would erase that one.
 
 1. **Read `handoff.md` §28 again** and diff it against §4 above and the H table in the matrix.
    `handoff.md` wins over this file, and over any summary of it, including this one.
-2. **Build the storage-target FORM (§5.5).** It is the most visible gap: §13's kinds can be configured
-   only through commands, §13.11's S3 fields have no way in, and the file is `src/AttachmentPanel.tsx`.
-   `api.ts` already has `saveStorageTarget`, `deleteStorageTarget` and `uploadEligibility` — the work is
-   the form itself, plus deciding how loudly the delete button should warn that it also removes the
-   stored credential. Add a matrix row and a command when you finish.
+2. **§5.5's storage-target form is DONE** — do not build it again. `src/AttachmentPanel.tsx` creates,
+   edits and deletes targets, §13.8's 仅删除远程对象 exists per attachment, and §13.2.2's reason is
+   shown before an attempt; the evidence is matrix rows `D130`–`D138` and the runs in §J. **The real
+   next gap is §5.9 / H10**: workspace import, the poster-wall screenshot route, and §13.14's remote
+   image search have models in the crates (`veloct-content::works`, `veloct-attach::network`) and NO
+   command, so each is a command plus a button — and the remote-image one would move H15.
 3. **Attempt the NSIS installer (§5.7)** now that the network is confirmed reachable.
 4. Keep SFTP and Lsky Pro (§5.3, §5.4) either implemented properly or **explicitly reported**. Never
    guess a protocol — and note that **Lsky Pro is the last attachment kind with no adapter**, so it is the
@@ -535,7 +627,11 @@ this file describes uncommitted work, and a `git checkout` would erase three rou
    a real request. If the user can supply a throwaway private repository, a private bucket and a token,
    that is worth more than another unit test — and it is the only thing that would let anyone write
    "verified against a live service" anywhere in this repository.
-6. **When §5 changes, the matrix changes with it.** Every row at `I` must name a test AND the command you
+6. **§5.10's four small gaps are worth one pass**, and the first one is a decision rather than a line:
+   `StorageConfig::validate` has no caller, so decide whether `save_storage_target` should validate
+   (which starts refusing a host-less SFTP target) or whether the write-time `ensure_within` guard is
+   the enforcement point and the comment should say so.
+7. **When §5 changes, the matrix changes with it.** Every row at `I` must name a test AND the command you
    ran; a row that cannot is a row that is wrong. `docs/spec/02-test-matrix.md` §J is where the recorded
    runs go, and this file's §1 table is where the totals go.
 

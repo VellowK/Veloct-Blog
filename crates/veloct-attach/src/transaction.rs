@@ -129,6 +129,22 @@ pub struct UploadOutcome {
     pub state: AttachmentState,
 }
 
+/// What an explicit remote cleanup produced (`handoff.md` §13.8).
+///
+/// The attachment is left in the pool with its cached bytes and its reference records: §13.8 removes the
+/// REMOTE object, not the user's record of the file.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteDeleteOutcome {
+    pub attachment_id: AttachmentId,
+    /// The target the object was actually on, read from its record rather than from the caller's claim.
+    pub storage_target_id: StorageTargetId,
+    /// The object's key inside the target.
+    pub key: String,
+    pub public_url: String,
+    /// The state after the cleanup: no remote object, and an upload may be started again.
+    pub state: AttachmentState,
+}
+
 /// A request to apply a remote URL into a document.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ApplyRequest {
@@ -237,6 +253,21 @@ pub struct AttachmentTransaction {
     /// Optional, because a transaction built by a test with no filesystem has nothing to read, and the recorded
     /// size is then the only thing it can honestly use.
     cache_root: Option<std::path::PathBuf>,
+}
+
+/// The dedup key of the object that uploading `attachment` to `target` would create.
+///
+/// `handoff.md` §13.4: `storage_target_id + storage_namespace + content_hash`. The identity is read from
+/// the TARGET rather than from the attachment's own record, and it is read in ONE place so the key lock,
+/// the reuse lookup and the object record cannot disagree about which object is being written. Recording
+/// the attachment's target instead would let the record claim a target the bytes never reached, which is
+/// exactly what `delete_remote_object` refuses to trust.
+fn object_dedup_key(attachment: &Attachment, target: &StorageTarget) -> DedupKey {
+    DedupKey::new(
+        target.config().id.clone(),
+        target.namespace(),
+        attachment.content_hash.clone(),
+    )
 }
 
 impl AttachmentTransaction {
@@ -390,12 +421,18 @@ impl AttachmentTransaction {
             )));
         }
 
-        let key = self.objects.get_key_value(&attachment.dedup_key().as_string());
+        // The object's identity comes from the TARGET the bytes are going to, not from the attachment.
+        //
+        // The attachment carries the target the user chose when the file was added, and an upload may
+        // name a different one. §13.4's dedup key is `storage_target_id + storage_namespace +
+        // content_hash`, and the record's job is to say where the object ACTUALLY is: recording the
+        // attachment's target here would make the record claim a target the bytes never reached, and
+        // `delete_remote_object` trusts this field to refuse a caller who names the wrong target.
+        let dedup_key = object_dedup_key(&attachment, target).as_string();
 
         // The dedup key already has a recorded object, so the remote file is reused
         // (handoff.md section 13.4).
-        if let Some((_, recorded)) = key {
-            let recorded = recorded.clone();
+        if let Some(recorded) = self.objects.get(&dedup_key).cloned() {
             let stored = self
                 .pool
                 .get_mut(id)
@@ -413,11 +450,11 @@ impl AttachmentTransaction {
         // handoff.md section 13.4's concurrency protection. The lock is taken BEFORE the remote call
         // and the record is re-read once it is held, because otherwise two callers both see "nothing
         // uploaded yet" and both PUT, producing two identical remote objects with two URLs.
-        let key_lock = self.key_locks.for_key(&attachment.dedup_key().as_string());
+        let key_lock = self.key_locks.for_key(&dedup_key);
         let _guard = key_lock.lock().expect("the per-key lock is not poisoned");
 
         // Somebody else may have finished the upload while this call waited for the lock.
-        if let Some(recorded) = self.objects.get(&attachment.dedup_key().as_string()).cloned() {
+        if let Some(recorded) = self.objects.get(&dedup_key).cloned() {
             let stored = self
                 .pool
                 .get_mut(id)
@@ -475,13 +512,18 @@ impl AttachmentTransaction {
             )));
         }
 
+        // The record's target and namespace are the ones whose key the lock and the lookup above use, so
+        // the record cannot describe an object other than the one that was just written.
+        let object_target_id = target.config().id.clone();
+        let object_namespace = target.namespace();
+
         // No `let` binding here: both arms diverge, so the match's value would never be read.
         match target.store(&remote_name, &bytes) {
             Ok(put) => {
                 let object = ObjectRecord {
-                    dedup_key: attachment.dedup_key().as_string(),
-                    storage_target_id: attachment.storage_target_id.clone(),
-                    storage_namespace: attachment.storage_namespace.clone(),
+                    dedup_key: dedup_key.clone(),
+                    storage_target_id: object_target_id,
+                    storage_namespace: object_namespace,
                     content_hash: attachment.content_hash.clone(),
                     key: put.object().key.clone(),
                     public_url: put.object().public_url.clone(),
@@ -523,6 +565,111 @@ impl AttachmentTransaction {
                 Err(error)
             }
         }
+    }
+
+    /// Remove ONE recorded remote object, on the target that actually holds it (`handoff.md` §13.8).
+    ///
+    /// This is the explicit user request §13.8 leaves room for. It is deliberately NOT reachable from any
+    /// other path: nothing in the attachment lifecycle calls it, and `apply`/`remove` do not.
+    ///
+    /// Every refusal happens BEFORE the adapter is reached, so a call that is refused removes nothing:
+    ///
+    /// * a target whose `capabilities().can_delete_remotely` is false is refused with its own
+    ///   §13.10/§13.12 gap, rather than reporting a cleanup that removed nothing (ADR-0010);
+    /// * an attachment with no recorded object has nothing to remove;
+    /// * a `target` that is not the one the record names is refused, because the caller's belief about
+    ///   where the object is must never be what decides which file is deleted.
+    ///
+    /// What it does NOT touch: the cached bytes and the reference records. §13.8 removes the remote object,
+    /// not the user's record of the file — the attachment stays in the pool, its Markdown falls back to the
+    /// cache path, and it may be uploaded again.
+    pub fn delete_remote_object(
+        &mut self,
+        id: &AttachmentId,
+        target: &StorageTarget,
+    ) -> Result<RemoteDeleteOutcome> {
+        let attachment = self
+            .pool
+            .get(id)
+            .cloned()
+            .ok_or_else(|| VeloctError::Invalid(format!("attachment {id} is not in the pool")))?;
+
+        let named_target = target.config().id.clone();
+
+        // ADR-0010: a target that cannot delete refuses, with its own reason, rather than reporting a
+        // cleanup that removed nothing. This is checked BEFORE anything else about the record, because it
+        // is a property of the TARGET the caller named rather than of what is stored on it.
+        if !target.capabilities().can_delete_remotely {
+            return Err(VeloctError::NotConfigured {
+                what: format!(
+                    "the {} target {}",
+                    target.config().kind.as_str(),
+                    target.config().name
+                ),
+                hint: Some(format!(
+                    "this target kind cannot remove an object in this build ({}), so the remote file was \
+                     left alone",
+                    crate::targets::unimplemented_reason(target.config().kind)
+                        .unwrap_or("no adapter for this kind")
+                )),
+            });
+        }
+
+        // The object the caller is asking about is the one this attachment's Markdown points at, so the
+        // remote KEY on the record is the link. The record's own `storage_target_id` then decides whether
+        // the caller named the right target.
+        let Some(remote_key) = attachment.remote_key.clone() else {
+            return Err(VeloctError::Invalid(format!(
+                "attachment {id} has no recorded remote object, so there is nothing to remove"
+            )));
+        };
+        let Some(record) = self
+            .objects
+            .values()
+            .find(|record| record.key == remote_key && record.storage_target_id == named_target)
+            .cloned()
+        else {
+            // A different target holds an object at this key: say WHICH, so the user can ask for the right
+            // one instead of being told that nothing exists.
+            if let Some(other) = self
+                .objects
+                .values()
+                .find(|record| record.key == remote_key)
+            {
+                return Err(VeloctError::Invalid(format!(
+                    "the remote object for attachment {id} is recorded on the storage target {}, not \
+                     {named_target}; nothing was removed",
+                    other.storage_target_id
+                )));
+            }
+            return Err(VeloctError::Invalid(format!(
+                "attachment {id} has no recorded remote object on the storage target {named_target}, so \
+                 there is nothing to remove"
+            )));
+        };
+
+        target.delete_remote(&record.key)?;
+
+        // §13.8's cleanup is of the REMOTE object. The record goes with it, and the attachment stops
+        // claiming to be remote — remote_url/remote_key are what `Attachment::is_remote()` and
+        // `markdown()` read, so the Markdown falls back to the cache path.
+        self.objects.remove(&record.dedup_key);
+        let stored = self.pool.get_mut(id).expect("the attachment was just read");
+        stored.remote_url = None;
+        stored.remote_key = None;
+        // The upload axis goes back to PENDING, which is `can_start_upload`. It is not FAILED: no attempt
+        // failed, and saying one did would be its own small lie. The reference records and the cached bytes
+        // are deliberately untouched.
+        stored.state.upload_status = UploadStatus::Pending;
+        stored.last_error = None;
+
+        Ok(RemoteDeleteOutcome {
+            attachment_id: id.clone(),
+            storage_target_id: record.storage_target_id.clone(),
+            key: record.key,
+            public_url: record.public_url,
+            state: stored.state,
+        })
     }
 
     /// Steps 4 and 5: apply the URL to the Markdown and record the reference.
@@ -832,17 +979,15 @@ impl ConcurrentUploader {
         now: &str,
     ) -> Result<UploadOutcome> {
         // The key is read WITHOUT the transfer lock, so two callers for the same content converge on
-        // the same lock and the second waits.
+        // the same lock and the second waits. It is derived from the TARGET by the same helper
+        // `AttachmentTransaction::upload` uses, so the lock this call takes is the lock around the object
+        // it is about to write.
         let key = {
             let transaction = self.transaction.lock().expect("not poisoned");
-            transaction
-                .pool
-                .get(id)
-                .ok_or_else(|| {
-                    VeloctError::Invalid(format!("attachment {id} is not in the pool"))
-                })?
-                .dedup_key()
-                .as_string()
+            let attachment = transaction.pool().get(id).ok_or_else(|| {
+                VeloctError::Invalid(format!("attachment {id} is not in the pool"))
+            })?;
+            object_dedup_key(attachment, target).as_string()
         };
 
         let key_lock = self.locks.for_key(&key);
@@ -1724,5 +1869,177 @@ mod tests {
             serde_json::from_str::<TransactionResult>(&json).unwrap(),
             result
         );
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Section 13.8's EXPLICIT remote cleanup, and the record that decides where it may happen.
+    // ---------------------------------------------------------------------------------------------
+
+    /// A target that is genuinely different from `config()`: its own id, its own store, its own URL. The
+    /// path prefix is the same, so an object's KEY looks the same on both — which is exactly why the record's
+    /// target, and not the key, has to decide.
+    fn other_target(store: Arc<MemoryFileStore>) -> StorageTarget {
+        let mut other_config = config();
+        other_config.id = StorageTargetId::new("github-main");
+        other_config.kind = StorageKind::GitHub;
+        other_config.public_url_prefix = "https://raw.example.com".to_string();
+        StorageTarget::new(
+            other_config.clone(),
+            Box::new(MemoryStore::with_store(other_config, store)),
+        )
+    }
+
+    #[test]
+    fn the_object_record_names_the_target_the_bytes_were_uploaded_to() {
+        // The record's job is to say where the object ACTUALLY is. The attachment was added for `s3-main`,
+        // and this upload names a different target: the record must name the one whose adapter received the
+        // bytes, because a remote cleanup refuses to trust a caller's claim instead of this field.
+        let mut transaction = transaction();
+        let id = add(&mut transaction);
+        let store = Arc::new(MemoryFileStore::new());
+        let other = other_target(store.clone());
+
+        let outcome = transaction.upload(&id, &other, NOW).unwrap();
+
+        assert_eq!(outcome.object.storage_target_id.as_str(), "github-main");
+        assert_eq!(outcome.object.storage_namespace, other.namespace());
+        assert!(
+            outcome.object.public_url.starts_with("https://raw.example.com/"),
+            "{}",
+            outcome.object.public_url
+        );
+        assert_eq!(store.keys().len(), 1, "the bytes reached the named target");
+        let recorded = transaction.objects().values().next().unwrap();
+        assert_eq!(recorded.storage_target_id.as_str(), "github-main");
+    }
+
+    #[test]
+    fn deleting_the_remote_object_clears_only_the_way_back_to_the_remote_file() {
+        // Section 13.8: the REMOTE object goes, and the user's own record of the file stays. The attachment
+        // no longer claims to be remote, its cached bytes are still there, its reference records are
+        // untouched, and it may be uploaded again.
+        let mut transaction = transaction();
+        let id = add(&mut transaction);
+        transaction.references_mut().insert(
+            &id,
+            ReferenceTarget {
+                content_id: "article-a".to_string(),
+                route: None,
+                occurrence: 0,
+                node_hash: None,
+            },
+        );
+        let store = Arc::new(MemoryFileStore::new());
+        let target = target_with(store.clone());
+        transaction.upload(&id, &target, NOW).unwrap();
+        let record = transaction.objects().values().next().unwrap().clone();
+        assert_eq!(store.keys().len(), 1);
+
+        let outcome = transaction.delete_remote_object(&id, &target).unwrap();
+
+        assert_eq!(outcome.storage_target_id, StorageTargetId::new("s3-main"));
+        assert_eq!(outcome.key, record.key);
+        assert_eq!(outcome.public_url, record.public_url);
+
+        assert!(store.keys().is_empty(), "the remote object is gone");
+        assert!(transaction.objects().is_empty(), "and its record with it");
+
+        let stored = transaction.pool().get(&id).unwrap();
+        assert!(!stored.is_remote(), "the attachment no longer claims to be remote");
+        assert!(stored.remote_url.is_none());
+        assert!(stored.remote_key.is_none());
+        assert_eq!(stored.state.upload_status, UploadStatus::Pending);
+        assert!(
+            stored.state.upload_status.can_start_upload(),
+            "a deleted object must not leave the attachment stuck (section 13.2.2)"
+        );
+        assert_eq!(
+            stored.state.cache_status,
+            CacheStatus::Present,
+            "the cached bytes are left alone"
+        );
+        assert_eq!(
+            transaction.references().count_for(&id),
+            1,
+            "the reference records are left alone"
+        );
+    }
+
+    #[test]
+    fn a_remote_delete_naming_a_different_target_removes_nothing() {
+        // The caller's belief about where the object is must never be what decides which file is deleted.
+        let mut transaction = transaction();
+        let id = add(&mut transaction);
+        let store = Arc::new(MemoryFileStore::new());
+        let target = target_with(store.clone());
+        transaction.upload(&id, &target, NOW).unwrap();
+        assert_eq!(store.keys().len(), 1);
+
+        let other_store = Arc::new(MemoryFileStore::new());
+        let other = other_target(Arc::clone(&other_store));
+
+        let error = transaction
+            .delete_remote_object(&id, &other)
+            .expect_err("a target that does not hold the object is refused");
+        assert!(error.to_string().contains("s3-main"), "{error}");
+
+        assert_eq!(store.keys().len(), 1, "the object on the real target survives");
+        assert!(other_store.keys().is_empty(), "and nothing appeared on the named one");
+        assert_eq!(transaction.objects().len(), 1, "the record is still there");
+        assert!(
+            transaction.pool().get(&id).unwrap().is_remote(),
+            "and the attachment still claims to be remote"
+        );
+    }
+
+    #[test]
+    fn a_target_that_cannot_delete_remotely_is_refused_with_its_own_reason() {
+        // ADR-0010: a silent success here would tell the user a remote object was cleaned up when nothing was.
+        let mut transaction = transaction();
+        let id = add(&mut transaction);
+        let config = StorageConfig::new("server", "my server", StorageKind::Sftp);
+        let unsupported = StorageTarget::new(
+            config.clone(),
+            Box::new(crate::targets::UnsupportedStore::new(config)),
+        );
+
+        let error = transaction
+            .delete_remote_object(&id, &unsupported)
+            .expect_err("a target with no adapter cannot delete");
+        assert_eq!(error.code(), "NOT_CONFIGURED");
+        assert!(
+            error.hint().unwrap_or_default().contains("SSH"),
+            "{error} / {:?}",
+            error.hint()
+        );
+        assert!(!unsupported.capabilities().can_delete_remotely);
+        assert!(transaction.objects().is_empty());
+    }
+
+    #[test]
+    fn remote_delete_outcome_is_reachable_from_the_crate_root() {
+        // The crate-root `pub use` block IS this crate's public API, so a caller of `delete_remote_object`
+        // must be able to name its outcome as `veloct_attach::RemoteDeleteOutcome` instead of reaching
+        // through `veloct_attach::transaction::…`. Spelling the type through `crate::` — and `crate::` IS
+        // what `veloct_attach::` resolves to for a caller — makes the re-export a COMPILE-time requirement:
+        // drop it from that block and this test stops building, so the hole cannot return silently.
+        let outcome: crate::RemoteDeleteOutcome = crate::RemoteDeleteOutcome {
+            attachment_id: AttachmentId::new("att-1"),
+            storage_target_id: StorageTargetId::new("s3-main"),
+            key: "uploads/photo-a8k3xq.webp".to_string(),
+            public_url: "https://cdn.example.com/uploads/photo-a8k3xq.webp".to_string(),
+            state: AttachmentState::new(),
+        };
+        assert_eq!(outcome.attachment_id.as_str(), "att-1");
+        assert_eq!(outcome.storage_target_id.as_str(), "s3-main");
+
+        // And the root-exported name is the SAME type the delete path returns, not a second declaration
+        // that merely looks like it.
+        let delete: fn(
+            &mut AttachmentTransaction,
+            &AttachmentId,
+            &StorageTarget,
+        ) -> Result<crate::RemoteDeleteOutcome> = AttachmentTransaction::delete_remote_object;
+        let _ = delete;
     }
 }

@@ -26,6 +26,14 @@ use crate::state::StorageTargetId;
 pub enum StorageKind {
     /// The user's own server over SSH/SFTP (`handoff.md` §13.10).
     Sftp,
+    /// A local directory: this machine, or a directory this machine can already write.
+    ///
+    /// §13.10 calls the feature "server attachment storage", and for a user whose server is this
+    /// machine the target is a directory rather than a protocol. Distinct from [`StorageKind::Sftp`]
+    /// on purpose: before this variant existed the shell routed an SFTP target with no host and no
+    /// credential to a LOCAL directory, so an unconfigured SFTP target silently degraded into a local
+    /// one and a genuinely local target had no way to exist at all.
+    Local,
     /// S3 or an S3-compatible API (`handoff.md` §13.11).
     S3,
     /// Lsky Pro (`handoff.md` §13.12).
@@ -35,9 +43,20 @@ pub enum StorageKind {
 }
 
 impl StorageKind {
+    /// Every kind this build knows, in the order `handoff.md` §13.1 names them — with the
+    /// zero-configuration directory first, because it is the one target a new project can always use.
+    ///
+    /// This is the ONE canonical list. The `storage_kinds` command and the window's kind list both read it,
+    /// and whether a kind has an adapter is answered per kind by `targets::unimplemented_reason`, whose match
+    /// is exhaustive — so a kind added to this enum does not compile until it is answered there. A second list
+    /// of kinds somewhere else would be a second answer to §13.10–§13.13's question ("which kinds exist, and
+    /// which of them work"), and two answers eventually disagree.
+    pub const ALL: [StorageKind; 5] = [Self::Local, Self::S3, Self::GitHub, Self::Sftp, Self::LskyPro];
+
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Sftp => "sftp",
+            Self::Local => "local",
             Self::S3 => "s3",
             Self::LskyPro => "lsky",
             Self::GitHub => "github",
@@ -47,6 +66,9 @@ impl StorageKind {
     pub fn parse(value: &str) -> Option<Self> {
         match value.trim().to_ascii_lowercase().as_str() {
             "sftp" | "ssh" => Some(Self::Sftp),
+            // A local directory is written as `local`, but a user naming the thing they mean — a
+            // directory — is not making a mistake, and `dir` is how the window's own kind list spells it.
+            "local" | "dir" | "directory" => Some(Self::Local),
             "s3" | "s3_compatible" | "s3-compatible" => Some(Self::S3),
             "lsky" | "lskypro" | "lsky_pro" => Some(Self::LskyPro),
             "github" | "gh" => Some(Self::GitHub),
@@ -66,6 +88,8 @@ impl StorageKind {
             Self::S3 => true,
             // GitHub's contents API is documented and stable.
             Self::GitHub => true,
+            // A directory on this machine speaks no protocol, so there is nothing to verify.
+            Self::Local => true,
             // Lsky Pro has no single authoritative API document across versions.
             Self::LskyPro => false,
             // SFTP needs a live server to verify against, and there is none in this environment.
@@ -189,6 +213,11 @@ impl StorageConfig {
                 self.instance.clone().unwrap_or_default(),
                 prefix,
             ],
+            // A local target's directory is derived from the project root and the target's own id
+            // (`targets::local_root`), so the id is already part of the dedup key and the prefix is the
+            // only remaining part of an object's identity. Two prefixes are two namespaces, exactly as
+            // §13.5 requires.
+            StorageKind::Local => vec![prefix],
         };
         // Empty parts are dropped so an unset field does not silently change the namespace when it
         // gains a value that means the same thing.
@@ -235,6 +264,21 @@ impl StorageConfig {
             StorageKind::LskyPro => {
                 if self.instance.as_deref().unwrap_or("").trim().is_empty() {
                     return Err("Lsky Pro needs an instance address".into());
+                }
+            }
+            StorageKind::Local => {
+                // A local target needs no protocol field at all: the directory is derived from the
+                // project root and the target id (`local_root`). What it CAN get wrong is its prefix,
+                // and a prefix that names a drive letter or a UNC root would put the bytes outside the
+                // directory the target owns — `Path::join` replaces the base when the argument is
+                // absolute, so this is refused here rather than discovered at the first write.
+                if let Some(prefix) = &self.key_prefix {
+                    if prefix.contains(':') || prefix.starts_with('\\') {
+                        return Err(format!(
+                            "the directory prefix {prefix:?} must be a relative path inside the \
+                             target's own directory"
+                        ));
+                    }
                 }
             }
         }
@@ -465,6 +509,16 @@ impl StorageTarget {
     /// Prove the target is reachable, or explain why it is not.
     pub fn test_connection(&self) -> Result<String> {
         self.adapter.test_connection()
+    }
+
+    /// Remove ONE object from this target.
+    ///
+    /// `handoff.md` §13.8 forbids removing a remote file as a side effect of anything, so the only
+    /// caller is the explicit user request `delete_remote_object`. The refusal for a target whose
+    /// protocol cannot delete is the ADAPTER's (`capabilities().can_delete_remotely`), because a target
+    /// that cannot delete must not report a silent success — see [`StorageTarget::capabilities`].
+    pub fn delete_remote(&self, key: &str) -> Result<()> {
+        self.adapter.delete_remote(key)
     }
 }
 
@@ -735,13 +789,113 @@ mod tests {
 
     #[test]
     fn all_four_documented_kinds_are_supported() {
-        // handoff.md section 13.1 lists the targets; sections 13.10 to 13.13 name the protocols.
+        // handoff.md section 13.1 lists the targets; sections 13.10 to 13.13 name the protocols, and
+        // `local` is the directory target a machine that IS the server writes into.
         assert_eq!(StorageKind::parse("sftp"), Some(StorageKind::Sftp));
         assert_eq!(StorageKind::parse("ssh"), Some(StorageKind::Sftp));
-        assert_eq!(StorageKind::parse("s3"), Some(StorageKind::S3));
+        assert_eq!(StorageKind::parse("local"), Some(StorageKind::Local));
+        assert_eq!(
+            StorageKind::parse("dir"),
+            Some(StorageKind::Local),
+            "a user naming a directory means the directory target"
+        );
+        assert_eq!(StorageKind::parse("directory"), Some(StorageKind::Local));
+        assert_eq!(StorageKind::parse("S3"), Some(StorageKind::S3));
         assert_eq!(StorageKind::parse("lsky"), Some(StorageKind::LskyPro));
         assert_eq!(StorageKind::parse("github"), Some(StorageKind::GitHub));
         assert_eq!(StorageKind::parse("ftp"), None);
+        // The two are distinct: a directory is not an SSH server, which is the confusion that let an
+        // unconfigured SFTP target become a local one.
+        assert_ne!(StorageKind::Local.as_str(), StorageKind::Sftp.as_str());
+    }
+
+    #[test]
+    fn the_canonical_kind_list_names_every_kind_this_build_has_exactly_once() {
+        // `StorageKind::ALL` is the ONE list the `storage_kinds` command and the window read; a kind missing
+        // from it is a kind nothing can offer. The expected list is written out and guarded by `spelling_of`,
+        // an exhaustive match with NO wildcard arm: a kind added to `StorageKind` does not compile until it is
+        // named THERE, one line below this test, where the fix is to extend both lists together. The two are
+        // compared as whole arrays, so a missing kind, an extra one or a duplicate all fail here.
+        let expected = [
+            StorageKind::Local,
+            StorageKind::S3,
+            StorageKind::GitHub,
+            StorageKind::Sftp,
+            StorageKind::LskyPro,
+        ];
+        assert_eq!(
+            StorageKind::ALL,
+            expected,
+            "StorageKind::ALL must name every kind this build has, once, in §13.1's order"
+        );
+
+        let mut spellings: Vec<&str> = Vec::new();
+        for kind in StorageKind::ALL {
+            let (variant, spelling) = spelling_of(kind);
+            assert_eq!(variant, kind, "the guard table must answer for {kind:?} itself");
+            // The stored spelling is what a view carries and what `parse` accepts back, so the window can
+            // send `kind` straight to `save_storage_target`.
+            assert_eq!(StorageKind::parse(spelling), Some(kind), "{spelling:?} must parse");
+            assert!(
+                !spellings.contains(&spelling),
+                "{spelling:?} appears twice in StorageKind::ALL"
+            );
+            spellings.push(spelling);
+        }
+        assert_eq!(spellings.len(), StorageKind::ALL.len());
+    }
+
+    /// A kind's variant and its stored spelling, from a match with NO wildcard arm.
+    ///
+    /// This is the guard `the_canonical_kind_list_names_every_kind_this_build_has_exactly_once` leans on: the
+    /// compiler refuses to build a kind that is not named here, and naming it puts the author in front of the
+    /// list assertions above.
+    fn spelling_of(kind: StorageKind) -> (StorageKind, &'static str) {
+        match kind {
+            StorageKind::Sftp => (StorageKind::Sftp, "sftp"),
+            StorageKind::Local => (StorageKind::Local, "local"),
+            StorageKind::S3 => (StorageKind::S3, "s3"),
+            StorageKind::LskyPro => (StorageKind::LskyPro, "lsky"),
+            StorageKind::GitHub => (StorageKind::GitHub, "github"),
+        }
+    }
+
+    #[test]
+    fn every_listed_kind_answers_the_adapter_question_consistently() {
+        // The two functions that OWN the per-kind answer are `targets::is_implemented` and
+        // `targets::unimplemented_reason`. For everything in the canonical list they must agree — a kind
+        // reported as implemented that also carries a gap reason (or the reverse) is exactly the pair of
+        // sources §5.3/§5.4 cannot afford, and the window reads this list.
+        for kind in StorageKind::ALL {
+            assert_eq!(
+                crate::targets::is_implemented(kind),
+                crate::targets::unimplemented_reason(kind).is_none(),
+                "{kind:?}: `is_implemented` and `unimplemented_reason` disagree"
+            );
+            assert_eq!(
+                StorageKind::parse(kind.as_str()),
+                Some(kind),
+                "{kind:?}: the stored spelling must be one `parse` accepts back"
+            );
+        }
+    }
+
+    #[test]
+    fn sftp_and_lsky_are_reported_as_gaps_in_the_canonical_list() {
+        // PROCESSING.md §5.3/§5.4 keep both as REPORTED gaps, so the kind-level answer has to say so before
+        // any target of that kind exists. What is asserted here is the answer, not a restatement of it: the
+        // reason comes from the crate function the command calls.
+        for kind in [StorageKind::Sftp, StorageKind::LskyPro] {
+            assert!(StorageKind::ALL.contains(&kind), "{kind:?} must be offered");
+            assert!(!crate::targets::is_implemented(kind), "{kind:?} has no adapter");
+            let reason = crate::targets::unimplemented_reason(kind).expect("a reported gap");
+            assert!(!reason.trim().is_empty(), "{kind:?} must say why not");
+        }
+        // And the kinds that DO have an adapter carry no gap, so "no reason" stays meaningful.
+        for kind in [StorageKind::Local, StorageKind::S3, StorageKind::GitHub] {
+            assert!(crate::targets::is_implemented(kind), "{kind:?} has an adapter");
+            assert!(crate::targets::unimplemented_reason(kind).is_none(), "{kind:?}");
+        }
     }
 
     #[test]
@@ -749,6 +903,8 @@ mod tests {
         // ADR-0010: an unverified protocol says so rather than pretending.
         assert!(StorageKind::S3.is_verified());
         assert!(StorageKind::GitHub.is_verified());
+        // A directory on this machine speaks no protocol, so there is nothing unverified about it.
+        assert!(StorageKind::Local.is_verified());
         assert!(!StorageKind::LskyPro.is_verified());
         assert!(!StorageKind::Sftp.is_verified());
 
@@ -788,6 +944,16 @@ mod tests {
             config.storage_namespace(),
             "sftp:assets.example.com|22|vellow|/var/www/assets"
         );
+    }
+
+    #[test]
+    fn the_local_namespace_is_the_kind_and_the_prefix() {
+        // handoff.md section 13.5. The target's own directory comes from its id, which the dedup key
+        // already carries, so the prefix is the rest of an object's identity.
+        let mut config = StorageConfig::new("on-this-machine", "Local", StorageKind::Local);
+        assert_eq!(config.storage_namespace(), "local:default");
+        config.key_prefix = Some("uploads".to_string());
+        assert_eq!(config.storage_namespace(), "local:uploads");
     }
 
     #[test]
@@ -839,6 +1005,31 @@ mod tests {
         let mut config = StorageConfig::new("l", "L", StorageKind::LskyPro);
         assert!(config.validate().unwrap_err().contains("instance"));
         config.instance = Some("https://lsky.example.com".to_string());
+        assert!(config.validate().is_ok());
+
+        // A local directory target has no protocol field to get wrong, so a bare one is already valid.
+        let local = StorageConfig::new("on-this-machine", "Local", StorageKind::Local);
+        assert!(local.validate().is_ok());
+    }
+
+    #[test]
+    fn a_local_targets_prefix_must_stay_inside_its_own_directory() {
+        // The directory comes from the project root and the target id, and `Path::join` REPLACES the
+        // base when the argument is absolute — so a drive letter or a UNC root in the prefix would put
+        // the bytes somewhere the target does not own. It is refused as configuration, not found later.
+        let mut config = StorageConfig::new("on-this-machine", "Local", StorageKind::Local);
+        config.key_prefix = Some("C:\\Windows\\Temp".to_string());
+        assert!(
+            config.validate().unwrap_err().contains("relative path"),
+            "{:?}",
+            config.validate()
+        );
+
+        config.key_prefix = Some("\\\\server\\share".to_string());
+        assert!(config.validate().unwrap_err().contains("relative path"));
+
+        // A nested relative prefix is exactly what the field is for.
+        config.key_prefix = Some("uploads/2026".to_string());
         assert!(config.validate().is_ok());
     }
 
@@ -1000,6 +1191,36 @@ mod tests {
     fn a_remote_delete_of_something_absent_is_reported() {
         let store = MemoryStore::new(s3());
         assert!(store.delete_remote("uploads/nope.webp").is_err());
+    }
+
+    #[test]
+    fn a_local_targets_remote_delete_removes_the_file_the_bytes_are_in() {
+        // PROCESSING.md section 2.4's lesson: assert the BYTES on disk, not a size a fake recorded. This
+        // is the target the whole delete path is proven against, because it is the one that writes a real
+        // file.
+        let dir = TempDir::new().unwrap();
+        let mut config = StorageConfig::new("on-this-machine", "Local", StorageKind::Local);
+        config.key_prefix = Some("uploads".to_string());
+        config.public_url_prefix = "https://example.com/files/".to_string();
+        let target = StorageTarget::new(
+            config.clone(),
+            Box::new(LocalFileStore::new(config, dir.path())),
+        );
+        let capabilities = target.capabilities();
+        assert!(capabilities.can_delete_remotely, "one object, explicitly asked for");
+        assert!(capabilities.verified, "a directory needs no protocol verification");
+
+        let key = target
+            .store("photo.webp", b"BYTES")
+            .unwrap()
+            .object()
+            .key
+            .clone();
+        let path = dir.path().join(&key);
+        assert_eq!(std::fs::read(&path).unwrap(), b"BYTES");
+
+        target.delete_remote(&key).unwrap();
+        assert!(!path.exists(), "{} is gone", path.display());
     }
 
     #[test]
