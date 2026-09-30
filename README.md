@@ -48,6 +48,10 @@ crates/
   veloct-deploy      logical targets with main/works sub-targets and adapters
   veloct-ai          providers, per-feature model mapping, global fallback
   veloct-attach      cache pool, reference set, dedup, storage adapters
+  veloct-github      the GitHub Contents API, once: §13.13's attachment target and §17.4's backup
+                     target are one protocol in two contracts (ADR-0015)
+  veloct-s3          S3 / S3-compatible over AWS Signature Version 4, once, for the same two
+                     contracts (ADR-0016). Pure Rust: no OpenSSL and no vendor SDK.
   veloct-backup      consistent snapshots, secret scan, archive, cloud targets, restore
   veloct-app         orchestration services, DTOs, Tauri commands
 src-tauri/           thin Tauri 2 shell (windows, capabilities, command registry)

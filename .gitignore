@@ -27,6 +27,10 @@ node_modules/
 # --- AgentTeams runtime state is not source ---
 /.agent-teams/
 
+# --- this session's captured verification output ---
+# The raw evidence for the numbers in PROCESSING.md §1. Safe to read, safe to delete, not source.
+/.baseline/
+
 # --- local editor / OS noise ---
 .vscode/
 .idea/
