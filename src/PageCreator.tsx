@@ -335,10 +335,13 @@ export default function PageCreator({
 /**
  * A settings panel, so the page creator's "open AI settings" button has a destination.
  *
- * Deliberately minimal: it covers what the page creator needs — a provider, a model mapping and the global
- * fallback — rather than pretending to be a finished settings surface. Model discovery from a provider's
- * `/models` endpoint is not wired to a button yet, so models are added by typing their id, which is honest
- * about what exists.
+ * Deliberately minimal: it covers what the page creator needs — a provider, its models, a model mapping and
+ * the global fallback — rather than pretending to be a finished settings surface.
+ *
+ * Section 11.2's three capabilities are all here: the list is FETCHED from the provider's own models
+ * endpoint, a model can be added BY HAND, and the list can be REFRESHED. §11.5's connection test is here
+ * too, and it uses the provider's real configuration rather than a placeholder — a test that cannot fail the
+ * way the real call fails would be worth nothing.
  */
 export function AiSettingsPanel({
   settings,
@@ -359,8 +362,20 @@ export function AiSettingsPanel({
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
+  // Section 11.2's discovery and section 11.5's connection test.
+  const [connectionReport, setConnectionReport] = useState<Record<string, string>>({});
+  const [refreshReport, setRefreshReport] = useState<string | null>(null);
+  const [newModelId, setNewModelId] = useState('');
+  const [newModelLabel, setNewModelLabel] = useState('');
+
   const providers = settings?.providers ?? [];
   const selectedProvider = providerId || providers[0]?.id || '';
+  // The models of the provider currently selected, so the list and the mapping cannot disagree about which
+  // provider they are talking about.
+  const models = useMemo(
+    () => (settings?.models ?? []).filter((model) => model.provider_id === selectedProvider),
+    [settings, selectedProvider],
+  );
 
   const run = useCallback(
     async (action: () => Promise<void>, done: string) => {
@@ -450,14 +465,116 @@ export function AiSettingsPanel({
                   )}
                   <button
                     type="button"
-                    onClick={() => void run(() => api.deleteAiProvider(provider.id), '已删除。')}
                     disabled={busy}
+                    onClick={() =>
+                      void run(
+                        () => api.deleteAiProvider(provider.id),
+                        '已删除。',
+                      )
+                    }
+                  >
+                    删除
+                  </button>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() =>
+                      void run(async () => {
+                        // Section 11.5: the provider's OWN reason, with a real request.
+                        const said = await api.testAiProvider(provider.id);
+                        setConnectionReport((current) => ({
+                          ...current,
+                          [provider.id]: `${said.ok ? '✅' : '❌'} ${said.message}`,
+                        }));
+                      }, '连接测试已完成。')
+                    }
+                  >
+                    测试连接
+                  </button>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() =>
+                      void run(async () => {
+                        const done = await api.refreshAiModels(provider.id);
+                        setRefreshReport(done.message);
+                      }, '模型列表已刷新。')
+                    }
+                  >
+                    刷新模型
+                  </button>
+                  {connectionReport[provider.id] && (
+                    <p className="muted hint">{connectionReport[provider.id]}</p>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </section>
+
+          <section>
+            <h3>模型({selectedProvider || '未选择提供商'})</h3>
+            <p className="muted hint">
+              自动获取的模型会在刷新时被替换;手动添加的模型会保留(§11.2)。
+            </p>
+            {refreshReport && <p className="muted hint">{refreshReport}</p>}
+            {selectedProvider && models.length === 0 && (
+              <p className="muted">这个提供商还没有模型。点“刷新模型”或手动添加一个。</p>
+            )}
+            <ul className="provider-list">
+              {models.map((model) => (
+                <li key={model.model_id}>
+                  <strong>{model.label}</strong>
+                  <span className="muted">{model.model_id}</span>
+                  <span className="muted">{model.source === 'manual' ? '手动添加' : '自动获取'}</span>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() =>
+                      void run(
+                        () => api.deleteAiModel(selectedProvider, model.model_id),
+                        '模型已删除。',
+                      )
+                    }
                   >
                     删除
                   </button>
                 </li>
               ))}
             </ul>
+            <div className="row">
+              <label>
+                <span>手动添加模型 id</span>
+                <input
+                  value={newModelId}
+                  spellCheck={false}
+                  onChange={(event) => setNewModelId(event.target.value)}
+                />
+              </label>
+              <label>
+                <span>显示名(可选)</span>
+                <input
+                  value={newModelLabel}
+                  onChange={(event) => setNewModelLabel(event.target.value)}
+                />
+              </label>
+              <button
+                type="button"
+                disabled={busy || !selectedProvider || !newModelId.trim()}
+                onClick={() =>
+                  void run(async () => {
+                    await api.addAiModel(
+                      selectedProvider,
+                      newModelId.trim(),
+                      newModelLabel.trim() || null,
+                    );
+                    setNewModelId('');
+                    setNewModelLabel('');
+                  }, '模型已添加,刷新后会保留。')
+                }
+              >
+                添加模型
+              </button>
+            </div>
           </section>
 
           <section>

@@ -715,6 +715,145 @@ pub fn set_ai_fallback(
     Ok(())
 }
 
+/// Find one provider row, or report that it is not configured.
+fn provider_row(
+    project: &Arc<crate::state::OpenProject>,
+    provider_id: &str,
+) -> Result<veloct_storage::AiProviderRow, CommandError> {
+    let settings = read_ai_settings(project)?;
+    settings
+        .providers
+        .iter()
+        .find(|row| row.id == provider_id)
+        .cloned()
+        .ok_or_else(|| command_invalid(format!("there is no AI provider {provider_id}")))
+}
+
+/// A client for the AI endpoints.
+///
+/// The timeout is generous but finite: a model list is a small response, yet a provider that is merely
+/// unreachable must produce a reported failure rather than a command that never returns.
+fn ai_client() -> Result<Arc<veloct_core::http::ReqwestHttpClient>, CommandError> {
+    Ok(Arc::new(
+        veloct_core::http::ReqwestHttpClient::with_default_timeout(std::time::Duration::from_secs(60))?,
+    ))
+}
+
+/// Fetch a provider's model list and store it, keeping the user's manual entries (§11.2).
+///
+/// The merge rule lives in `veloct_ai::Provider::merge_models`, not here: a refresh that dropped a
+/// hand-added model would silently break whichever feature is assigned to it.
+#[tauri::command]
+pub fn refresh_ai_models(
+    state: State<'_, AppState>,
+    provider_id: String,
+) -> Result<crate::page_creator::ModelRefreshView, CommandError> {
+    let project = state.project()?;
+    let row = provider_row(&project, &provider_id)?;
+    let now = state.now();
+    let client = ai_client()?;
+
+    let (mut connection, _) = veloct_storage::open(project.root.as_path(), &veloct_core::SystemClock)?;
+    let view = crate::page_creator::refresh_models(
+        &row,
+        &crate::credentials::get_or_none,
+        client.as_ref(),
+        &mut connection,
+        &now,
+    )?;
+
+    let _ = project.log(
+        veloct_logging::LogEvent::info(veloct_logging::Category::Ai, "AI models refreshed")
+            .with_field("provider_id", &provider_id)
+            .with_field("fetched", view.fetched.to_string())
+            .with_field("kept_manual", view.kept_manual.to_string()),
+    );
+    Ok(view)
+}
+
+/// Add a model by hand (§11.2), which later refreshes will keep.
+#[tauri::command]
+pub fn add_ai_model(
+    state: State<'_, AppState>,
+    provider_id: String,
+    model_id: String,
+    display_name: Option<String>,
+) -> Result<Vec<crate::page_creator::ModelView>, CommandError> {
+    let project = state.project()?;
+    // The provider has to exist, or the model would be stored against nothing.
+    provider_row(&project, &provider_id)?;
+    let now = state.now();
+
+    let (mut connection, _) = veloct_storage::open(project.root.as_path(), &veloct_core::SystemClock)?;
+    let models = crate::page_creator::add_manual_model(
+        &mut connection,
+        &provider_id,
+        model_id.trim(),
+        display_name.filter(|name| !name.trim().is_empty()),
+        &now,
+    )?;
+
+    let _ = project.log(
+        veloct_logging::LogEvent::info(veloct_logging::Category::Ai, "AI model added by hand")
+            .with_field("provider_id", &provider_id)
+            .with_field("model_id", model_id.trim()),
+    );
+    Ok(models)
+}
+
+/// Remove one stored model.
+///
+/// Without this a hand-added typo would stay selectable forever, because §11.2's refresh only replaces the
+/// FETCHED entries.
+#[tauri::command]
+pub fn delete_ai_model(
+    state: State<'_, AppState>,
+    provider_id: String,
+    model_id: String,
+) -> Result<(), CommandError> {
+    let project = state.project()?;
+    let now = state.now();
+    let (mut connection, _) = veloct_storage::open(project.root.as_path(), &veloct_core::SystemClock)?;
+    if !crate::page_creator::delete_model(&mut connection, &provider_id, &model_id, &now)? {
+        return Err(command_invalid(format!(
+            "provider {provider_id} has no model {model_id} stored"
+        )));
+    }
+    let _ = project.log(
+        veloct_logging::LogEvent::info(veloct_logging::Category::Ai, "AI model removed")
+            .with_field("provider_id", &provider_id)
+            .with_field("model_id", &model_id),
+    );
+    Ok(())
+}
+
+/// Test a provider's connection with its REAL configuration (§11.5).
+///
+/// A test that used a default URL or a placeholder credential would pass while the actual call failed, so
+/// this builds the same provider the page creator builds and exercises the model-list endpoint — which is
+/// also what §11.2 refreshes, so the two cannot disagree about whether a provider works.
+#[tauri::command]
+pub fn test_ai_provider(
+    state: State<'_, AppState>,
+    provider_id: String,
+) -> Result<veloct_ai::ConnectionTest, CommandError> {
+    let project = state.project()?;
+    let row = provider_row(&project, &provider_id)?;
+    let provider = crate::page_creator::provider_from_row(&row, &crate::credentials::get_or_none)?;
+    let client = ai_client()?;
+
+    let result = provider.test_connection(client.as_ref());
+    let _ = project.log(
+        veloct_logging::LogEvent::info(veloct_logging::Category::Ai, "AI provider tested")
+            .with_field("provider_id", &provider_id)
+            .with_field("ok", result.ok.to_string())
+            .with_field("models", result.models.to_string())
+            // The message is already redacted and never carries the credential (§18.1).
+            .with_field("message", &result.message),
+    );
+    Ok(result)
+}
+
 /// Generate a page draft. NOTHING is written (section 8.1).
 #[tauri::command]
 pub fn generate_page(

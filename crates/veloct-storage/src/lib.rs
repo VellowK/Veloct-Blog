@@ -32,6 +32,10 @@ pub use ai_settings::{
     AiFeatureRow, AiModelRow, AiProviderRow, AiRequestRecord, AiSettings,
 };
 pub use db::{open, open_at, open_in_memory, MigrationReport};
+// Re-exported because most of this crate's public API takes a `&Connection`: a caller that can call
+// `read_settings` must be able to NAME the type it passes, without taking a direct dependency on the
+// database library the shell has no other reason to know about.
+pub use rusqlite::Connection;
 pub use migrations::CURRENT_SCHEMA_VERSION;
 pub use models::{
     roll_up_logical_status, AiProtocol, AiRequestRow, AiRequestStatus, AttachmentRow,

@@ -31,11 +31,41 @@ fn not_configured(reason: &str) -> VeloctError {
     ))
 }
 
+/// Build ONE provider from a stored row, with its credential resolved by handle.
+///
+/// A provider whose handle has no stored credential is built WITHOUT one, so the call fails with the
+/// provider's own authentication message rather than with a Veloct invention: §12.1 keeps the value out of
+/// the database, and a missing one is the provider's business to report.
+///
+/// Extracted so the page creator and the §11.2 model refresh cannot build a provider two different ways —
+/// a discrepancy there would mean a provider that works for generation but not for a refresh.
+pub fn provider_from_row(
+    row: &veloct_storage::AiProviderRow,
+    credential: &dyn Fn(&str) -> Option<String>,
+) -> Result<veloct_ai::Provider> {
+    let protocol = veloct_ai::ProviderProtocol::parse(&row.protocol).ok_or_else(|| {
+        // Reported rather than guessed at: guessing which API to speak would produce a confusing failure
+        // instead of an obviously missing provider.
+        VeloctError::Invalid(format!(
+            "provider {} speaks no protocol this build knows ({:?})",
+            row.id, row.protocol
+        ))
+    })?;
+    let mut config = veloct_ai::ProviderConfig::new(&row.id, &row.name, protocol);
+    // The stored base URL replaces the protocol's default, then validation reports a bad one rather than
+    // the call failing somewhere less obvious.
+    config.base_url = row.base_url.clone();
+    config.credential_ref = row.credential_ref.clone();
+    config
+        .validate()
+        .map_err(|error| VeloctError::Invalid(format!("provider {} is misconfigured: {error}", row.id)))?;
+    let secret = row.credential_ref.as_deref().and_then(credential);
+    Ok(veloct_ai::Provider::new(config, secret))
+}
+
 /// Build the service the page creator uses, from the stored settings.
 ///
-/// The credential for each provider is fetched from the OS credential store by its HANDLE (§12.2); a
-/// provider whose handle has no stored credential is registered without one, so the call fails with the
-/// provider's own authentication message rather than with a Veloct invention.
+/// The credential for each provider is fetched from the OS credential store by its HANDLE (§12.2).
 pub fn build_service(
     settings: &AiSettings,
     credential: &dyn Fn(&str) -> Option<String>,
@@ -46,24 +76,12 @@ pub fn build_service(
         if !row.is_usable() {
             continue;
         }
-        let Some(protocol) = veloct_ai::ProviderProtocol::parse(&row.protocol) else {
-            // An unknown protocol is skipped rather than guessed at: guessing which API to speak would
-            // produce a confusing failure instead of an obviously missing provider.
-            continue;
-        };
-        let mut config = veloct_ai::ProviderConfig::new(&row.id, &row.name, protocol);
-        // The stored base URL replaces the protocol's default, then validation reports a bad one rather
-        // than the call failing somewhere less obvious.
-        config.base_url = row.base_url.clone();
-        config.credential_ref = row.credential_ref.clone();
-        config
-            .validate()
-            .map_err(|error| VeloctError::Invalid(format!("provider {} is misconfigured: {error}", row.id)))?;
-        let secret = row
-            .credential_ref
-            .as_deref()
-            .and_then(credential);
-        registry.insert(veloct_ai::Provider::new(config, secret));
+        match provider_from_row(row, credential) {
+            Ok(provider) => registry.insert(provider),
+            // A row that cannot be built at all is skipped, and the rest still work: one misconfigured
+            // provider must not take the whole service down.
+            Err(_) => continue,
+        }
     }
 
     if registry.is_empty() {
@@ -242,6 +260,11 @@ pub struct ModelView {
     pub model_id: String,
     pub label: String,
     pub context_window: Option<i64>,
+    /// `fetched` or `manual` (§11.2).
+    ///
+    /// Carried to the window because the difference is a promise: a fetched model can disappear when the
+    /// provider stops offering it, and a manual one cannot.
+    pub source: String,
 }
 
 impl From<&AiModelRow> for ModelView {
@@ -251,8 +274,173 @@ impl From<&AiModelRow> for ModelView {
             model_id: row.model_id.clone(),
             label: row.label().to_string(),
             context_window: row.context_window,
+            source: row.source.clone(),
         }
     }
+}
+
+/// The row id for one provider's model.
+///
+/// A composite rather than a random id, because §11.2's refresh REPLACES a provider's rows: a stable id
+/// means a refresh updates what is there instead of accumulating duplicates, and the primary key enforces
+/// that one provider cannot list the same model twice.
+pub fn model_row_id(provider_id: &str, model_id: &str) -> String {
+    format!("{provider_id}:{model_id}")
+}
+
+/// The models already stored for one provider, as the crate's own type.
+///
+/// A row whose `source` this build does not recognise is treated as FETCHED, not as manual: the safe
+/// direction is to let a refresh replace something unclassified, because the alternative is an entry that
+/// can never be removed.
+pub fn stored_models_for(
+    connection: &veloct_storage::Connection,
+    provider_id: &str,
+) -> Result<Vec<veloct_ai::ProviderModel>> {
+    let rows = veloct_storage::read_models(connection)?;
+    Ok(rows
+        .into_iter()
+        .filter(|row| row.provider_id == provider_id)
+        .map(|row| veloct_ai::ProviderModel {
+            model_id: row.model_id,
+            display_name: row.display_name,
+            source: veloct_ai::ModelSource::parse(&row.source)
+                .unwrap_or(veloct_ai::ModelSource::Fetched),
+            context_window: row.context_window.and_then(|value| u64::try_from(value).ok()),
+        })
+        .collect())
+}
+
+/// Write one provider's model list, replacing whatever was there.
+pub fn store_models(
+    connection: &mut veloct_storage::Connection,
+    provider_id: &str,
+    models: &[veloct_ai::ProviderModel],
+    now: &str,
+) -> Result<Vec<ModelView>> {
+    let rows: Vec<AiModelRow> = models
+        .iter()
+        .map(|model| AiModelRow {
+            id: model_row_id(provider_id, &model.model_id),
+            provider_id: provider_id.to_string(),
+            model_id: model.model_id.clone(),
+            display_name: model.display_name.clone(),
+            source: model.source.as_str().to_string(),
+            context_window: model
+                .context_window
+                .and_then(|value| i64::try_from(value).ok()),
+            last_seen_at: Some(now.to_string()),
+        })
+        .collect();
+
+    veloct_storage::replace_models(connection, provider_id, &rows)?;
+    Ok(rows.iter().map(ModelView::from).collect())
+}
+
+/// What a model refresh did (§11.2).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ModelRefreshView {
+    pub provider_id: String,
+    /// How many models the provider reported.
+    pub fetched: usize,
+    /// How many hand-added models the refresh kept.
+    ///
+    /// Reported separately because it is the whole point of §11.2's merge rule: a user who added a private
+    /// model must be able to SEE that a refresh did not quietly drop it.
+    pub kept_manual: usize,
+    /// The list as stored afterwards.
+    pub models: Vec<ModelView>,
+    /// A sentence for the window.
+    pub message: String,
+}
+
+/// Fetch one provider's model list and store it, keeping the user's manual entries (§11.2).
+pub fn refresh_models(
+    row: &veloct_storage::AiProviderRow,
+    credential: &dyn Fn(&str) -> Option<String>,
+    client: &dyn veloct_core::http::HttpClient,
+    connection: &mut veloct_storage::Connection,
+    now: &str,
+) -> Result<ModelRefreshView> {
+    if !row.is_usable() {
+        return Err(VeloctError::Invalid(format!(
+            "provider {} is disabled or has no base URL, so its models cannot be fetched",
+            row.id
+        )));
+    }
+    let provider = provider_from_row(row, credential)?;
+
+    // §11.2's merge rule is the crate's, not re-implemented here: a model the user added by hand survives
+    // a refresh that does not return it.
+    let existing = stored_models_for(connection, &row.id)?;
+    let fetched = provider.list_models(client)?;
+    let merged = provider.merge_models(&existing, &fetched);
+
+    let kept_manual = merged
+        .iter()
+        .filter(|model| model.source == veloct_ai::ModelSource::Manual)
+        .count();
+    let models = store_models(connection, &row.id, &merged, now)?;
+
+    Ok(ModelRefreshView {
+        provider_id: row.id.clone(),
+        fetched: fetched.len(),
+        kept_manual,
+        message: format!(
+            "{} 返回 {} 个模型,另外保留了 {} 个手动添加的模型。",
+            row.name,
+            fetched.len(),
+            kept_manual
+        ),
+        models,
+    })
+}
+
+/// Add a model by hand (§11.2), which a refresh will keep.
+pub fn add_manual_model(
+    connection: &mut veloct_storage::Connection,
+    provider_id: &str,
+    model_id: &str,
+    display_name: Option<String>,
+    now: &str,
+) -> Result<Vec<ModelView>> {
+    if model_id.trim().is_empty() {
+        return Err(VeloctError::Invalid(
+            "a model needs an id; an empty one would produce a request the provider rejects".into(),
+        ));
+    }
+    let mut models = stored_models_for(connection, provider_id)?;
+    // A manual entry that repeats a fetched one is the same model; the manual source is the one that must
+    // survive, so it wins rather than appearing twice.
+    models.retain(|model| model.model_id != model_id);
+    models.push(veloct_ai::ProviderModel {
+        model_id: model_id.to_string(),
+        display_name,
+        source: veloct_ai::ModelSource::Manual,
+        context_window: None,
+    });
+    models.sort_by(|a, b| a.model_id.cmp(&b.model_id));
+    store_models(connection, provider_id, &models, now)
+}
+
+/// Remove one stored model.
+///
+/// §11.2 says a user may add a model by hand; without this they could not correct a typo, and `replace`
+/// semantics would leave the wrong entry selectable forever.
+pub fn delete_model(
+    connection: &mut veloct_storage::Connection,
+    provider_id: &str,
+    model_id: &str,
+    now: &str,
+) -> Result<bool> {
+    let mut models = stored_models_for(connection, provider_id)?;
+    let before = models.len();
+    models.retain(|model| model.model_id != model_id);
+    if models.len() == before {
+        return Ok(false);
+    }
+    store_models(connection, provider_id, &models, now)?;
+    Ok(true)
 }
 
 /// A feature mapping as the settings page shows it.
@@ -793,5 +981,231 @@ mod tests {
             status: Some(500),
         };
         assert_eq!(generation_error_code(&failure), failure.code());
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Section 11.2's model discovery and section 11.5's connection test.
+    //
+    // These drive the REAL write path against a real (temporary) SQLite database and a fake HTTP client,
+    // because the gap this closes was not a missing rule — `merge_models` and `test_connection` already
+    // existed in `veloct-ai` — but a missing entry point. A test at the crate level would have passed all
+    // along while nothing above the crate ever called them.
+    // ---------------------------------------------------------------------------------------------
+
+    fn database(dir: &std::path::Path) -> veloct_storage::Connection {
+        let (connection, _) = veloct_storage::open(dir, &veloct_core::SystemClock).unwrap();
+        veloct_storage::upsert_provider(&connection, &provider("p1", true)).unwrap();
+        connection
+    }
+
+    /// The credential the store resolves for the fixture provider's handle.
+    fn credential(handle: &str) -> Option<String> {
+        (handle == "veloct:p1:key").then(|| "sk-example-secret".to_string())
+    }
+
+    fn no_credential(_handle: &str) -> Option<String> {
+        None
+    }
+
+    /// A model-list answer in the OpenAI-compatible envelope.
+    fn models_response(ids: &[&str]) -> serde_json::Value {
+        serde_json::json!({
+            "data": ids.iter().map(|id| serde_json::json!({ "id": id })).collect::<Vec<_>>()
+        })
+    }
+
+    #[test]
+    fn a_refresh_stores_what_the_provider_returned_and_keeps_a_hand_added_model() {
+        // handoff.md section 11.2's three capabilities in ONE path: the list is fetched, a hand-added model
+        // survives, and the credential comes from the OS store by handle (section 12.2).
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut connection = database(dir.path());
+
+        add_manual_model(&mut connection, "p1", "my-private-model", None, NOW).unwrap();
+
+        let client = veloct_core::http::FakeHttpClient::new()
+            .on_url_contains("/models", 200, models_response(&["gpt-4o", "gpt-4o-mini"]).to_string());
+        let view = refresh_models(
+            &provider("p1", true),
+            &credential,
+            &client,
+            &mut connection,
+            NOW,
+        )
+        .unwrap();
+
+        assert_eq!(view.fetched, 2);
+        assert_eq!(view.kept_manual, 1, "the hand-added model survived the refresh");
+        assert_eq!(view.models.len(), 3);
+        assert!(view.message.contains("2"), "{}", view.message);
+        assert!(view.message.contains('1'), "{}", view.message);
+
+        let manual = view
+            .models
+            .iter()
+            .find(|model| model.model_id == "my-private-model")
+            .expect("the manual model is listed");
+        assert_eq!(manual.source, "manual");
+        assert_eq!(manual.provider_id, "p1");
+
+        // And it is really in the database, not only in the returned view.
+        let stored = veloct_storage::read_models(&connection).unwrap();
+        assert_eq!(stored.len(), 3);
+        assert!(stored
+            .iter()
+            .any(|row| row.model_id == "my-private-model" && row.source == "manual"));
+        assert!(stored
+            .iter()
+            .any(|row| row.model_id == "gpt-4o" && row.source == "fetched"));
+        // The row id is the composite, so a second refresh updates rather than duplicating.
+        assert_eq!(
+            stored.iter().find(|row| row.model_id == "gpt-4o").unwrap().id,
+            model_row_id("p1", "gpt-4o")
+        );
+
+        // The credential travelled from the handle, not from the row.
+        let requests = client.recorded();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].method, veloct_core::http::HttpMethod::Get);
+        assert!(requests[0].url.contains("/models"), "{}", requests[0].url);
+        assert!(
+            requests[0]
+                .headers
+                .iter()
+                .any(|(name, value)| name.eq_ignore_ascii_case("authorization")
+                    && value == "Bearer sk-example-secret"),
+            "{:?}",
+            requests[0].headers
+        );
+    }
+
+    #[test]
+    fn a_model_the_provider_no_longer_offers_disappears_while_manual_ones_stay() {
+        // `replace_models` is a REPLACE, and this is why: a model the provider dropped would otherwise stay
+        // selectable forever. The manual entry is the exception, and it is the crate's merge that decides.
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut connection = database(dir.path());
+        add_manual_model(&mut connection, "p1", "my-private-model", None, NOW).unwrap();
+
+        let two = veloct_core::http::FakeHttpClient::new()
+            .on_url_contains("/models", 200, models_response(&["gpt-4o", "gpt-4o-mini"]).to_string());
+        refresh_models(&provider("p1", true), &credential, &two, &mut connection, NOW).unwrap();
+
+        let one = veloct_core::http::FakeHttpClient::new()
+            .on_url_contains("/models", 200, models_response(&["gpt-4o"]).to_string());
+        let view = refresh_models(&provider("p1", true), &credential, &one, &mut connection, NOW).unwrap();
+
+        assert_eq!(view.fetched, 1);
+        assert_eq!(view.kept_manual, 1);
+        let ids: Vec<&str> = view.models.iter().map(|m| m.model_id.as_str()).collect();
+        assert!(ids.contains(&"gpt-4o"), "{ids:?}");
+        assert!(ids.contains(&"my-private-model"), "{ids:?}");
+        assert!(
+            !ids.contains(&"gpt-4o-mini"),
+            "a model the provider stopped offering must not stay selectable: {ids:?}"
+        );
+    }
+
+    #[test]
+    fn a_hand_added_model_can_be_removed_and_removing_nothing_is_reported() {
+        // Section 11.2 lets a user add a model by hand, so it must let them correct a typo: without this the
+        // refresh's replace semantics would never touch the entry they want gone.
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut connection = database(dir.path());
+
+        add_manual_model(&mut connection, "p1", "typo-model", None, NOW).unwrap();
+        assert!(delete_model(&mut connection, "p1", "typo-model", NOW).unwrap());
+        assert!(veloct_storage::read_models(&connection).unwrap().is_empty());
+
+        // Removing something that is not there is reported as "nothing removed", not as a success.
+        assert!(!delete_model(&mut connection, "p1", "typo-model", NOW).unwrap());
+    }
+
+    #[test]
+    fn a_hand_added_model_needs_an_id_and_a_duplicate_replaces_rather_than_doubles() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut connection = database(dir.path());
+
+        let error = add_manual_model(&mut connection, "p1", "   ", None, NOW).unwrap_err();
+        assert!(error.to_string().contains("needs an id"), "{error}");
+
+        add_manual_model(&mut connection, "p1", "gpt-4o", Some("Mine".to_string()), NOW).unwrap();
+        // The same id added again is the same model: one row, and the manual source wins so a refresh keeps it.
+        let models = add_manual_model(&mut connection, "p1", "gpt-4o", Some("Mine again".to_string()), NOW)
+            .unwrap();
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].source, "manual");
+        assert_eq!(models[0].label, "Mine again");
+    }
+
+    #[test]
+    fn a_provider_that_cannot_be_built_is_reported_rather_than_attempted() {
+        // An unknown protocol is REPORTED here rather than skipped as `build_service` skips it: an explicit
+        // "fetch this provider's models" action must not answer with an empty success.
+        let mut unknown = provider("p1", true);
+        unknown.protocol = "gemini".to_string();
+        let error = provider_from_row(&unknown, &credential).unwrap_err();
+        assert!(error.to_string().contains("no protocol this build knows"), "{error}");
+
+        let mut url_less = provider("p1", true);
+        url_less.base_url = String::new();
+        let error = provider_from_row(&url_less, &credential).unwrap_err();
+        assert!(error.to_string().contains("misconfigured"), "{error}");
+
+        // And a refresh of a DISABLED provider says so instead of fetching.
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut connection = database(dir.path());
+        let client = veloct_core::http::FakeHttpClient::new();
+        let error = refresh_models(
+            &provider("p1", false),
+            &credential,
+            &client,
+            &mut connection,
+            NOW,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("disabled"), "{error}");
+        assert_eq!(
+            client.request_count(),
+            0,
+            "a disabled provider is refused before any request"
+        );
+    }
+
+    #[test]
+    fn a_connection_test_reports_both_outcomes_with_a_reason_and_never_the_secret() {
+        // handoff.md section 11.5: the test uses the REAL configuration and shows success OR the failure
+        // reason. A test that used a placeholder would pass while the real call failed.
+        let ok = veloct_core::http::FakeHttpClient::new()
+            .on_url_contains("/models", 200, models_response(&["gpt-4o", "gpt-4o-mini"]).to_string());
+        let said = provider_from_row(&provider("p1", true), &credential)
+            .unwrap()
+            .test_connection(&ok);
+        assert!(said.ok, "{}", said.message);
+        assert_eq!(said.models, 2);
+        assert!(!said.message.contains("sk-example-secret"), "{}", said.message);
+
+        let refused = veloct_core::http::FakeHttpClient::new().always(
+            401,
+            r#"{"error":{"message":"Incorrect API key provided: sk-example-secret"}}"#,
+        );
+        let said = provider_from_row(&provider("p1", true), &credential)
+            .unwrap()
+            .test_connection(&refused);
+        assert!(!said.ok);
+        assert!(said.message.contains("401"), "{}", said.message);
+        // The provider's own body can echo the key, which is exactly why the transport redacts it before
+        // the message is built (section 18.1) and why the message is the only thing logged.
+        assert!(
+            !said.message.contains("sk-example-secret"),
+            "the credential reached the message: {}",
+            said.message
+        );
+
+        // A missing credential is not a construction failure: the provider is asked and reports its own
+        // authentication result, which is the message a user can act on.
+        let unauthenticated = provider_from_row(&provider("p1", true), &no_credential).unwrap();
+        let said = unauthenticated.test_connection(&ok);
+        assert!(!said.ok, "a provider with no credential cannot be reachable");
     }
 }
