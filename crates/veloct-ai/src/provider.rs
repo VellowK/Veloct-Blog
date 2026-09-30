@@ -147,6 +147,30 @@ pub enum ModelSource {
     Manual,
 }
 
+impl ModelSource {
+    /// The stored spelling.
+    ///
+    /// The `ai_models.source` column is text, and the merge rule depends on telling a manual entry from a
+    /// fetched one — so the spelling lives HERE, next to the enum, rather than as a string literal at each
+    /// call site. A test asserts it agrees with the serde spelling, so the database and the JSON boundary
+    /// cannot drift apart.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Fetched => "fetched",
+            Self::Manual => "manual",
+        }
+    }
+
+    /// Read the stored spelling back, or `None` for a value this build does not know.
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "fetched" => Some(Self::Fetched),
+            "manual" => Some(Self::Manual),
+            _ => None,
+        }
+    }
+}
+
 /// A provider plus a model, which is what a feature assignment stores.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModelRef {
@@ -259,6 +283,26 @@ pub struct Provider {
     config: ProviderConfig,
     /// Resolved at call time from the credential store, never stored here.
     credential: Option<String>,
+}
+
+impl std::fmt::Debug for Provider {
+    /// Hand-written rather than derived, because `credential` is a plain `String`: a derived `Debug` would
+    /// print it, and the first person to log a provider would leak a key (§18.1). The output carries
+    /// whether a credential is present, never what it is — the same shape `Redacted` uses, and a test
+    /// asserts it.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Provider")
+            .field("config", &self.config)
+            .field(
+                "credential",
+                &if self.credential.is_some() {
+                    "Redacted(<secret>)"
+                } else {
+                    "None"
+                },
+            )
+            .finish()
+    }
 }
 
 impl Provider {
@@ -419,12 +463,27 @@ impl Provider {
         self.parse_models_response(response)
     }
 
+    /// The provider's own refusal, with the credential scrubbed out of it.
+    ///
+    /// A provider's error body can ECHO THE KEY BACK — OpenAI's "Incorrect API key provided: sk-…" is the
+    /// documented example of the case `veloct_core::secret::redact_with_known` exists for — and this message
+    /// is shown in the window and written to the log. Redacting HERE, where the credential is known, is what
+    /// makes §18.1 true for both, and it is the source rather than the sink: a caller cannot forget to do it.
+    ///
+    /// Found by a test rather than by review: the §11.5 connection test asserted that its message could not
+    /// contain the key, and it could.
+    fn failure(&self, status: u16, body: &str) -> veloct_core::VeloctError {
+        let known: Vec<&str> = self.credential.as_deref().into_iter().collect();
+        let scrubbed = veloct_core::secret::redact_with_known(body, &known);
+        AiError::from_status(status, &scrubbed)
+            .with_provider(self.config.id.clone(), String::new())
+            .into()
+    }
+
     /// Turn an HTTP response into a chat response, classifying every failure.
     fn parse_chat_response(&self, response: HttpResponse) -> Result<ChatResponse> {
         if !response.is_success() {
-            return Err(AiError::from_status(response.status, &response.text())
-                .with_provider(self.config.id.clone(), String::new())
-                .into());
+            return Err(self.failure(response.status, &response.text()));
         }
 
         let value: serde_json::Value = response.json().map_err(|_| {
@@ -505,9 +564,7 @@ impl Provider {
     /// Parse a model list, tolerating each protocol's envelope.
     fn parse_models_response(&self, response: HttpResponse) -> Result<Vec<ProviderModel>> {
         if !response.is_success() {
-            return Err(AiError::from_status(response.status, &response.text())
-                .with_provider(self.config.id.clone(), String::new())
-                .into());
+            return Err(self.failure(response.status, &response.text()));
         }
 
         let value: serde_json::Value = response.json().map_err(|_| {
@@ -645,6 +702,97 @@ mod tests {
         );
         assert_eq!(ProviderProtocol::parse("ollama"), Some(ProviderProtocol::Ollama));
         assert_eq!(ProviderProtocol::parse("gemini"), None);
+    }
+
+    #[test]
+    fn a_model_source_has_one_spelling_for_the_database_and_the_json_boundary() {
+        // The `ai_models.source` column is text and the refresh's merge rule turns on it, so the two
+        // spellings must agree. Asserting it here is what stops the database and the JSON from drifting.
+        for source in [ModelSource::Fetched, ModelSource::Manual] {
+            assert_eq!(ModelSource::parse(source.as_str()), Some(source));
+            let json = serde_json::to_string(&source).unwrap();
+            assert_eq!(
+                json,
+                format!("{:?}", source.as_str()),
+                "the serde spelling and the stored spelling must be the same"
+            );
+        }
+        // An unknown value is `None` rather than a default, so a row this build cannot classify is
+        // reported instead of being silently treated as fetched and then deleted by a refresh.
+        assert_eq!(ModelSource::parse("discovered"), None);
+        assert_eq!(ModelSource::parse(""), None);
+    }
+
+    #[test]
+    fn a_provider_never_prints_its_credential() {
+        // section 18.1. The credential is a plain `String` on this struct, so a DERIVED Debug would print
+        // it — which is exactly what the hand-written impl exists to prevent. Asserting it here means the
+        // derive cannot be re-added without a failure.
+        let printed = format!("{:?}", provider(ProviderProtocol::OpenAiCompatible));
+        assert!(printed.contains("p1"), "the configuration is shown: {printed}");
+        assert!(
+            !printed.contains("secret-value"),
+            "the credential reached a Debug print: {printed}"
+        );
+        assert!(printed.contains("Redacted(<secret>)"), "{printed}");
+
+        // A provider with NO credential says so rather than showing an empty secret.
+        let without = Provider::new(
+            ProviderConfig::new("p2", "Local", ProviderProtocol::Ollama),
+            None,
+        );
+        let printed = format!("{without:?}");
+        assert!(printed.contains("None"), "{printed}");
+    }
+
+    #[test]
+    fn a_provider_error_body_cannot_leak_the_credential_through_the_message() {
+        // THE BUG THIS FIXED, found by the section 11.5 connection test one layer up: real providers echo the
+        // key back ("Incorrect API key provided: sk-..."), and that body was becoming the error message —
+        // which the window shows and the log stores. Two layers are asserted, because either alone is
+        // insufficient and confusing them is easy:
+        //
+        // 1. the EXACT value the provider holds, which only the caller can know;
+        // 2. a realistic key SHAPE the caller never saw, which only the pattern layer can catch.
+        let held = "secret-value";
+        let echoing = format!("{{\"error\":{{\"message\":\"Incorrect API key provided: {held}\"}}}}");
+
+        let models = FakeHttpClient::new().always(401, echoing.clone());
+        let error = provider(ProviderProtocol::OpenAiCompatible)
+            .list_models(&models)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("401"), "the status is still reported: {error}");
+        assert!(
+            !error.contains(held),
+            "the credential the provider HOLDS reached the message: {error}"
+        );
+        assert!(error.contains("[REDACTED]"), "{error}");
+
+        // The same body on the chat path, because fixing one builder and not the other leaves a leak.
+        let chat = FakeHttpClient::new().always(401, echoing);
+        let error = provider(ProviderProtocol::OpenAiCompatible)
+            .chat(
+                &chat,
+                &ChatRequest::new("gpt-4o", vec![ChatMessage::user("hi")]),
+            )
+            .unwrap_err()
+            .to_string();
+        assert!(!error.contains(held), "{error}");
+
+        // A key the caller has NEVER held: the pattern layer's job, and the reason `redact_with_known` has
+        // two layers at all. The shape has to be a realistic one — the OpenAI pattern requires 20+ characters
+        // after `sk-`, and a shorter string is deliberately left alone so ordinary prose is not mangled.
+        let unknown = Provider::new(
+            ProviderConfig::new("p2", "Other", ProviderProtocol::OpenAiCompatible),
+            None,
+        );
+        let echoed = FakeHttpClient::new().always(401, "bad key: sk-proj-abcdefghijklmnopqrstuvwxyz");
+        let error = unknown.list_models(&echoed).unwrap_err().to_string();
+        assert!(
+            !error.contains("sk-proj-abcdefghijklmnopqrstuvwxyz"),
+            "the pattern layer must catch a key the caller never held: {error}"
+        );
     }
 
     #[test]
