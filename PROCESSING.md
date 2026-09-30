@@ -10,10 +10,9 @@ locked product contract and always wins, and `docs/spec/*` records the decisions
 3. `README.md` — how to build and test on this machine.
 4. `docs/spec/00-architecture.md` — the ADRs, including the two added by these rounds (ADR-0015, ADR-0016).
 
-**Before changing anything**, run §3.1 and make the six numbers match. The working tree is DIRTY (§1.1):
-the cloud-target and AI rounds are committed, and the §13 storage-target round is not — so this file's
-numbers describe that one uncommitted round, and deciding what to do about it is the first thing this
-file asks of you.
+**Before changing anything**, run §3.1 and make the six numbers match. They were measured on commit
+`2496604`, and the working tree is **CLEAN** (§1.1) — every round is committed, so nothing here is a
+claim about work that no checkout can reproduce.
 
 **The single most useful habit for this repository:** when a contract clause says a feature exists,
 `grep` for a caller before believing it. Two of the three rounds here found their work that way — a whole
@@ -26,25 +25,25 @@ round found a rule in the same position (§5.10.1: a validation arm whose only r
 
 | Fact | Value |
 |---|---|
-| Last commit | `bf75265 Record the four commits and correct PROCESSING.md to the working tree it describes` |
-| Working tree | **DIRTY** — the §13 storage-target round is uncommitted (11 modified paths, 2 new). See §1.1 |
-| Rust tests | **1317 passed, 0 failed** (+22; 17 workspace crates + `src-tauri`) |
-| Frontend tests | **65 passed** (vitest: 24 `frontmatter` + 41 new `storageTargetForm`) |
+| Last commit | `2496604 Make the section 13 storage targets configurable, and expose section 13.8's cleanup` |
+| Working tree | **CLEAN** — the §13 round and the storage-kind follow-up are committed as `2496604`; the only commit after it carries this recording (§1.1) |
+| Rust tests | **1324 passed, 0 failed, 5 ignored** (+29 over `bf75265`'s 1295; 17 workspace crates + `src-tauri`) |
+| Frontend tests | **71 passed** (vitest: 24 `frontmatter` + 47 `storageTargetForm`) |
 | `clippy --workspace --all-targets` | **0 warnings** |
-| Site build verifier | **46/46 checks** — **NOT re-run this round**: `site/` is untouched by it, and §J names the command behind every number here |
-| Test matrix | **207 rows at `I`, 0 at `P`** (198 + 9 for §13's form and cleanup), out of **227** rows across tables A–G |
-| Shell commands registered | **71** (70 + `delete_remote_object`) |
+| Site build verifier | **46/46 checks** — **NOT re-run this round**: `site/` is untouched by it, and §J of the matrix names the command behind every number here |
+| Test matrix | **209 rows at `I`, 0 at `P`** (198 + 11 for §13's form, its cleanup and the storage-kind report), out of **229** rows across tables A–G |
+| Shell commands registered | **72** (70 + `delete_remote_object` + `storage_kinds`) |
 
 Every command above exits **0** on success. That matters and is itself a recent fix — see §2.
 
-**These numbers describe the revision §13's round left on disk**, and the only edits afterwards were
-to `docs/spec/02-test-matrix.md` and this file. **One thing has changed since**: `storage_kinds`
-(§5.5's follow-up, below) landed in `crates/veloct-attach`, `src-tauri` and `src` while these
-documents were being written, so §1 is one increment behind the tree. That is stated rather than
-hidden: for reference, a re-run over that later tree exited **0** with **1324 Rust tests and 71
-frontend tests** — those are NOT this table's numbers, and `docs/spec/02-test-matrix.md` §J says
-which run they came from and why they are not recorded as the totals. The next task re-runs §3.1
-over the finished tree and makes them the totals.
+**These numbers were measured on commit `2496604` and are reproducible from it**, which is the point
+of the commit: before it, four rounds of work had been verified in a working tree and never in a
+checkout, and a number that is true of one directory on one machine is a weaker claim than it looks.
+`docs/spec/02-test-matrix.md` §J holds the run, the per-crate rows that sum to 1324 exactly, and the
+earlier snapshot it supersedes. The commit that carries the paragraph you are reading came
+immediately after `2496604` and changes only this file and the matrix, which no verify command reads —
+so if §3.1 does not reproduce these numbers from a checkout of `2496604`, something outside this
+repository changed and that is the first thing to find out.
 
 ### 1.1 What these rounds changed
 
@@ -80,9 +79,6 @@ crates/veloct-app/src/cloud_backup.rs NEW  cloud targets in SQLite + the §22.7 
 Everything else there was edits to existing files, recorded in `docs/spec/00-architecture.md`
 (ADR-0015, ADR-0016) and as matrix rows `C11` and `D104`–`D129`.
 
-**UNCOMMITTED, and therefore NOT yet reproducible from a checkout: the §13 storage-target round.**
-`git status` is the truth, and this file must not claim a commit that does not exist.
-
 4. **§13's storage targets, and §13.8's explicit remote cleanup** — the local directory became a kind
    of its own (`StorageKind::Local`) instead of the thing an unconfigured SFTP target SILENTLY degraded
    into; `upload_attachment` and the new `delete_remote_object` build their target through ONE routing
@@ -92,26 +88,38 @@ Everything else there was edits to existing files, recorded in `docs/spec/00-arc
    the window gained the storage-target FORM plus §13.2.2's eligibility reason, read BEFORE an upload
    is offered. **+22 Rust tests (1295 → 1317) and +41 frontend tests (24 → 65)**, clippy clean,
    `build:ui` clean. §5.5 is what this closed; §5.10 is what it left.
+5. **The storage-kind report (§5.5's follow-up)** — `StorageKind::ALL` became the ONE canonical kind
+   list, guarded by a test whose expected array is written out beside an exhaustive match with no
+   wildcard arm, so a kind added to the enum does not compile until it is named there;
+   `is_implemented` was derived from `unimplemented_reason` so that split is written down once; and the
+   `storage_kinds` command reports each kind's `implemented`/`unimplemented_reason` from those crate
+   functions, taking NO project state, so the window can say "SFTP has no adapter in this build" BEFORE
+   a target of that kind exists. **+7 Rust tests (1317 → 1324) and +6 frontend tests (65 → 71)**, clippy
+   clean, `build:ui` clean. See §5.5 and matrix rows D139–D140.
 
-`git status --short` shows **13 entries** — 11 modified paths and 2 new ones:
+**ALL OF IT IS COMMITTED: `2496604`** — "Make the section 13 storage targets configurable, and expose
+section 13.8's cleanup" — so the numbers in §1 are reproducible from a checkout rather than from one
+working directory. `git status --short` is **empty**, and the commit after it carries this recording.
+
+The paths that commit changed, so the next agent knows what is new without reading the whole diff:
 
 ```text
-crates/veloct-attach/src/lib.rs,storage.rs,targets.rs,transaction.rs   the Local kind, the target routing model, §13.8's transaction
+crates/veloct-attach/src/lib.rs,storage.rs,targets.rs,transaction.rs   the Local kind, StorageKind::ALL, the target routing model, §13.8's transaction
 crates/veloct-app/src/attachments.rs,lib.rs                            the service half: delete_remote_object, RemoteDeleteView, ObjectView.storage_target_id
-src-tauri/src/attachments.rs,lib.rs                                    the two commands, storage_target_for, the registered command
-src/AttachmentPanel.tsx,lib/api.ts,styles.css                          the form, the cleanup confirm step, the eligibility reason
-src/lib/storageTargetForm.ts                                           NEW  the form's decisions, as a pure module (41 tests)
-tests/storageTargetForm.test.ts                                        NEW  those 41 tests
+src-tauri/src/attachments.rs,lib.rs                                    storage_target_for, the three commands, StorageTargetView's S3 fields
+src/AttachmentPanel.tsx,lib/api.ts,styles.css                          the form, the cleanup confirm step, the eligibility reason, the kind-gap report
+src/lib/storageTargetForm.ts                                           NEW  the form's decisions, as a pure module (47 tests)
+tests/storageTargetForm.test.ts                                        NEW  those tests
 ```
 
 The many `*.log` files in the working directory are this session's captured verification output, and
 `.gitignore` line 25 ignores `*.log`, so they are NOT part of the change set; they are safe to read
 (they are the raw evidence for the numbers in §1) and safe to delete.
 
-**The matrix at 207 `I` / 0 `P` is a claim about recorded evidence, not proof that §28 is met.**
+**The matrix at 209 `I` / 0 `P` is a claim about recorded evidence, not proof that §28 is met.**
 It has been wrong in that direction before: at one point it read 93 `I` while the desktop
 workbench did not exist at all. When you find a gap, the matrix row is what is wrong.
-The rows this round added (D130–D138) each name the test AND the crate, and where a row cannot
+The rows this round added (D130–D140) each name the test AND the crate, and where a row cannot
 assert something (an untested refusal, a command body no test drives) it says so in the row as a
 **stated limit** rather than implying coverage — `docs/spec/02-test-matrix.md` §I makes that the rule.
 
@@ -256,10 +264,10 @@ Two things to keep:
 ### 3.1 The commands to run before claiming anything
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\cargo.ps1 test --workspace     # exit 0, 1317 passed, 5 ignored
+powershell -ExecutionPolicy Bypass -File .\scripts\cargo.ps1 test --workspace     # exit 0, 1324 passed, 5 ignored
 powershell -ExecutionPolicy Bypass -File .\scripts\cargo.ps1 clippy --workspace --all-targets
 powershell -ExecutionPolicy Bypass -File .\scripts\build-sidecar.ps1 -Check
-cmd /c "npm.cmd run test:ui"                                                       # 65 passed
+cmd /c "npm.cmd run test:ui"                                                       # 71 passed
 cmd /c "npm.cmd run build:ui"                                                      # tsc clean
 # in site/:
 $env:VELOCT_BUILD_TIME="2026-01-01T12:00:00.000Z"; npm.cmd run build; node scripts/verify-build.mjs
@@ -278,12 +286,13 @@ when you touch the areas they cover:
 
 ## 4. What IS implemented
 
-All numbers are test counts. The matrix holds **227 rows across tables A-G** (A 23, B 14,
-C 12, D 140, E 21, F 6, G 11) plus a separate **20-row H table** which IS the `handoff.md` §28
-acceptance checklist, one row per headline requirement. **207 of the A-G rows carry a status and
-all 207 are `I`**; the remaining 20 are table headers or rows whose status lives in a linked row.
-The nine new ones are `D130`–`D138`, which are §13's form, the local kind, the end of the
-unconfigured-SFTP degradation, §13.8's explicit cleanup and §13.2.2's reason.
+All numbers are test counts. The matrix holds **229 rows across tables A-G** (A 23, B 14,
+C 12, D 142, E 21, F 6, G 11) plus a separate **20-row H table** which IS the `handoff.md` §28
+acceptance checklist, one row per headline requirement. **209 of the A-G rows carry a status and
+all 209 are `I`**; the remaining 20 are table headers or rows whose status lives in a linked row.
+The eleven new ones are `D130`–`D140`: §13's form, the local kind, the end of the
+unconfigured-SFTP degradation, §13.8's explicit cleanup, §13.2.2's reason, and the storage-kind
+report the window reads before a target exists.
 
 **The H table is the one to read when judging completion.** It is short, it mirrors §28 clause
 by clause, and each row names the evidence it requires.
@@ -306,8 +315,8 @@ by clause, and each row names the evidence it requires.
 | `veloct-s3` | S3 / S3-compatible, ONCE: SigV4 (`CanonicalRequest`, `uri_encode`, the signing-key chain), and `S3Client` (streamed put, HEAD, paginated LIST, DELETE, a signed connection test). No policy either (ADR-0016) |
 | `veloct-backup` | Selection rules, gzip archive + manifest, secret scan, staging restore, retention, target orchestration, **the GitHub and S3 cloud backup targets — §17.2 verified against the repository, and S3's streamed upload plus the bucket's own timestamps** |
 | `veloct-app` | Orchestration services: attachments, backup/restore, deploy, autobackup, **cloud backup targets in SQLite + the run record**, plus `CommandError` |
-| `src-tauri` | The Tauri shell: **71 registered commands**, `AppState`, preview wiring, credential store (keyring), sidecar resolution, **the storage-target commands including §13.8's `delete_remote_object`** |
-| `src/` | The workbench: 3-pane layout, **Tiptap WYSIWYG** editor with a Markdown view, draggable split with a REAL Astro iframe preview, autosave, conflict UI, log page, **AI settings with model discovery, a connection test and a model list**, page creator, attachments **with the storage-target FORM, §13.8's remote cleanup and §13.2.2's eligibility reason**, publish, backups (including cloud targets), deploy |
+| `src-tauri` | The Tauri shell: **72 registered commands**, `AppState`, preview wiring, credential store (keyring), sidecar resolution, **the storage-target commands including §13.8's `delete_remote_object` and `storage_kinds`, which reports each kind's adapter status from the crate without touching project state** |
+| `src/` | The workbench: 3-pane layout, **Tiptap WYSIWYG** editor with a Markdown view, draggable split with a REAL Astro iframe preview, autosave, conflict UI, log page, **AI settings with model discovery, a connection test and a model list**, page creator, attachments **with the storage-target FORM, §13.8's remote cleanup, §13.2.2's eligibility reason and the kind-gap report read before the first save**, publish, backups (including cloud targets), deploy |
 
 **Verified end-to-end against real processes**, not only unit tests:
 
@@ -327,7 +336,7 @@ believing any summary, including this one. Judged against the evidence that exis
 | # | Requirement | Honest verdict |
 |---|---|---|
 | H1 | Create and manage a project | **done** — `ProjectService`, 70 shell commands |
-| H2 | Markdown edit, autosave 2 s / 30 s / save-on-close | **done** — `src/lib/autosave.ts`, 65 frontend tests |
+| H2 | Markdown edit, autosave 2 s / 30 s / save-on-close | **done** — `src/lib/autosave.ts`, 71 frontend tests |
 | H3 | SQLite index rebuilds | **done** — `veloct-storage::rebuild` |
 | H4 | Real Astro live preview, same project as production | **done** — sidecar smoke test: HTTP 200, article route 200 |
 | H5 | WIP control, stable URL, finished redirect | **done** |
@@ -340,7 +349,7 @@ believing any summary, including this one. Judged against the evidence that exis
 | H12 | One build per publish, all targets share it | **done** |
 | H13 | Failed target re-publish by original Release | **done** — `resendable_sub_targets` |
 | H14 | 1Panel manual upload of current `dist` | **done** as a manual export |
-| H15 | Attachments: cache pool, **sftp, s3, lsky**, github, remote image | **PARTIAL, and this round moved it: the local directory is a kind of its own, the unconfigured-SFTP-to-local degradation is gone, and §13.8's explicit remote cleanup now exists at both layers.** What is STILL PARTIAL and exactly why: **(1) `sftp` and (2) `lsky` have NO adapter** — both can be configured and both report their gap instead of guessing a protocol (§5.3, §5.4), so §13.10's SSH and §13.12's Lsky half of this clause is unmet; **(3) remote image** search exists in `veloct-attach::network` but has no command and no button, so §13.14 is unusable from the window (§5.9, shared with H10); **(4) nothing has ever contacted a live service** — GitHub and S3 are asserted against a fake HTTP client and the local kind writes to the filesystem (§5.8). The pool, the three axes, dedup, multi-reference and §13.8's no-auto-delete rule are done (B1–B14, D16, D91–D93, D116–D123, D130–D138) |
+| H15 | Attachments: cache pool, **sftp, s3, lsky**, github, remote image | **PARTIAL, and this round moved it: the local directory is a kind of its own, the unconfigured-SFTP-to-local degradation is gone, §13.8's explicit remote cleanup exists at both layers, and the window can report a kind's gap BEFORE a target of that kind is saved.** What is STILL PARTIAL and exactly why: **(1) `sftp` has NO adapter** — configurable, and it reports the gap instead of guessing a protocol (§5.3, a dependency decision); **(2) `lsky` has NO adapter** for the same reason — its upload-token protocol is not verified in `docs/spec/03-upstream-facts.md` (§5.4); **(3) remote image** search exists in `veloct-attach::network` but has no command and no button, so §13.14 is unusable from the window (§5.9, shared with H10); **(4) nothing has ever contacted a live service** — GitHub and S3 are asserted against a fake HTTP client and the local kind writes to the filesystem (§5.8). The pool, the three axes, dedup, multi-reference, §13.8's no-auto-delete rule and the kind report are done (B1–B14, D16, D91–D93, D116–D123, D130–D140). **§28 as a whole is not met either, and not only here: §5.7's installer has never been built — `tauri build` has never run and no NSIS package exists** |
 | H16 | Dedup safe, multi-reference safe, no auto remote delete | **done** |
 | H17 | Auto backup, manual backup, local export, full restore, content-only restore | **PARTIAL — all five work, and BOTH of §17.4's cloud targets are now real: GitHub (§17.2 verified against the repository on every upload) and S3 (§13.11's client, a streamed upload, the bucket's own timestamps). Targets live in SQLite's `backup_targets`, each run is recorded per target in `backups` (§22.7), and §17.3's finding blocks the upload while the local archive survives. What is still missing is NOT the target model — see §5.8: no live service has ever been contacted** |
 | H18 | No secret in config/log/backup; scan before backup | **done** — scan runs BEFORE the archive is written; and see §2.8, where wiring a feature found a leak on a path review had missed |
@@ -433,7 +442,7 @@ search:
 
 What closed it, and where to look:
 
-- **The form** is `src/AttachmentPanel.tsx` + `src/lib/storageTargetForm.ts` (NEW, 41 vitest tests in
+- **The form** is `src/AttachmentPanel.tsx` + `src/lib/storageTargetForm.ts` (NEW, 47 vitest tests in
   `tests/storageTargetForm.test.ts`). Which fields a kind asks for, what a blank credential means, why a
   draft cannot be saved, which filled values a kind switch will NOT submit, and why the upload button is
   disabled are all decided in that pure module, because this repository has no React test renderer and a
@@ -459,12 +468,21 @@ What closed it, and where to look:
   files are NOT deleted.
 
 **What is still not here, stated rather than papered over:** SFTP and Lsky Pro remain adapterless
-(§5.3, §5.4); the window could not answer "does this kind have an adapter?" before a target of that kind
-was saved, which is why a follow-up (`storage_kinds`, a command that reports each kind's
-`implemented`/`unimplemented_reason` from the crate rather than from a copy) landed while this file was
-being written — it is **not** covered by §1's numbers; and the smaller limits this round left are §5.10.
-`docs/spec/02-test-matrix.md` rows `D130`–`D138` are the recorded evidence, each naming the test AND the
-crate.
+(§5.3, §5.4) — the window now SAYS so before a target of either kind is saved, which is all a command
+can do about a missing protocol; and the smaller limits this round left are §5.10.
+`docs/spec/02-test-matrix.md` rows `D130`–`D140` are the recorded evidence, each naming the test AND
+the crate, and the follow-up that made the gap report reachable is part of the same commit (`2496604`)
+and the same run, not a later increment:
+
+- **`StorageKind::ALL`** is the ONE canonical kind list, compared against a written-out expected array
+  and guarded by an exhaustive match with no wildcard arm, so a kind added to the enum does not
+  compile until it is named there.
+- **`is_implemented(kind)` is `unimplemented_reason(kind).is_none()`** — the split is written down
+  once, so a kind cannot be reported as implemented while also carrying a §5.3/§5.4 reason.
+- **The `storage_kinds` command** reports each kind's `implemented`/`unimplemented_reason` from those
+  crate functions and takes NO project state, so the answer exists before any target does. The window
+  reads it in `reload()` under its own try/catch (a failed read leaves every kind unknown, never
+  "works") and shows the gaps above the form.
 
 ### 5.6 CLOSED: AI model discovery (§11.2) and the connection test (§11.5)
 
@@ -534,10 +552,10 @@ Four, each found by search or by running the thing, and each recorded as a **sta
 matrix row that covers it — see `docs/spec/02-test-matrix.md` §I for what that means.
 
 1. **`StorageConfig::validate` has NO production caller.** `grep '\.validate()'` finds it in tests
-   only (checked against the revision §J records — the `storage_kinds` follow-up was editing this exact
-   area while this file was written, so re-check it). That matters because this round ADDED a `Local` arm
-   to it (refusing a prefix that names a drive letter or a UNC root) and a test for that arm, so the rule
-   looks enforced and is not: the window enforces the same thing in
+   only — **re-checked on the final tree, commit `2496604`**, after the `storage_kinds` follow-up and
+   the `is_implemented` repair had both touched this area: still no caller. That matters because this
+   round ADDED a `Local` arm to it (refusing a prefix that names a drive letter or a UNC root) and a
+   test for that arm, so the rule looks enforced and is not: the window enforces the same thing in
    `storageTargetForm.ts::validateDraft`, and any other writer is caught at the first
    `put`/`head`/`delete_remote` by `veloct_core::paths::ensure_within`. Nothing escapes — the write is
    refused rather than landing outside the root — but the comment on the new arm ("refused here rather
@@ -595,7 +613,7 @@ These are the habits that produced the found bugs, and they are easy to lose.
    `StorageConfig::validate` arm and a test for it, which made a refusal look enforced while
    `grep '\.validate()'` showed that no production path calls the function at all. A rule whose only
    reader is a test is documentation with a green tick beside it. **And when a row cannot prove
-   something, write it in the row.** The nine rows this round added say "**Stated limit**" where a
+   something, write it in the row.** The eleven rows this round added say "**Stated limit**" where a
    refusal, a command body or a credential removal is asserted by inspection or at another layer;
    `docs/spec/02-test-matrix.md` §I makes that the rule, and a row that quietly implied more would be
    the drift the whole file exists to prevent.
@@ -604,21 +622,26 @@ These are the habits that produced the found bugs, and they are easy to lose.
 
 ## 7. Suggested order for the next agent
 
-**Step 0, before any of the below:** run §3.1 and make the six results match §1. If they do not, find out
-why before building on them — §1 is one increment behind the tree (§1.1 explains which), so re-run it and
-update §1 and the matrix's §J together. Then decide what to do about the dirty working tree (§1.1): the
-cloud-target and AI rounds are COMMITTED (`050a3c5`, `57003e5`, `61ffde7`, `7df0625`, `bf75265`) and the
-§13 storage-target round is not, and a `git checkout` would erase that one.
+**Step 0, before any of the below:** run §3.1 and make the six results match §1. They were measured on
+commit `2496604`, so if they do not reproduce, first check that you are looking at a tree whose
+`.rs`/`.ts`/`.tsx` files match that commit — the two documents were updated by the commit right after
+it and by nothing else. The working tree is **CLEAN** (§1.1): every round here is committed
+(`050a3c5`, `57003e5`, `61ffde7`, `7df0625`, `bf75265`, `2496604`), so there is nothing to decide
+about an uncommitted change set — and no `git checkout` can erase uncommitted work, because there is
+none.
 
 1. **Read `handoff.md` §28 again** and diff it against §4 above and the H table in the matrix.
    `handoff.md` wins over this file, and over any summary of it, including this one.
 2. **§5.5's storage-target form is DONE** — do not build it again. `src/AttachmentPanel.tsx` creates,
-   edits and deletes targets, §13.8's 仅删除远程对象 exists per attachment, and §13.2.2's reason is
-   shown before an attempt; the evidence is matrix rows `D130`–`D138` and the runs in §J. **The real
-   next gap is §5.9 / H10**: workspace import, the poster-wall screenshot route, and §13.14's remote
-   image search have models in the crates (`veloct-content::works`, `veloct-attach::network`) and NO
-   command, so each is a command plus a button — and the remote-image one would move H15.
-3. **Attempt the NSIS installer (§5.7)** now that the network is confirmed reachable.
+   edits and deletes targets, §13.8's 仅删除远程对象 exists per attachment, §13.2.2's reason is
+   shown before an attempt, and the kind-gap report is read before the first save; the evidence is
+   matrix rows `D130`–`D140` and the runs in §J. **The real next gap is §5.9 / H10**: workspace
+   import, the poster-wall screenshot route, and §13.14's remote image search have models in the
+   crates (`veloct-content::works`, `veloct-attach::network`) and NO command, so each is a command
+   plus a button — and the remote-image one would move H15.
+3. **Attempt the NSIS installer (§5.7)** now that the network is confirmed reachable — it is one of
+   the four things §4.1 names as keeping §28 unmet, and nothing in this repository has ever built a
+   package.
 4. Keep SFTP and Lsky Pro (§5.3, §5.4) either implemented properly or **explicitly reported**. Never
    guess a protocol — and note that **Lsky Pro is the last attachment kind with no adapter**, so it is the
    one that would move §28's H15, provided its upload-token protocol can be verified from a real source.
@@ -628,12 +651,16 @@ cloud-target and AI rounds are COMMITTED (`050a3c5`, `57003e5`, `61ffde7`, `7df0
    that is worth more than another unit test — and it is the only thing that would let anyone write
    "verified against a live service" anywhere in this repository.
 6. **§5.10's four small gaps are worth one pass**, and the first one is a decision rather than a line:
-   `StorageConfig::validate` has no caller, so decide whether `save_storage_target` should validate
-   (which starts refusing a host-less SFTP target) or whether the write-time `ensure_within` guard is
-   the enforcement point and the comment should say so.
+   `StorageConfig::validate` has no caller (still true at `2496604`), so decide whether
+   `save_storage_target` should validate (which starts refusing a host-less SFTP target) or whether the
+   write-time `ensure_within` guard is the enforcement point and the comment should say so.
 7. **When §5 changes, the matrix changes with it.** Every row at `I` must name a test AND the command you
    ran; a row that cannot is a row that is wrong. `docs/spec/02-test-matrix.md` §J is where the recorded
    runs go, and this file's §1 table is where the totals go.
+8. **If the tree changes after you record a run, say so in §J rather than replacing the row.** That is
+   what this round did with the 1317 snapshot: the tree moved under it, so the snapshot stayed and a
+   second, authoritative run at commit `2496604` was recorded beside it. A run whose totals no longer
+   match is a fact about the repository, not a mistake to tidy away.
 
 **Two habits worth keeping, both learned the hard way in these rounds:**
 
