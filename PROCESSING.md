@@ -37,8 +37,8 @@ has tests.
 
 | Fact | Value |
 |---|---|
-| Last commit these numbers describe | **the working tree of the network-image round, not a commit** — the previous boundary was `5edff10`, where §3.1 reproduced on a CLEAN tree. See §1.2, whose same honesty applies here |
-| Working tree | **NOT clean while these numbers were measured**: §13.14's change set was uncommitted when §3.1 was run |
+| Last commit these numbers describe | `c765344` "Implement section 13.14's network image browser…" — see §1.2: the first measurement was on an uncommitted tree, the re-run on this commit **found a real intermittent failure**, and §2.13 is its fix |
+| Working tree | **CLEAN when the numbers above were last confirmed** — §2.13's fix is committed, and three consecutive `--workspace` runs plus twenty for the affected crate were green |
 | Rust tests | **1394 passed, 0 failed, 5 ignored** (+38 over `5edff10`'s 1356; 17 workspace crates + `src-tauri`) |
 | Frontend tests | **152 passed** (vitest: 24 `frontmatter` + 57 `storageTargetForm` + 36 `workForm` + 35 **`networkImageForm`**) |
 | `clippy --workspace --all-targets` | **0 warnings** |
@@ -226,12 +226,13 @@ moment its numbers were taken. What that does and does not weaken:
   --short` was EMPTY at the moment of that run**, so those numbers are reproducible from a checkout and a
   later agent can check them the way `bf75265` did for the four cloud-target commits.
 
-**The network-image round is in the OTHER state: its numbers (1394 / 152 / 52-of-52 / 0 warnings) were
-measured on a tree that was still uncommitted, and they have NOT yet been re-run on the commit.** They
-are self-consistent for the same reason — the per-crate rows sum to 1394 exactly, every command exited 0,
-and no file was edited between the last run and the commit — but the standard above is not yet met for
-them. **Re-running §3.1 on the committed tree and recording the result is the first task for the next
-agent**, and this paragraph is the honest version of the claim rather than a tidied one.
+**The network-image round's numbers (1394 / 152 / 52-of-52 / 0 warnings) were measured on a tree that was
+still uncommitted, and re-running them on commit `c765344` DID NOT reproduce them — it exposed a real
+intermittent failure in `veloct-sidecar`'s test harness (1324 passed, exit 101).** That failure is
+diagnosed and fixed in §2.13, and the fixed tree then ran green **three consecutive `--workspace` times**
+and **twenty consecutive times** for the affected crate. **So the numbers now hold for the committed tree
+plus the one-line fix, and re-running §3.1 is still the first task for the next agent** — the point of
+recording it this way is that the habit caught something real rather than confirming a formality.
 
 **The matrix at 230 `I` / 0 `P` is a claim about recorded evidence, not proof that §28 is met.**
 It has been wrong in that direction before: at one point it read 93 `I` while the desktop
@@ -467,6 +468,50 @@ requires a 24-hour cache, which a per-keystroke search box would violate.
 **The generalisable rule:** read the vendor before writing the code that talks to it, and expect the
 answer to be *"the clause is what is wrong"* — which is far cheaper to discover before the code exists
 than after it has tests.
+
+### 2.13 The re-run on the committed tree CAUGHT A REAL INTERMITTENT FAILURE — which is the whole reason §1.2 exists
+
+The network-image round's numbers were taken on an unclean tree, then re-run on commit `c765344` as
+§1.2 requires. **The re-run failed**: `cargo test --workspace` exited 101 with 1324 tests instead of
+1394, because `veloct-sidecar`'s
+`tests::an_explicit_override_is_honoured_when_it_points_at_a_file` panicked:
+
+```text
+called `Result::unwrap()` on an `Err` value: NotConfigured {
+  what: "the bundled Node runtime",
+  hint: Some("expected veloct-node-x86_64-pc-windows-msvc.exe or veloct-node.exe beside the application; …") }
+```
+
+**The cause was a race that had been latent in the file for rounds.** That module's test harness holds a
+`static ENV_LOCK` around every mutation of `VELOCT_NODE`, and its own doc comment explains why: Cargo runs
+tests in parallel within one binary and the environment is process-wide. But one test carried a stray
+
+```rust
+std::env::remove_var(NODE_ENV);   // OUTSIDE the lock, after `with_env` had already released it
+```
+
+and `with_env` removes the variable itself while holding the guard, so the line was redundant as well as
+unsafe. The window is small: `with_env` returns, releasing the lock, and only then does the stray removal
+run. If another test acquired the lock and called `set_var` in between, the stray line **stripped the
+override out from under it**, the search fell through to the filesystem, and the failure above was the
+result.
+
+**Why it fired now and not before:** the two tests this round ADDED to `veloct-sidecar`
+(`a_runtime_under_the_name_an_installed_bundle_gives_it_is_found`,
+`both_runtime_names_are_tried_and_the_triple_suffixed_one_comes_first`) are two more env-touching tests,
+which widened the window enough to lose the race. Four full-suite runs had passed before it fired once.
+
+**The fix is structural, not a retry loop:** the stray `remove_var` is gone, so **every** mutation of the
+variable goes through `with_env`/`without_env` and therefore through the lock — a comment in both places
+says so, and the test that carried the stray line now explains why it must not come back. Verified by
+**20 consecutive `-p veloct-sidecar --lib` runs and 3 consecutive `--workspace` runs, all green** (1394
+passed each time), which is the strongest evidence a race can be given short of a model checker.
+
+**The lesson worth keeping, and it is not "re-run your tests".** It is that **a number measured on an
+uncommitted tree is a weaker claim, and the difference is not academic**: the pre-commit run of the exact
+same code passed, and the post-commit run of the same code failed. Had the round recorded 1394 and moved
+on, the next agent would have inherited a flaky suite and no idea why. `bf75265` re-ran four cloud-target
+commits for the same reason; this round is what happens when the habit pays off.
 
 ---
 

@@ -277,6 +277,12 @@ mod tests {
     /// the environment is process-wide, so a test that sets the variable races a test that removes it. The
     /// first version of this module had no lock and `a_runtime_beside_the_executable_is_found` failed with a
     /// path from a different test's temp directory.
+    ///
+    /// **The lock only works if EVERY mutation goes through it.** A later version of this file had a stray
+    /// `std::env::remove_var` in one test, outside the guard, and it made a different test fail
+    /// intermittently: `with_env` had already released the lock, so the stray removal could strip the
+    /// override a concurrently-running test had just set. Three full-suite runs passed before one caught
+    /// it, which is why PROCESSING.md §1.2 insists the numbers be re-run on the committed tree.
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     /// Run a closure with the environment variable cleared, holding the lock.
@@ -334,7 +340,13 @@ mod tests {
         // Checking `to_string()` here was the first version of this test and it was wrong for that reason.
         let hint = error.hint().expect("a hint");
         assert!(hint.contains(NODE_ENV), "{hint}");
-        std::env::remove_var(NODE_ENV);
+        // **A `remove_var` used to sit here, OUTSIDE the lock, and it was a real race.** `with_env`
+        // releases the lock when it returns, so this line could strip the variable while ANOTHER test
+        // held the lock and had just set it — which made
+        // `an_explicit_override_is_honoured_when_it_points_at_a_file` fail intermittently with the
+        // fallback "expected veloct-node-… beside the application" error. It is redundant anyway:
+        // `with_env` removes the variable itself, while holding the lock. **Never touch this variable
+        // outside `with_env`/`without_env`.**
     }
 
     #[test]
