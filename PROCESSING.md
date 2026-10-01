@@ -626,7 +626,14 @@ What REMAINS, each still a **stated limit** in the matrix row that covers it:
    username while the form asks SFTP for no field at all, because a kind with no adapter is exempt from
    the save-path validation (D142) and a half-filled SFTP target is one of the ways §13.10's gap stays
    visible. It is recorded in `validateDraft`'s own doc comment. **A transcription is not a shared
-   implementation** — adding a rule to one side must add it to `CRATE_RULE` too.
+   implementation** — adding a rule to one side must add it to `CRATE_RULE` too. **One more member of the
+   same pair, found while reviewing `f29dcda` and PRE-DATING it:** `validateDraft` checks `pathPrefix` for
+   a leading `/` and for `..` regardless of kind, while `buildSaveRequest` submits that field only for
+   `s3`/`github`/`local`. A value left over from a kind switch therefore keeps blocking the save for SFTP
+   or Lsky Pro — a field the form does not even render for those kinds, so the user cannot clear it
+   without switching back to the kind that showed it. It OVER-refuses rather than under-refuses, the crate
+   is not involved, and it is recoverable; it is recorded here because it is the same two-language problem
+   and a future repair can gate those two checks by kind, as the other four already are.
 2. **A command WRAPPER that needs an `AppState` is still not driven by a test, and the credential half
    of the save path's ORDER has no test that would catch a reorder.** `f29dcda` extracted the save and
    delete sequences (`save_target_config`, `delete_target_config`) precisely so the behaviour is
