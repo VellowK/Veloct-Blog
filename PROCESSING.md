@@ -9,16 +9,23 @@ It is not a contract: `handoff.md` remains the locked product contract and alway
 **Read in this order:**
 1. `handoff.md` §28 — the completion definition. It is the only authority on what "done" means.
 2. This file — §1 for where the work stands, **§5 for what is genuinely missing** (§5.11 is a decision
-   that has been TAKEN, not one to make), §7 for what to do next.
+   that has been TAKEN; **§5.12 is a decision that was deliberately NOT acted on, and it is the one thing
+   to read before touching Pexels**), §7 for what to do next.
 3. `README.md` — how to build and test on this machine.
 4. `docs/spec/00-architecture.md` — the ADRs, including ADR-0015 and ADR-0016.
 5. `docs/spec/03-upstream-facts.md` — what has been verified against a real upstream source, live,
    including the two image providers' full contracts (§4).
 
-**Before changing anything**, run §3.1 and make the results match §1. **The last two rounds measured on a
-working tree rather than on a commit (§1.2)** — the works round's numbers were then confirmed at
-`5edff10`, and the network-image round's have NOT been, so confirming them from the checkout is the first
-task rather than a formality.
+**Three things about the state you are inheriting, so nothing here reads as vaguer than it is:**
+- **The tree is CLEAN and equals `585de01`**, where all six of §3.1's checks were run and reproduced.
+- **Superseded runs are kept, not tidied away.** §1.2 and the matrix's §J both carry rows for runs that
+  were later replaced, because the history of what a number used to be is a fact about the repository.
+- **Two real test races were found by re-running a suite that had already been recorded green** (§2.13,
+  §2.14). Both are fixed. The habit that found them is the most useful thing in this file.
+
+**Before changing anything**, run §3.1 and make the results match §1. **They are current as of `585de01`
+and were run on that clean tree**, so a mismatch is news about the environment rather than a formality —
+§1.2 explains why, and it is a story about two races that only re-running found.
 
 **The single most useful habit for this repository:** when a contract clause says a feature exists,
 `grep` for a caller before believing it. Four of the five rounds here found their work that way — a whole
@@ -37,8 +44,8 @@ has tests.
 
 | Fact | Value |
 |---|---|
-| Last commit these numbers describe | **`d844f7a`** "Fix the second shared-resource test race, and rebuild the launcher" — where all six of §3.1's checks were re-run on a CLEAN tree and reproduced (§1.2) |
-| Working tree | **CLEAN at `d844f7a`**, where the six checks were confirmed. The first measurements of both the works and network-image rounds were taken on unclean trees, which §1.2 records rather than hides |
+| Last commit these numbers describe | **`585de01`** "Verify Unsplash against the LIVE service, the first real remote call in this repository" — where all six of §3.1's checks were run on a CLEAN tree and reproduced (§1.2) |
+| Working tree | **CLEAN and byte-identical to `585de01`.** Both the works and network-image rounds were FIRST measured on unclean trees, which §1.2 records rather than hides; both were then re-run on their commits, and the network-image re-run exposed two real test races (§2.13, §2.14) |
 | Rust tests | **1395 passed, 0 failed, 7 ignored** (+39 over `5edff10`'s 1356; 17 workspace crates + `src-tauri`). The 7 ignored are the 3 real-process integration tests, 1 each in `publish_integration` and `end_to_end_release`, and **2 in `crates/veloct-attach/tests/live_providers.rs` — the live provider checks, which are `#[ignore]`d because the ordinary suite must never depend on a vendor's uptime** |
 | Frontend tests | **152 passed** (vitest: 24 `frontmatter` + 57 `storageTargetForm` + 36 `workForm` + 35 **`networkImageForm`**) |
 | `clippy --workspace --all-targets` | **0 warnings** |
@@ -49,12 +56,12 @@ has tests.
 
 Every command above exits **0** on success. That matters and is itself a recent fix — see §2.
 
-**Every number in the table above was measured on the WORKING TREE the network-image round left behind,
-not on a commit.** §1.2 states what that does and does not weaken — and note that the row ABOVE it in
-§J is the opposite case: `5edff10`'s numbers were re-run on the committed tree and reproduced, which is
-the standard this file holds itself to and the one this round has not yet met. **The first thing the
-next agent should do is run §3.1 on the committed tree and confirm 1394, 152, 52/52 and exit-0-clippy**;
-if they do not reproduce, the gap between this file and the tree is the first thing to find out.
+**Every number in the table above was measured on the CLEAN committed tree `585de01`**, after the two
+test races §2.13 and §2.14 describe had been fixed. §1.2 tells that story in full, including the part
+that is uncomfortable: the first measurements of both recent rounds were taken on UNCLEAN trees, and
+re-running them on their commits is what found the races. **If §3.1 does not reproduce 1395 / 152 / 52-of-52
+/ exit-0-clippy from a checkout, something outside this repository changed and that is the first thing to
+find out.**
 
 ### 1.1 What these rounds changed
 
@@ -247,13 +254,20 @@ victim was pre-existing). **Both are fixed, and the numbers were then confirmed 
 site checks; `git status --short` EMPTY.** Plus 5 further `--workspace` runs and 20 `-p veloct-sidecar`
 runs during the diagnosis, all green.
 
-**So §1's table is reproducible from a checkout, and the two failures are the strongest evidence in this
-file for the rule that produced them.** Had either round recorded its number and moved on, the next agent
-would have inherited a suite that fails roughly one run in three, with no diagnosis — and one of the
-flaky tests would have looked like a product bug in a path (`delete_storage_target` forgetting a
-credential, D143) that was working correctly all along.
+**The live-verification round then moved the totals slightly and was confirmed the same way.** Adding
+`crates/veloct-attach/tests/live_providers.rs` put the suite at **1395 passed / 7 ignored** (one offline
+test runs; the two live ones are `#[ignore]`d), and on commit **`585de01`** all six checks were run again
+on a clean tree: **`cargo test --workspace` 1395/0/7 exit 0, `clippy --workspace --all-targets` exit 0
+with 0 warnings, `build-sidecar.ps1 -Check` green, `test:ui` 152 passed, `build:ui` clean, and the site
+verifier 52/52.** `git status --short` was empty at that moment and is empty now.
 
-**The matrix at 232 `I` / 0 `P` is a claim about recorded evidence, not proof that §28 is met.**
+**So §1's table IS reproducible from a checkout.** The two failures that re-running found are the
+strongest evidence in this file for the rule that produced them: had either round recorded its number and
+moved on, the next agent would have inherited a suite failing roughly one run in three, with no
+diagnosis — and one of the flaky tests would have looked like a product bug in a path
+(`delete_storage_target` forgetting a credential, D143) that was working correctly all along.
+
+**The matrix at 233 `I` / 0 `P` is a claim about recorded evidence, not proof that §28 is met.**
 It has been wrong in that direction before: at one point it read 93 `I` while the desktop
 workbench did not exist at all. When you find a gap, the matrix row is what is wrong.
 Three of those limits were closed by earlier repairs and the rows that carried them were corrected
@@ -472,7 +486,7 @@ rather than an implementation:
 | | Hotlinking | What that means for §13.14 |
 |---|---|---|
 | **Unsplash** | **required** — "we **require** the image URLs returned by the API to be directly used or embedded in your applications", and "this applies to all uses of the image and not just search results" | The clause is not merely allowed, it is what they ask for — plus two obligations: credit that **cannot** be omitted, and a download report when a user picks an image |
-| **Pexels** | permitted; no download step documented | The clause holds; attribution and a link back are the obligations |
+| **Pexels** | permitted; no download step documented | The clause holds; attribution and a link back are the obligations. **Currently unusable: Pexels has paused new API key issuance, so the source is implemented and tested but not obtainable — §5.12** |
 | **Pixabay** | **forbidden** — "permanent hotlinking of images (using Pixabay URLs in your app) is not allowed… please download them to your server first" | The clause is the prohibited use, so the source is refused |
 
 **So the fix was to choose the sources, not to soften the clause** — and the deciding question was not
@@ -731,7 +745,7 @@ believing any summary, including this one. Judged against the evidence that exis
 | H12 | One build per publish, all targets share it | **done** |
 | H13 | Failed target re-publish by original Release | **done** — `resendable_sub_targets` |
 | H14 | 1Panel manual upload of current `dist` | **done** as a manual export |
-| H15 | Attachments: cache pool, **sftp, s3, lsky**, github, remote image | **PARTIAL, and §13.14 is now DONE: the remote image browser is implemented against Unsplash and Pexels** — the two sources whose terms require or permit §13.14's flow — with keys in the OS credential store, the credit line enforced by the crate where the provider demands it, Unsplash's mandatory download report, and Pixabay refused in its own words. What is done besides: the pool, the three axes, dedup, multi-reference, §13.8's no-auto-delete rule and explicit cleanup, the local kind, the kind report, the save-path validation, GitHub and S3, and the target form (B1–B14, D16, D91–D93, D116–D123, D130–D145, D155–D161). What is STILL PARTIAL and exactly why: **(1) `sftp` has NO adapter** — configurable, and it reports the gap instead of guessing a protocol (§5.3, a dependency decision, and the reason a host-less SFTP target stays SAVEABLE, §2.9); **(2) `lsky` has NO adapter** — its upload-token protocol is still unverified (§5.4), and it is now **the last attachment kind with no adapter**; **(3) nothing has ever contacted a live service** (§5.8) — the two provider contracts were read from the vendors' own documents and asserted against `FakeHttpClient`, but **no real Unsplash or Pexels request has been made**, so the first genuine search will be the first live vendor call this repository makes |
+| H15 | Attachments: cache pool, **sftp, s3, lsky**, github, remote image | **PARTIAL, and §13.14 is now DONE: the remote image browser is implemented against Unsplash and Pexels** — the two sources whose terms require or permit §13.14's flow — with keys in the OS credential store, the credit line enforced by the crate where the provider demands it, Unsplash's mandatory download report, and Pixabay refused in its own words. **Unsplash is verified against the LIVE service (D164)**; **Pexels is implemented and tested but currently unusable, because it has paused new API key issuance — see §5.12, which records that as a known and deliberate state rather than fixing it.** What is done besides: the pool, the three axes, dedup, multi-reference, §13.8's no-auto-delete rule and explicit cleanup, the local kind, the kind report, the save-path validation, GitHub and S3, and the target form (B1–B14, D16, D91–D93, D116–D123, D130–D145, D155–D164). What is STILL PARTIAL and exactly why: **(1) `sftp` has NO adapter** — configurable, and it reports the gap instead of guessing a protocol (§5.3, a dependency decision, and the reason a host-less SFTP target stays SAVEABLE, §2.9); **(2) `lsky` has NO adapter** — its upload-token protocol is still unverified (§5.4), and it is now **the last attachment kind with no adapter**; **(3) everything EXCEPT Unsplash has never contacted a live service** (§5.8) — and Pexels cannot be contacted by a new user at all (§5.12) |
 | H16 | Dedup safe, multi-reference safe, no auto remote delete | **done** |
 | H17 | Auto backup, manual backup, local export, full restore, content-only restore | **PARTIAL — all five work, and BOTH of §17.4's cloud targets are now real: GitHub (§17.2 verified against the repository on every upload) and S3 (§13.11's client, a streamed upload, the bucket's own timestamps). Targets live in SQLite's `backup_targets`, each run is recorded per target in `backups` (§22.7), and §17.3's finding blocks the upload while the local archive survives. What is still missing is NOT the target model — see §5.8: no live service has ever been contacted** |
 | H18 | No secret in config/log/backup; scan before backup | **done** — scan runs BEFORE the archive is written; and see §2.8, where wiring a feature found a leak on a path review had missed |
@@ -753,7 +767,9 @@ of the four things keeping §28 unmet, is DONE.**
 
 Ordered by how much of §28 they block. **§5.1, §5.2, §5.5, §5.6 and §5.7 are CLOSED** — they are kept, clearly
 marked, because earlier versions of this file called them the biggest gaps and a reader looking for those
-sentences must find out what happened to them. The OPEN items are §5.3, §5.4, §5.8, §5.9, §5.10 and §5.11.
+sentences must find out what happened to them. The OPEN items are §5.3, §5.4, §5.8, §5.9, §5.10, §5.11 and
+**§5.12 — which is a recorded DECISION rather than a gap, and the one section to read before touching
+Pexels.**
 
 **Judge §28 against the H table in `docs/spec/02-test-matrix.md`, not against this list.** This list is
 where the gaps are argued; the H table is what says whether they matter.
@@ -934,8 +950,11 @@ installer path). Neither is a correctness problem and neither is claimed away.
   `utm_source=veloct&utm_medium=referral`, **and the required download report accepted by the live
   endpoint** (`download report answered: true`). The evidence is matrix row **D164** and
   `crates/veloct-attach/tests/live_providers.rs`, which any holder of a key can re-run.
-  **Pexels has NOT been contacted** — its contract was read from its documentation and its protocol is
-  asserted against `FakeHttpClient`, so it needs a key to join Unsplash in being verified live.
+  **Pexels has NOT been contacted, and cannot be by a new user**: it has paused new API key issuance, which
+  §5.12 records in full along with the decision to leave the source as it is. Its contract was read from
+  its documentation and its protocol is asserted against `FakeHttpClient`, and
+  `crates/veloct-attach/tests/live_providers.rs` has a Pexels test ready to run for anyone who already
+  holds a key.
   **ADR-0016's SigV4 tests remain AWS's published vectors rather than a live call**, which is the
   strongest claim this environment can support and is labelled as such.
 - **One DeployPanel distinction is incomplete:** a target's `kind` is filled from configuration
@@ -1083,11 +1102,59 @@ requirements change:
    the window can explain the absence — the same shape as `StorageKind`'s SFTP and Lsky reasons. A future
    implementer must not "just wire it up": that would publish pages violating the provider's terms.
 
-**What is NOT in doubt, and what remains:** nothing about the searcher needed a guessed protocol, which
-is what made the decision cheap once the vendors had been read. What remains is that **no real Unsplash or
-Pexels request has ever been made** (§5.8): the contracts were read from the vendors' documents and
-asserted against `FakeHttpClient`, so the first genuine search from the window will be the first live
-vendor call this repository makes. A user's own key is the only thing needed to close that.
+**What is NOT in doubt, and what remains:** nothing about the searcher needed a guessed protocol, which is
+what made the decision cheap once the vendors had been read. **The live gap is now HALF CLOSED** —
+Unsplash was verified against the real service on 2026-10-01 (D164, §1.1 item 12, §5.8), which is the
+first live vendor call this repository has made. **Pexels has not been contacted, and as of 2026-10-01 it
+CANNOT be by a new user** — see §5.12.
+
+### 5.12 RECORDED, NOT ACTED ON: Pexels has paused new API key issuance, and the source is still offered
+
+**Read this before "fixing" anything about Pexels.** The §13.14 round implemented TWO sources, chose them
+because their terms describe the clause (§5.11), and verified Unsplash live. **Pexels's implementation is
+complete and is covered by real tests, counted by name rather than estimated: 11 `#[test]` functions in
+`providers.rs` exercise it directly, 11 in `network.rs` use it as the generic result fixture, and 8 in
+`src-tauri/src/images.rs` go through the command layer** — plus `tests/live_providers.rs`, whose Pexels
+case is ready to run for anyone who already holds a key. Its contract was read from its own API reference.
+
+**The problem, verified on 2026-10-01 from Pexels's own API page** — the sentence appears twice:
+
+> **New API key issuance is currently paused.**
+
+So: the protocol works and its tests pass, the endpoints still answer (an unauthenticated
+`GET https://api.pexels.com/v1/search` returns **401**, so the service is up), existing keys still work —
+but **a new user cannot obtain a key**, and the window offers Pexels as though they could.
+
+**The user's decision was to LEAVE IT ALONE for now** — their words were
+「先留着假接口不管他」, i.e. "keep the not-really-working integration for now, don't bother with it". That is
+a deliberate choice, not an oversight, so:
+
+- **Do not delete the Pexels implementation.** Its protocol, its `ProviderFacts`, its parser and the 30
+  tests counted above are the reason re-enabling it later is one predicate rather than a rewrite. The
+  repository's own precedent is `StorageKind`'s SFTP arm: kept, and reported, rather than softened or
+  removed (`PROCESSING.md` §2.9, and `StorageKind::unimplemented_reason`).
+- **Do not "fix" it by inventing a key, a proxy or a fallback source.** §20 forbids it, and the pause is not
+  something code can work around.
+- **The known rough edge, stated rather than hidden:** `ImageSource::Pexels` has `is_implemented() == true`
+  and is therefore rendered as a normal, selectable source in `src/NetworkImagePanel.tsx`. A user who
+  clicks it is asked for a key they cannot obtain, and **nothing in the UI or the repository currently says
+  why** — this section is the only record.
+
+**Two ways to close it, both small, whenever the user wants:**
+
+| Option | Change | Effect |
+|---|---|---|
+| **A — record the fact only** | Add the pause to `docs/spec/03-upstream-facts.md` §4.2 and a matrix row | No behaviour or UI change; the next reader learns why the source is unusable |
+| **B — split "implemented" from "offered"** | `is_implemented` (a protocol exists) vs `is_offered` (a user can get a key), a `not_offered_reason`, `search_with` refuses a not-offered source, and `sourceOptions` filters on it | The panel stops listing Pexels and shows the provider's own words instead; a key holder can still search, and the live test still runs; when the pause lifts it is one predicate |
+
+**Option B was written and then reverted on the user's instruction**, so the reasoning survives here even
+though the code does not. It is the option that keeps `is_implemented` honest — today that single
+predicate conflates "the protocol exists" with "a user can use it", which is exactly the confusion that
+makes this situation hard to explain. Nothing else in the repository depends on the distinction.
+
+**What is NOT affected:** Unsplash is fully usable and live-verified. §13.14's clause, its flow, its
+attribution enforcement and its download report are all correct and tested; only the SECOND source's
+availability is in question.
 
 ---
 
@@ -1133,51 +1200,62 @@ These are the habits that produced the found bugs, and they are easy to lose.
 
 ## 7. Suggested order for the next agent
 
-**Step 0, before any of the below:** run §3.1 and make the results match §1 — 1394 Rust, 152 frontend,
-52/52 site checks, 0 clippy warnings, exit 0 everywhere. They were measured on the **working tree** the
-network-image round left, NOT on a commit (§1.2), so the FIRST thing to do is confirm they reproduce from
-the checkout the commit produced and record the answer either way. The works round did exactly this at
-`5edff10`; if they do not reproduce, the gap between this file and the tree is the first thing to find out.
+**Step 0, before any of the below:** run §3.1 and make the results match §1 — 1395 Rust, 152 frontend,
+52/52 site checks, 0 clippy warnings, exit 0 everywhere. **They were run on the clean committed tree
+`585de01` and reproduced, and the tree is byte-identical to it**, so a mismatch means something changed
+outside this repository — find that out before changing any code. §1.2 tells the whole story, including
+why running these checks rather than assuming them is not a formality: doing so is what exposed two real
+test races (§2.13, §2.14) that had been passing by luck.
 
 1. **Read `handoff.md` §28 again** and diff it against §4 above and the H table in the matrix.
    `handoff.md` wins over this file, and over any summary of it, including this one.
-2. **A live smoke test of ONE remote operation is still the single biggest honesty gap** (§5.8) — and
-   §13.14 narrowed it and showed how cheap closing it is. **Unsplash is now verified live** (D164): a real
-   search, a real attribution and a real download report, all through the crate's own code. **Pexels needs
-   a key to join it** — its contract was read from its documentation but never called — and
-   `crates/veloct-attach/tests/live_providers.rs` is already the harness: put the key in
-   `VELOCT_PEXELS_API_KEY` and run that one test. GitHub, S3, Cloudflare and EdgeOne are still asserted
-   against `FakeHttpClient` only, and each would need a throwaway private repository, bucket or account.
-   **A live test that skips silently is worth nothing, which is why a missing key FAILS this file.**
-3. **§13.14 is now COMPLETE on the implementation side**, so the remaining source work is the two
-   adapters: **Lsky Pro (§5.4) is the LAST attachment kind with no adapter**, so it is the one that would
-   move §28's H15, provided its upload-token protocol can be verified from a real source. SFTP (§5.3) is
-   the other and stays a dependency decision: no `ssh` feature exists on purpose. Never guess a protocol.
-   If you implement one, D142's exemption stops applying to it and its `validate` arm becomes a rule the
-   save path enforces.
-4. **§5.9's one remaining limit is a dependency decision, not a coding one:** §10.3 wants a poster and
+2. **Pexels is the one thing to READ BEFORE TOUCHING — §5.12.** Its protocol is implemented and tested,
+   its source is still shown in the window, and **no new user can obtain a key** because Pexels has paused
+   issuance. That is a deliberate, recorded decision ("先留着假接口不管他"), not an oversight, so **do not
+   delete the implementation and do not invent a workaround**. §5.12 has the two small options for closing
+   it if the user asks. The only thing missing right now is that nothing in the UI says why the source
+   cannot be used.
+3. **A live smoke test of ONE remote operation is still the biggest honesty gap** (§5.8) — and §13.14
+   narrowed it and showed how cheap closing it is. **Unsplash is verified live** (D164): a real search, a
+   real attribution and a real download report, all through the crate's own code. GitHub, S3, Cloudflare
+   and EdgeOne are still asserted against `FakeHttpClient` only, and each would need a throwaway private
+   repository, bucket or account. Pexels has a test ready but no obtainable key (§5.12).
+   **A live test that skips silently is worth nothing, which is why a missing key FAILS
+   `tests/live_providers.rs`.**
+4. **§13.14 is COMPLETE on the implementation side**, so the remaining source work is the two adapters:
+   **Lsky Pro (§5.4) is the LAST attachment kind with no adapter**, so it is the one that would move §28's
+   H15, provided its upload-token protocol can be verified from a real source. SFTP (§5.3) is the other and
+   stays a dependency decision: no `ssh` feature exists on purpose. Never guess a protocol. If you implement
+   one, D142's exemption stops applying to it and its `validate` arm becomes a rule the save path enforces.
+5. **§5.9's one remaining limit is a dependency decision, not a coding one:** §10.3 wants a poster and
    this build has no headless browser, so the poster is the file the user chooses. If a capture is wanted,
    decide the mechanism (a headless-Chromium-class crate, or a WebView2 capture path) as a deliberate
    choice with its build cost measured — do not add a crate to turn a checkbox green.
-5. **The installer is built but NOT in CI**, and it is the only artefact a user runs. Re-run
+6. **The installer is built but NOT in CI**, and it is the only artefact a user runs. Re-run
    `scripts/build-installer.ps1` after any change to `tauri.conf.json`, the sidecar binaries, the bundle
    inputs or `crates/veloct-sidecar`, and then INSTALL it — §2.10 is why a green build is not evidence
-   that a package works. Signing is the gap worth naming if this is ever distributed.
-6. **§5.10 lists FOUR remaining limits** — the two-language ruleset (now with TWO transcriptions beside
+   that a package works. **Any touch to `crates/veloct-sidecar` invalidates the committed launcher, even a
+   test-only edit** (§2.2). Signing is the gap worth naming if this is ever distributed.
+7. **§5.10 lists FOUR remaining limits** — the two-language ruleset (now with TWO transcriptions beside
    `storageTargetForm.ts::CRATE_RULE`: `tests/workForm.test.ts`'s ten shapes for `WorkMetadata::validate`
    and `tests/networkImageForm.test.ts`'s rules), the untested command WRAPPERS (four storage ones and
    **none of the works or image ones** — the ten works commands need an `AppState` only for four of them,
    and all five image commands take none, so their bodies ARE driven), §13.8's cleanup leaving a cited URL
    dead, and the unsigned installer. **The image round is the model to copy:** extract the sequence, take
    no `State`, and the body becomes testable.
-7. **When §5 changes, the matrix changes with it.** Every row at `I` must name a test AND the command you
+8. **When §5 changes, the matrix changes with it.** Every row at `I` must name a test AND the command you
    ran; a row that cannot is a row that is wrong. `docs/spec/02-test-matrix.md` §J is where the recorded
    runs go, and this file's §1 table is where the totals go.
-8. **If the tree changes after you record a run, say so in §J rather than replacing the row.** The last
-   three rounds each did: the 1317 snapshot stayed when the tree moved under it, the run at `2496604`
-   stayed when two repairs landed on top, and the run at `7813fcd` stayed when the works round began.
-   **§1.2 is the same honesty for the last two rounds**: the works numbers were taken on an unclean tree
-   and then CONFIRMED at `5edff10`; the network-image numbers are still in the first state and say so.
+9. **If the tree changes after you record a run, say so in §J rather than replacing the row.** The last
+   four rounds each did, and §1.2 is where the whole story is: the 1317 snapshot stayed when the tree moved
+   under it, `2496604` stayed when two repairs landed on top, `7813fcd` stayed when the works round began,
+   and the network-image numbers were first recorded on an UNCLEAN tree and then — when genuinely re-run on
+   their commit — **failed twice, found two real races (§2.13, §2.14), and only then reproduced.** A run
+   whose totals no longer match is a fact about the repository, not a mistake to tidy away.
+
+10. **Before you write anything down, run §3.1.** The six checks are green on `585de01` and the tree is
+    byte-identical to it. If they are not green for you, stop and find out why before changing code — the
+    last time they were assumed rather than run, two races had been hiding in the suite for rounds.
 
 **Four habits worth keeping, all learned the hard way in these rounds:**
 
