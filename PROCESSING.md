@@ -258,10 +258,13 @@ store.
 
 **The behaviour change, stated plainly:** a save that previously SUCCEEDED for an implemented kind
 whose configuration `validate()` rejects is now refused at save time, with the configuration problem as
-the message. S3-without-a-bucket, GitHub-without-a-repository and a local prefix naming a drive letter or
-a UNC root are the cases. The window's `validateDraft` already refuses the same shapes for implemented
-kinds, so the normal UI flow sends nothing that is newly refused — this closes the gap for anything else
-that reaches the command surface.
+the message. **Every shape it can newly refuse, for the three kinds this build implements** (GitHub,
+S3, Local) — an empty id; an empty name; S3 without a bucket; GitHub without a repository; a `Local`
+prefix containing `:` or starting with `\`; any kind's prefix containing `..` or starting with `/`; and
+a non-empty public URL prefix that does not start with `http://` or `https://`. The window's
+`validateDraft` already refuses all seven for the kinds the form can save, so the normal UI flow sends
+nothing that is newly refused — this closes the gap for anything else that reaches the command surface.
+(Two of the seven cannot even be typed into the form: an empty id or name blocks the save there.)
 
 **What is deliberately NOT refused:** a kind this build does not implement. `save_target_config` calls
 `validate()` only `if is_implemented(config.kind)`, because `validate`'s SFTP arm demands a host and a
@@ -624,14 +627,19 @@ What REMAINS, each still a **stated limit** in the matrix row that covers it:
    the save-path validation (D142) and a half-filled SFTP target is one of the ways §13.10's gap stays
    visible. It is recorded in `validateDraft`'s own doc comment. **A transcription is not a shared
    implementation** — adding a rule to one side must add it to `CRATE_RULE` too.
-2. **A command WRAPPER that needs an `AppState` is still not driven by a test.** `f29dcda` extracted the
-   save and delete sequences (`save_target_config`, `delete_target_config`) precisely so the behaviour is
+2. **A command WRAPPER that needs an `AppState` is still not driven by a test, and the credential half
+   of the save path's ORDER has no test that would catch a reorder.** `f29dcda` extracted the save and
+   delete sequences (`save_target_config`, `delete_target_config`) precisely so the behaviour is
    reachable from a test, and both are now driven; `storage_kinds` takes no state and its tests call it
    directly. What remains are the four commands whose bodies need a live `AppState`:
    `save_storage_target`, `delete_storage_target`, `upload_attachment` and `delete_remote_object` are one
    or two lines each, and they are asserted by registration (`include_str!("lib.rs")`) and by the helper
-   they call, not by a call. A WebView or `AppState` test would close it; this repository has neither by
-   choice.
+   they call, not by a call. **And the ordering** (validate → credential → list, §2.9) is driven for its
+   LIST half only: every refused-save test passes `None` as the credential, so code that stored the
+   credential before validating would still pass every test. That half is right in the source and is
+   reviewed, but it is not covered — a one-line test passing a credential with a rejected configuration
+   would close it. A WebView or `AppState` test would close the first half; this repository has neither
+   by choice.
 3. **§13.8's cleanup can leave an article pointing at a URL that no longer resolves.** The confirmation
    says the Markdown is not touched, and §13.8 does not ask for a rewrite — but a user who cleans up an
    object a published article cites gets a broken image and no automatic repair. Worth a decision if it
