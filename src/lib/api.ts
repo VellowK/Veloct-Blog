@@ -704,11 +704,108 @@ export interface WorkImportOutcomeView {
   warning: WorkImportWarningView | null;
 }
 
-/** How a chosen path should be imported, decided by what the path IS. */
+/** How a chosen file's source reached us, decided by what the path IS. */
 export interface WorkImportSourceView {
   kind: 'zip' | 'folder';
   path: string;
   name: string;
+}
+
+// ---------------------------------------------------------------------------------------------
+// The network image browser (handoff.md section 13.14).
+//
+// The shape mirrors `veloct-attach::network`. `ImageResultView` round-trips: the window sends a
+// chosen result BACK to `chooseNetworkImage`, which is why every field it carries is declared here.
+// ---------------------------------------------------------------------------------------------
+
+/** A provider of free network images. */
+export type ImageSourceName = 'unsplash' | 'pexels' | 'pixabay';
+
+/** One source as the window sees it (`network_image_sources`). */
+export interface NetworkImageSourceView {
+  /** The stored spelling, exactly what the commands take back. */
+  source: ImageSourceName;
+  label: string;
+  /** Whether this build can search it. */
+  implemented: boolean;
+  /** Why not, in the provider's own terms, when it cannot. */
+  unimplemented_reason: string | null;
+  needs_key: boolean;
+  /** Whether a key is STORED. Never the value (section 12.1). */
+  has_key: boolean;
+  /** What the provider requires of a page that shows its image. */
+  attribution_rule: string;
+  /** The sentence to show before a search, including what a network image costs the user. */
+  notice: string;
+  /** `required`, `permitted` or `forbidden`: the provider's stance on embedding its URLs. */
+  hotlink: string;
+  /**
+   * Whether leaving the credit line OUT of the document is the user's choice.
+   *
+   * Derived in Rust from the provider's own terms, so the window never decides it. False for Unsplash,
+   * whose API Guidelines make crediting a condition of use.
+   */
+  attribution_optional: boolean;
+  default_per_page: number;
+  max_per_page: number;
+}
+
+/** One result from a search. Round-trips back through `chooseNetworkImage`. */
+export interface ImageResultView {
+  source: ImageSourceName;
+  source_id: string;
+  url: string;
+  thumbnail_url: string;
+  width: number;
+  height: number;
+  author: string;
+  licence: string | null;
+  source_page: string | null;
+  /** The author's own profile page, which Unsplash's attribution rule links to. */
+  author_url: string | null;
+  /** The provider's OWN description, which is the alt fallback before a generated line. */
+  alt: string | null;
+  /** Unsplash's download-report endpoint. `null` for a source with no such obligation. */
+  download_location: string | null;
+}
+
+/** A chosen network image, ready to be written. */
+export interface NetworkImageChoiceView {
+  source: ImageSourceName;
+  source_id: string;
+  url: string;
+  alt: string | null;
+  /** The credit line, when one applies. */
+  attribution: string | null;
+}
+
+/** What a search returned. */
+export interface ImageSearchView {
+  source: ImageSourceName;
+  label: string;
+  query: string;
+  results: ImageResultView[];
+  has_more: boolean;
+  /** How many results were dropped as unusable, so a short list is explained. */
+  dropped: number;
+  attribution_rule: string;
+  /** Whether leaving the credit line OUT of the document is the user's choice. */
+  attribution_optional: boolean;
+}
+
+/** What a choice produced. */
+export interface NetworkImageChoiceResultView {
+  choice: NetworkImageChoiceView;
+  /** The Markdown to insert, credit line included when there is one. */
+  markdown: string;
+  attribution: string | null;
+  /**
+   * `true`/`false` for a source that REQUIRES a download report, `null` where the provider states no
+   * such obligation. Unsplash requires one; Pexels does not.
+   */
+  download_reported: boolean | null;
+  /** Why the report did not happen, when it did not. The image is still usable. */
+  download_note: string | null;
 }
 
 export const api = {
@@ -1314,4 +1411,61 @@ export const api = {
 
   /** The largest poster image the crate will store, so the window can say it BEFORE an attempt. */
   workScreenshotLimit: () => invoke<number>('work_screenshot_limit'),
+
+  // -------------------------------------------------------------------------------------------
+  // The network image browser (handoff.md section 13.14). A network image is a URL in the Markdown
+  // and nothing else: it never enters the attachment cache pool, is never downloaded, and is never
+  // re-uploaded. The only local state is the provider's API key, which lives in the OS credential
+  // store and is never returned by any of these calls.
+  // -------------------------------------------------------------------------------------------
+
+  /**
+   * Every source `handoff.md` section 13.1 names, with its state.
+   *
+   * Takes no project: the answer is a fact about this BUILD, so the window can report a source that
+   * is not offered (and why) before anything is configured.
+   */
+  networkImageSources: () => invoke<NetworkImageSourceView[]>('network_image_sources'),
+
+  /** Store an API key for a source. The value goes to the OS credential store, never to SQLite. */
+  saveImageSourceKey: (source: ImageSourceName, apiKey: string) =>
+    invoke<void>('save_image_source_key', { source, apiKey }),
+
+  /** Forget a source's stored key. */
+  deleteImageSourceKey: (source: ImageSourceName) =>
+    invoke<void>('delete_image_source_key', { source }),
+
+  /** Search a provider for a keyword. */
+  searchNetworkImages: (options: {
+    source: ImageSourceName;
+    query: string;
+    page?: number;
+    perPage?: number;
+  }) =>
+    invoke<ImageSearchView>('search_network_images', {
+      source: options.source,
+      query: options.query,
+      page: options.page ?? null,
+      perPage: options.perPage ?? null,
+    }),
+
+  /**
+   * Turn a chosen result into Markdown, reporting the download where the provider requires it.
+   *
+   * The RESULT is sent back rather than an id, because a provider's id alone cannot reconstruct the
+   * image URL, the author's profile link or the download endpoint — and those are what the credit
+   * line and the compliance step need.
+   */
+  chooseNetworkImage: (options: {
+    source: ImageSourceName;
+    result: ImageResultView;
+    alt?: string | undefined;
+    includeAttribution: boolean;
+  }) =>
+    invoke<NetworkImageChoiceResultView>('choose_network_image', {
+      source: options.source,
+      result: options.result,
+      alt: options.alt ?? null,
+      includeAttribution: options.includeAttribution,
+    }),
 };

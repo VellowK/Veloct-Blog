@@ -37,6 +37,7 @@ import LogView from './LogView';
 import PageCreator, { AiSettingsPanel } from './PageCreator';
 import PublishPanel from './PublishPanel';
 import WorksPanel from './WorksPanel';
+import NetworkImagePanel from './NetworkImagePanel';
 import {
   dueReason,
   hashText,
@@ -182,6 +183,8 @@ export default function App() {
   const [showAiSettings, setShowAiSettings] = useState(false);
   // Section 10's works system: import, metadata, the poster image and the independent Works Origin.
   const [showWorks, setShowWorks] = useState(false);
+  // Section 13.14's network image browser: search a free stock provider and write the remote URL.
+  const [showNetworkImages, setShowNetworkImages] = useState(false);
   const splitRef = useRef<HTMLDivElement | null>(null);
   const draggingRef = useRef(false);
 
@@ -476,9 +479,25 @@ export default function App() {
               </button>
               <button
                 type="button"
+                className={showNetworkImages ? 'active' : ''}
+                onClick={() => {
+                  setShowNetworkImages((showing) => !showing);
+                  setShowWorks(false);
+                  setShowBackups(false);
+                  setShowAttachments(false);
+                  setShowLog(false);
+                  setShowPublish(false);
+                }}
+                title="网络图片浏览:搜索免费图库并写入远程 URL(handoff.md 第 13.14 节)"
+              >
+                网络图片
+              </button>
+              <button
+                type="button"
                 className={showWorks ? 'active' : ''}
                 onClick={() => {
                   setShowWorks((showing) => !showing);
+                  setShowNetworkImages(false);
                   setShowBackups(false);
                   setShowAttachments(false);
                   setShowLog(false);
@@ -540,6 +559,23 @@ export default function App() {
       <main className="editor">
         {showDeploy ? (
           <DeployPanel enabled={project !== null} />
+        ) : showNetworkImages ? (
+          <NetworkImagePanel
+            enabled={project !== null}
+            onInsertMarkdown={(markdown) => {
+              // §13.14: the remote URL goes straight into the Markdown and the image never enters the
+              // cache pool. The buffer is appended here and the user saves when they choose, so browsing
+              // cannot edit a document by itself. Unlike the attachment panel this does NOT close: a
+              // browser is normally used for several picks in a row.
+              if (document) {
+                const next = `${source.trimEnd()}\n\n${markdown}\n`;
+                setSource(next);
+                autosave.onChange(next);
+              } else {
+                setStatus('请先打开一篇文章,再插入网络图片 Markdown');
+              }
+            }}
+          />
         ) : showWorks ? (
           <WorksPanel enabled={project !== null} />
         ) : showBackups ? (

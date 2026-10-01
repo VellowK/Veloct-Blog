@@ -1,30 +1,35 @@
 # PROCESSING.md — state of Veloct, and what the next agent should do
 
-A **status and orientation document** for whoever picks this up next, written after four consecutive
-rounds of work: the cloud targets, the AI settings, §13's storage targets, and §10's works system.
+A **status and orientation document** for whoever picks this up next, written after five consecutive
+rounds of work: the cloud targets, the AI settings, §13's storage targets, §10's works system, and
+§13.14's network image browser.
 It is not a contract: `handoff.md` remains the locked product contract and always wins, and
 `docs/spec/*` records the decisions `handoff.md` leaves open.
 
 **Read in this order:**
 1. `handoff.md` §28 — the completion definition. It is the only authority on what "done" means.
-2. This file — §1 for where the work stands, **§5 for what is genuinely missing** (§5.11 is a DECISION,
-   not a task), §7 for what to do next.
+2. This file — §1 for where the work stands, **§5 for what is genuinely missing** (§5.11 is a decision
+   that has been TAKEN, not one to make), §7 for what to do next.
 3. `README.md` — how to build and test on this machine.
 4. `docs/spec/00-architecture.md` — the ADRs, including ADR-0015 and ADR-0016.
-5. `docs/spec/03-upstream-facts.md` — what has been verified against a real upstream source, live.
+5. `docs/spec/03-upstream-facts.md` — what has been verified against a real upstream source, live,
+   including the two image providers' full contracts (§4).
 
-**Before changing anything**, run §3.1 and make the results match §1. **They were measured on a working
-tree rather than on a commit (§1.2), which is a stated weaker claim than the previous three rounds made**
-— so confirming them from the checkout is the first task, not a formality.
+**Before changing anything**, run §3.1 and make the results match §1. **The last two rounds measured on a
+working tree rather than on a commit (§1.2)** — the works round's numbers were then confirmed at
+`5edff10`, and the network-image round's have NOT been, so confirming them from the checkout is the first
+task rather than a formality.
 
 **The single most useful habit for this repository:** when a contract clause says a feature exists,
-`grep` for a caller before believing it. Three of the four rounds here found their work that way — a whole
+`grep` for a caller before believing it. Four of the five rounds here found their work that way — a whole
 model (`CloudTarget`, `Provider::list_models`) implemented, tested and called by nothing; the §13 round's
-validation function whose only reader was a test (§5.10, §2.9); and the works round's `import_work`,
-`list_works`, `export_work` and the `/work-previews/<slug>/` poster route, each of which §10 names and
-none of which had a caller or a writer (§5.9). **The fourth round added the mirror image of the habit:**
-read the VENDOR before writing the code that talks to it — Pixabay's own documentation forbids the flow
-§13.14 prescribes, which is a gap the code could never have reported (§5.11).
+validation function whose only reader was a test (§5.10, §2.9); the works round's `import_work`,
+`list_works`, `export_work` and the `/work-previews/<slug>/` poster route; and §13.14's whole
+`veloct-attach::network` model, which had no caller at all.
+**Its mirror image is just as valuable:** read the VENDOR before writing the code that talks to it
+(§2.12). Reading three providers' documents changed this round's DESIGN — the answer was "the sources
+were wrong, not the clause" — and that is far cheaper to discover before the code exists than after it
+has tests.
 
 ---
 
@@ -32,26 +37,24 @@ read the VENDOR before writing the code that talks to it — Pixabay's own docum
 
 | Fact | Value |
 |---|---|
-| Last commit these numbers describe | **`5edff10` "Make section 10's works system reachable, and build the installer"** — where §3.1 was re-run and reproduced on a CLEAN tree (§1.2) |
-| Working tree | **CLEAN at commit `5edff10`**, where every command in §3.1 was re-run and reproduced (§1.2). The first verification of this round was taken on the uncommitted change set, which §1.2 records rather than hides |
-| Rust tests | **1356 passed, 0 failed, 5 ignored** (+26 over `7813fcd`'s 1330; 17 workspace crates + `src-tauri`) |
-| Frontend tests | **117 passed** (vitest: 24 `frontmatter` + 57 `storageTargetForm` + 36 **`workForm`**) |
+| Last commit these numbers describe | **the working tree of the network-image round, not a commit** — the previous boundary was `5edff10`, where §3.1 reproduced on a CLEAN tree. See §1.2, whose same honesty applies here |
+| Working tree | **NOT clean while these numbers were measured**: §13.14's change set was uncommitted when §3.1 was run |
+| Rust tests | **1394 passed, 0 failed, 5 ignored** (+38 over `5edff10`'s 1356; 17 workspace crates + `src-tauri`) |
+| Frontend tests | **152 passed** (vitest: 24 `frontmatter` + 57 `storageTargetForm` + 36 `workForm` + 35 **`networkImageForm`**) |
 | `clippy --workspace --all-targets` | **0 warnings** |
-| Site build verifier | **52/52 checks** — up from 46; the six this round added cover §10.3's poster route, which nothing emitted before (D148) |
-| Test matrix | **224 rows at `I`, 0 at `P`** (214 + 10 for the works round), out of **244** rows across tables A–G |
-| Shell commands registered | **82** (72 + the ten works commands) |
-| Installer | **`target/release/bundle/nsis/Veloct_0.1.0_x64-setup.exe`, 27.90 MiB** — §5.7 is CLOSED; see §2.10 and §2.11 for the two defects building it exposed |
+| Site build verifier | **52/52 checks** — unchanged this round: `site/` is untouched by §13.14, and §J names the command behind every number |
+| Test matrix | **230 rows at `I`, 0 at `P`** (224 + 6 for §13.14), out of **250** rows across tables A–G |
+| Shell commands registered | **87** (82 + the five network-image commands) |
+| Installer | **`target/release/bundle/nsis/Veloct_0.1.0_x64-setup.exe`, 27.90 MiB** — built, installed, probed and uninstalled (§2.10, §2.11); NOT rebuilt this round, because §13.14 touches neither the bundle inputs nor the sidecar |
 
 Every command above exits **0** on success. That matters and is itself a recent fix — see §2.
 
-**Every number in the table above was measured on the WORKING TREE the works round left behind, not on
-a commit**, and §1.2 states exactly what that does and does not weaken. The previous boundary —
-commit `7813fcd`, reproducible from a checkout — is still in the matrix's §J, and the runs recorded
-there carry the per-crate rows. The rule the earlier rounds established still stands: **a number that
-is true of one directory on one machine is a weaker claim than one a checkout reproduces**, so the
-first thing the next agent should do is run §3.1 on the committed tree and check that 1356, 117, 52/52
-and exit-0-clippy still hold; if they do not, the gap between this file and the tree is the first thing
-to find out.
+**Every number in the table above was measured on the WORKING TREE the network-image round left behind,
+not on a commit.** §1.2 states what that does and does not weaken — and note that the row ABOVE it in
+§J is the opposite case: `5edff10`'s numbers were re-run on the committed tree and reproduced, which is
+the standard this file holds itself to and the one this round has not yet met. **The first thing the
+next agent should do is run §3.1 on the committed tree and confirm 1394, 152, 52/52 and exit-0-clippy**;
+if they do not reproduce, the gap between this file and the tree is the first thing to find out.
 
 ### 1.1 What these rounds changed
 
@@ -158,27 +161,44 @@ tests/storageTargetForm.test.ts                                        NEW  thos
     `veloct-astro-sidecar.exe` and `veloct-node.exe`. See §2.10 and §2.11 — neither defect could be
     seen from a `cargo build`, and both would have shipped.
 
+11. **§13.14's network image browser is IMPLEMENTED, and §5.11's decision was TAKEN by deciding which
+    sources to use rather than by softening the clause.** Reading Unsplash's and Pexels's own documents
+    showed that §13.14's prescribed flow — *search → the user picks → write the remote URL straight into
+    the Markdown, 不进入附件缓存池,不下载,不再上传* — is **required** by Unsplash and permitted by Pexels,
+    and **forbidden** by Pixabay. So the clause was kept and Pixabay was refused, in the provider's own
+    words. The two obligations that follow are enforced in the crate rather than left to a caller:
+    Unsplash's credit line **cannot be switched off**, and choosing one of its images **sends the
+    download report** their guidelines demand. **+21 `veloct-attach`, +17 `veloct-desktop` and +35
+    frontend tests.** See §5.11 for the decision and §2.12 for what the vendors' documents actually say.
+
 The paths THIS round changed:
 
 ```text
+crates/veloct-attach/src/network/providers.rs   NEW  the two providers' contracts + compliance rules (36 network tests)
+crates/veloct-attach/src/network.rs             ImageSource::ALL, is_implemented, resolved_alt, the new result fields
+crates/veloct-attach/src/lib.rs                 the provider re-exports (and why four are NOT hoisted)
+src-tauri/src/images.rs                         NEW  five commands, and the bodies tests can drive (17 tests)
+src-tauri/src/lib.rs                            the five registrations (87 commands now)
+src/lib/networkImageForm.ts                     NEW  the window's decisions (35 tests)
+src/NetworkImagePanel.tsx                       NEW  the browser: sources, key form, result grid, insertion
+src/lib/api.ts                                  the five bindings and the view types
+src/App.tsx, src/styles.css                      the 网络图片 button, the panel wiring, its styles
+tests/networkImageForm.test.ts                  NEW  35 tests
+docs/spec/03-upstream-facts.md                  §4 rewritten: both contracts, and why Pixabay is refused
+docs/spec/02-test-matrix.md, PROCESSING.md       D155 updated, D156–D161 added, the tables corrected
+```
+
+The paths the PREVIOUS (works) round changed, kept here because they are what `5edff10` carries:
+
+```text
 crates/veloct-app/src/works.rs                    NEW  the works service, and the poster's rules (19 tests)
-crates/veloct-app/src/lib.rs                      the module and its re-exports
-crates/veloct-content/src/works.rs                PREVIEW_PREFIX re-exported
 crates/veloct-content/src/works/import.rs         PREVIEW_PREFIX, and the body/preview write split
 crates/veloct-sidecar/src/lib.rs                  node_bundled_file_name + node_file_names (§2.11)
-src-tauri/src/works.rs                            NEW  ten commands, and the import-source decisions (5 tests)
-src-tauri/src/lib.rs                              the ten registrations (82 commands now)
+src-tauri/src/works.rs                            NEW  ten commands (5 tests)
 src-tauri/tauri.conf.json                         binaries/veloct-node added to externalBin (§2.10)
-src/WorksPanel.tsx                                NEW  the panel
-src/lib/workForm.ts                               NEW  its decisions, as a pure module (36 tests)
-src/lib/api.ts, src/App.tsx, src/styles.css       the bindings, the 作品 button, the panel's styles
-src/lib/storageTargetForm.ts                      §5.10.1's last divergence, gated by kind
-tests/workForm.test.ts                            NEW  36 tests
-tests/storageTargetForm.test.ts                   +1 test for that divergence
-site/src/lib/works.mjs                            previews/posterUrl read from DISK
-site/src/pages/works/index.astro                  the poster through LazyImage, only when it exists
+src/WorksPanel.tsx, src/lib/workForm.ts           NEW  the panel and its decisions (36 tests)
 site/src/integrations/split-publish-roots.mjs     copyWorkPreviews → dist/site/work-previews/
-site/scripts/verify-build.mjs                     six checks for the poster route
+site/scripts/verify-build.mjs                     six checks for the poster route (52/52)
 scripts/build-installer.ps1                       NEW  the documented way to build the NSIS package
 package.json                                      @tauri-apps/cli and @tauri-apps/plugin-dialog as devDependencies
 works/01J8Z5Q0K3W7M9V2B4N6P8R2AG/preview/         the fixture work's real poster images (sharp, once)
@@ -188,10 +208,10 @@ The many `*.log` files in the working directory are this session's captured veri
 `.gitignore` line 25 ignores `*.log`, so they are NOT part of the change set; they are safe to read
 (they are the raw evidence for the numbers in §1) and safe to delete.
 
-### 1.2 Every number in §1 was measured on an UNCLEAN tree — and then CONFIRMED on the commit
+### 1.2 The numbers were measured on an UNCLEAN tree — twice, and one of the two has since been CONFIRMED
 
-The works round's verification was run **before** its commit, so `git status --short` was not empty at
-the moment the numbers were taken. What that does and does not weaken:
+**The works round** was verified **before** its commit, so `git status --short` was not empty at the
+moment its numbers were taken. What that does and does not weaken:
 
 - **What is unaffected.** The tree that produced 1356 / 117 / 52-of-52 / 0 clippy warnings is exactly
   the tree the commit carries: no file was edited between the last run and the commit, and the
@@ -203,19 +223,23 @@ the moment the numbers were taken. What that does and does not weaken:
   then re-run on the committed tree — commit `5edff10` — and every one reproduced**: Rust **1356 passed,
   0 failed, 5 ignored**, frontend **117 passed**, `tsc` clean, the site verifier **52/52**, and
   `build-sidecar.ps1 -Check` reporting the committed launcher matches a fresh build. **`git status
-  --short` was EMPTY at the moment of that run**, so §1's table is now reproducible from a checkout after
-  all, and a later agent can check it the same way `bf75265` did for the four cloud-target commits.
+  --short` was EMPTY at the moment of that run**, so those numbers are reproducible from a checkout and a
+  later agent can check them the way `bf75265` did for the four cloud-target commits.
 
-The paragraph above is kept in both directions on purpose: the first verification really was taken on an
-unclean tree, and tidying that fact away would hide how the repository got from one state to the other.
+**The network-image round is in the OTHER state: its numbers (1394 / 152 / 52-of-52 / 0 warnings) were
+measured on a tree that was still uncommitted, and they have NOT yet been re-run on the commit.** They
+are self-consistent for the same reason — the per-crate rows sum to 1394 exactly, every command exited 0,
+and no file was edited between the last run and the commit — but the standard above is not yet met for
+them. **Re-running §3.1 on the committed tree and recording the result is the first task for the next
+agent**, and this paragraph is the honest version of the claim rather than a tidied one.
 
-**The matrix at 224 `I` / 0 `P` is a claim about recorded evidence, not proof that §28 is met.**
+**The matrix at 230 `I` / 0 `P` is a claim about recorded evidence, not proof that §28 is met.**
 It has been wrong in that direction before: at one point it read 93 `I` while the desktop
 workbench did not exist at all. When you find a gap, the matrix row is what is wrong.
-Three of those limits were closed by the repairs above and the rows that carried them were corrected
-rather than left standing (D18, D131, D134, D137); the ten rows this round added (D146–D155) each name
-the test AND the crate, D155 is an external fact rather than a test, and §5.11 is where its consequence
-is argued.
+Three of those limits were closed by earlier repairs and the rows that carried them were corrected
+rather than left standing (D18, D131, D134, D137); the sixteen rows the last two rounds added
+(D146–D161) each name the test AND the crate, D155 is an external fact rather than a test, and §5.11 is
+where its consequence is argued.
 
 ---
 
@@ -409,6 +433,41 @@ It was repaired by a same-value swap under `[System.IO.File]::WriteAllText` with
 system code page, so a correct `§` and a mangled one both print as mojibake. Count the code points, or
 use the `read` tool.
 
+### 2.12 Reading the VENDOR changed the design, and the answer was "the sources, not the clause"
+
+This is the round that shows the habit in §6.6 pointing the other way. §13.14 prescribes
+*search → the user picks → write the remote URL straight into the Markdown*, and §13.1's parenthetical
+names Pixabay as the example. Reading the three providers' own documents produced a design change
+rather than an implementation:
+
+| | Hotlinking | What that means for §13.14 |
+|---|---|---|
+| **Unsplash** | **required** — "we **require** the image URLs returned by the API to be directly used or embedded in your applications", and "this applies to all uses of the image and not just search results" | The clause is not merely allowed, it is what they ask for — plus two obligations: credit that **cannot** be omitted, and a download report when a user picks an image |
+| **Pexels** | permitted; no download step documented | The clause holds; attribution and a link back are the obligations |
+| **Pixabay** | **forbidden** — "permanent hotlinking of images (using Pixabay URLs in your app) is not allowed… please download them to your server first" | The clause is the prohibited use, so the source is refused |
+
+**So the fix was to choose the sources, not to soften the clause** — and the deciding question was not
+"which provider is easiest" but "whose terms does the locked clause actually describe". Two further
+details made this concrete rather than theoretical: a Pixabay `webformatURL` is **valid for 24 hours**,
+so a saved Markdown file would break within a day even if the terms had allowed it; and the same source
+requires a 24-hour cache, which a per-keystroke search box would violate.
+
+**Three engineering consequences that are easy to get wrong and are now asserted:**
+
+1. **The two providers authenticate differently** — `Authorization: Client-ID <key>` for Unsplash and a
+   bare `Authorization: <key>` for Pexels. Copying one to the other produces a 401 that reads like an
+   invalid key.
+2. **The provider's obligations belong to the CRATE, not to a caller.**
+   `NetworkImageChoice::from_result` forces Unsplash's credit line even when asked not to, and choosing
+   an image reports the download. A caller cannot get this wrong, which is the point.
+3. **A failed compliance step is a sentence, not a silent failure and not a lost image.** When the
+   download report fails, the Markdown is still produced and the user is told (§20) — refusing the choice
+   would throw away their work over a statistic the image does not depend on.
+
+**The generalisable rule:** read the vendor before writing the code that talks to it, and expect the
+answer to be *"the clause is what is wrong"* — which is far cheaper to discover before the code exists
+than after it has tests.
+
 ---
 
 ## 3. Environment facts (non-obvious, all necessary)
@@ -515,13 +574,13 @@ by clause, and each row names the evidence it requires.
 | `veloct-sidecar` | The Astro launcher: resolves the bundled Node from the sidecar path, NEVER `PATH` (ADR-0005), **under BOTH names a bundle can give it** (§2.10) |
 | `veloct-deploy` | Three logical targets × main/works sub-targets, Cloudflare adapter, manual exports, roll-up (`partial` vs `failed`), re-send, **SEO push lifecycle** |
 | `veloct-ai` | Providers, per-feature model mapping, CANCELLED-safe fallback, context, apply plans, **the page creator**, **model discovery + a connection test whose failure message is redacted at the source** (§2.8) |
-| `veloct-attach` | Three independent state axes, reference sets, dedup, cache pool, upload transaction, **GitHub, S3 and the local-directory attachment targets (`StorageKind::Local`, §13.10 where the server is this machine)**, **§13.8's explicit `delete_remote_object` — the only path that removes a remote object**, and the canonical MIME map |
+| `veloct-attach` | Three independent state axes, reference sets, dedup, cache pool, upload transaction, **GitHub, S3 and the local-directory attachment targets (`StorageKind::Local`, §13.10 where the server is this machine)**, **§13.8's explicit `delete_remote_object` — the only path that removes a remote object**, the canonical MIME map, **and §13.14's two network image providers (`network::providers`): Unsplash's and Pexels's search contracts, their OPPOSITE auth headers, the credit line each one requires, and Unsplash's mandatory download report — with Pixabay listed and refused in its own words** |
 | `veloct-github` | The GitHub Contents API, ONCE: `Repository`, `GitHubContents` (put/get/list/delete/repository_info), `base64_encode`, the 100 MB ceiling. No policy — that stays with the dependent (ADR-0015) |
 | `veloct-s3` | S3 / S3-compatible, ONCE: SigV4 (`CanonicalRequest`, `uri_encode`, the signing-key chain), and `S3Client` (streamed put, HEAD, paginated LIST, DELETE, a signed connection test). No policy either (ADR-0016) |
 | `veloct-backup` | Selection rules, gzip archive + manifest, secret scan, staging restore, retention, target orchestration, **the GitHub and S3 cloud backup targets — §17.2 verified against the repository, and S3's streamed upload plus the bucket's own timestamps** |
 | `veloct-app` | Orchestration services: attachments, backup/restore, deploy, autobackup, **cloud backup targets in SQLite + the run record**, **the works service (import, list, export, metadata, poster, remove) whose truth source is FILES and which therefore takes no connection**, plus `CommandError` |
-| `src-tauri` | The Tauri shell: **82 registered commands**, `AppState`, preview wiring, credential store (keyring), sidecar resolution, **the storage-target commands including §13.8's `delete_remote_object` and `storage_kinds`, which reports each kind's adapter status from the crate without touching project state**, **the ten works commands, and `describe_work_source`, which decides ZIP vs folder from what the path IS** |
-| `src/` | The workbench: 3-pane layout, **Tiptap WYSIWYG** editor with a Markdown view, draggable split with a REAL Astro iframe preview, autosave, conflict UI, log page, **AI settings with model discovery, a connection test and a model list**, page creator, attachments **with the storage-target FORM, §13.8's remote cleanup, §13.2.2's eligibility reason and the kind-gap report read before the first save**, **作品: §10's works panel with the import PLAN shown before anything is written, metadata editing, the poster picker and export**, publish, backups (including cloud targets), deploy |
+| `src-tauri` | The Tauri shell: **87 registered commands**, `AppState`, preview wiring, credential store (keyring), sidecar resolution, **the storage-target commands including §13.8's `delete_remote_object` and `storage_kinds`, which reports each kind's adapter status from the crate without touching project state**, **the ten works commands, and `describe_work_source`, which decides ZIP vs folder from what the path IS**, **and §13.14's five network-image commands — none of which takes an `AppState`, so every one of their bodies is reachable from a test** |
+| `src/` | The workbench: 3-pane layout, **Tiptap WYSIWYG** editor with a Markdown view, draggable split with a REAL Astro iframe preview, autosave, conflict UI, log page, **AI settings with model discovery, a connection test and a model list**, page creator, attachments **with the storage-target FORM, §13.8's remote cleanup, §13.2.2's eligibility reason and the kind-gap report read before the first save**, **作品: §10's works panel with the import PLAN shown before anything is written, metadata editing, the poster picker and export**, **网络图片: §13.14's browser, which searches Unsplash and Pexels, stores the key in the OS store, shows what each provider requires, and writes the remote URL plus the credit line into the document**, publish, backups (including cloud targets), deploy |
 
 **Verified end-to-end against real processes**, not only unit tests:
 
@@ -560,7 +619,7 @@ believing any summary, including this one. Judged against the evidence that exis
 | H12 | One build per publish, all targets share it | **done** |
 | H13 | Failed target re-publish by original Release | **done** — `resendable_sub_targets` |
 | H14 | 1Panel manual upload of current `dist` | **done** as a manual export |
-| H15 | Attachments: cache pool, **sftp, s3, lsky**, github, remote image | **PARTIAL, and this round REPLACED a guess with a verified fact.** What is done: the pool, the three axes, dedup, multi-reference, §13.8's no-auto-delete rule and explicit cleanup, the local kind, the kind report, the save-path validation, GitHub and S3, and the target form (B1–B14, D16, D91–D93, D116–D123, D130–D145). What is STILL PARTIAL and exactly why: **(1) `sftp` has NO adapter** — configurable, and it reports the gap instead of guessing a protocol (§5.3, a dependency decision, and the reason a host-less SFTP target stays SAVEABLE, §2.9); **(2) `lsky` has NO adapter** — its upload-token protocol is still not verified (§5.4); **(3) remote image** search exists in `veloct-attach::network` and still has no command and no button — **and this round found out WHY that is the right state rather than an omission**: Pixabay's own documentation, read live (§5.11, D155), says permanent hotlinking of its image URLs is NOT allowed and that images must be downloaded to your own server first, while §13.14 prescribes writing the remote URL straight into the Markdown. That is a conflict between a locked clause and a vendor's terms, so it is recorded as a DECISION for the user rather than resolved by guessing a protocol; **(4) nothing has ever contacted a live service** — GitHub and S3 are asserted against a fake HTTP client (§5.8), so §13.14's provider call would be the first. **§5.7's installer is now CLOSED** — it is no longer one of the reasons this row is partial |
+| H15 | Attachments: cache pool, **sftp, s3, lsky**, github, remote image | **PARTIAL, and §13.14 is now DONE: the remote image browser is implemented against Unsplash and Pexels** — the two sources whose terms require or permit §13.14's flow — with keys in the OS credential store, the credit line enforced by the crate where the provider demands it, Unsplash's mandatory download report, and Pixabay refused in its own words. What is done besides: the pool, the three axes, dedup, multi-reference, §13.8's no-auto-delete rule and explicit cleanup, the local kind, the kind report, the save-path validation, GitHub and S3, and the target form (B1–B14, D16, D91–D93, D116–D123, D130–D145, D155–D161). What is STILL PARTIAL and exactly why: **(1) `sftp` has NO adapter** — configurable, and it reports the gap instead of guessing a protocol (§5.3, a dependency decision, and the reason a host-less SFTP target stays SAVEABLE, §2.9); **(2) `lsky` has NO adapter** — its upload-token protocol is still unverified (§5.4), and it is now **the last attachment kind with no adapter**; **(3) nothing has ever contacted a live service** (§5.8) — the two provider contracts were read from the vendors' own documents and asserted against `FakeHttpClient`, but **no real Unsplash or Pexels request has been made**, so the first genuine search will be the first live vendor call this repository makes |
 | H16 | Dedup safe, multi-reference safe, no auto remote delete | **done** |
 | H17 | Auto backup, manual backup, local export, full restore, content-only restore | **PARTIAL — all five work, and BOTH of §17.4's cloud targets are now real: GitHub (§17.2 verified against the repository on every upload) and S3 (§13.11's client, a streamed upload, the bucket's own timestamps). Targets live in SQLite's `backup_targets`, each run is recorded per target in `backups` (§22.7), and §17.3's finding blocks the upload while the local archive survives. What is still missing is NOT the target model — see §5.8: no live service has ever been contacted** |
 | H18 | No secret in config/log/backup; scan before backup | **done** — scan runs BEFORE the archive is written; and see §2.8, where wiring a feature found a leak on a path review had missed |
@@ -572,9 +631,9 @@ answer to "is §28 met" today. Nothing above should be read as a claim that Velo
 
 **What changed in this judgement, stated plainly, because a reader of the previous version needs it:**
 H10 moved from "no command exists for any of it" to "one decision remains, and it is not a coding
-one"; H15's third reason moved from "no command, and the model is in the crate" to "the provider's own
-terms forbid the flow the clause prescribes, so implementing it would be the guess §20 forbids"; and
-**§5.7's installer — named in this table as one of the four things keeping §28 unmet — is DONE.**
+one"; **H15's remote-image reason is GONE — §13.14 is implemented — and its third reason is now purely
+§5.8's "no live service has ever been contacted"**; and **§5.7's installer, named in this table as one
+of the four things keeping §28 unmet, is DONE.**
 
 ---
 
@@ -789,7 +848,8 @@ documentation and in the panel's own text. A capture would need a new dependency
 class crate, or a WebView2 capture path) — a decision worth taking deliberately, not by adding a crate
 to make a checkbox green.
 
-The remote-image half of the old §5.9 is NOT closed, and §5.11 is why.
+The remote-image half of the old §5.9 is **CLOSED** — see §5.11. `veloct-attach::network`'s shape-only
+model now has a caller, a searcher, a key store and a panel.
 
 ### 5.10 Limits that REMAIN after this round (three items CLOSED here, and moved out of this list)
 
@@ -850,59 +910,63 @@ What REMAINS, each still a **stated limit** in the matrix row that covers it:
    the sense that a package exists, installs and runs; a user who runs it meets SmartScreen. `bundleVCRuntime`
    is also `false`. Neither is hidden in the UI, and neither is worth fixing without a certificate.
 
-### 5.11 §13.14's prescribed flow is FORBIDDEN by the provider's own terms, and that is a decision for the user
+### 5.11 DECIDED and IMPLEMENTED: §13.14 uses the two sources whose terms describe it, and refuses the third
 
-This is the one gap this round found by *verifying* rather than by guessing, and it is written as a
-decision rather than a bug because the two things in conflict are both authoritative.
+This section began as a gap found by *verifying* rather than by guessing, written as a decision because
+the two things in conflict were both authoritative. **The decision has been taken, and the option chosen
+is the one that keeps the locked clause rather than the one that keeps the sample source.**
 
-**What was verified, live, from Pixabay's own API documentation (2026-10-01):**
+**What was verified, live, on 2026-10-01** (full contracts in `docs/spec/03-upstream-facts.md` §4):
 
-- `GET https://pixabay.com/api/`, `key` required, plus `q`, `lang` (incl. `zh`), `image_type`,
-  `orientation`, `category`, `min_width`/`min_height`, `colors`, `editors_choice`, `safesearch`,
-  `order`, `page`, `per_page` (3–200, default 20), and optional `callback`/`pretty`.
-- The response is `{ total, totalHits, hits: [{ id, pageURL, type, tags, previewURL, webformatURL,
-  largeImageURL, imageWidth, imageHeight, imageSize, user, userImageURL, ... }] }`, and rate-limit state
-  arrives in `X-RateLimit-Limit` / `-Remaining` / `-Reset` headers.
-- Operationally: **100 requests / 60 s**, a **24-hour cache requirement**, and "the API is made for real
-  human requests" — no systematic mass downloads.
+- **Unsplash REQUIRES the flow §13.14 prescribes.** Its documentation says "we **require** the image
+  URLs returned by the API to be directly used or embedded in your applications", and its API Guidelines
+  add that this "applies to all uses of the image and not just search results". Two obligations come with
+  it: the credit (Unsplash, the photographer, a link to their profile, `utm` parameters) and a **download
+  report** whenever "a user chooses the image to include in a blog post".
+- **Pexels permits it.** No download step is documented; the obligations are a prominent link to Pexels
+  and crediting the photographer with a link to the photo page.
+- **Pixabay FORBIDS it**, in its own words:
 
-**The conflict.** Pixabay's documentation says, of the URLs it returns:
+  > Returned image URLs may be used for temporarily displaying search results. However, permanent
+  > hotlinking of images (using Pixabay URLs in your app) is not allowed. If you intend to use the
+  > images, please download them to your server first.
 
-> Returned image URLs may be used for temporarily displaying search results. However, permanent
-> hotlinking of images (using Pixabay URLs in your app) is not allowed. If you intend to use the images,
-> please download them to your server first.
+**The decision, and why this option.** Of the three options this section used to list, **option 2 was
+taken**: keep §13.14 as written and use the sources whose terms permit or require it. The reasoning is
+that the deciding question is not "which provider is easiest" but **"whose terms does the locked clause
+actually describe"** — and §13.14 describes Unsplash's requirement and Pexels's permission almost
+sentence for sentence. Pixabay's parenthetical in §13.1 was an example, not the specification; a sample
+named in a parenthetical does not override a locked flow clause.
 
-`handoff.md` §13.14 prescribes exactly the opposite flow:
+Options 1 and 3 were NOT taken, and the reason is worth recording because both remain coherent if the
+requirements change:
 
-```text
-搜索 → 用户选择 → 直接写入远程 URL → Markdown
-不进入附件缓存池,不下载,不再上传。
-```
+- **Option 1 (route Pixabay through the §13.4 cache pool)** would satisfy Pixabay's terms, but it changes
+  what §13.14's flow IS for that source — the image would enter the pool, be downloaded and be uploaded —
+  which is the opposite of the clause. It is the right answer only if Pixabay support is required.
+- **Option 3 (let the user decide what to write)** is the least code but leaves the compliance step to
+  the user, and Unsplash's guidelines put it on the APPLICATION.
 
-So for THIS source, implementing §13.14 as written would produce published pages that violate the
-provider's terms — and §20 forbids both a silent failure and an invented vendor behaviour. §13.1 names
-"免费网络图片供应来源(如 Pixabay)" as an attachment storage target, and §13.2's cache pool already has the
-machinery a compliant flow needs (cache, dedup, target, attribution).
+**What was built, and the parts that must not be un-built:**
 
-**The decision, stated as options rather than taken silently:**
+1. `crates/veloct-attach/src/network/providers.rs` — both providers' request and response contracts, read
+   from their own documents, with the **opposite auth headers** asserted (`Client-ID <key>` vs a bare
+   `<key>`) because copying one to the other produces a 401 that reads like an invalid key.
+2. **The obligations live in the crate, not in a caller.**
+   `NetworkImageChoice::from_result` forces Unsplash's credit line even when asked not to include one, and
+   `report_download` makes the required call. A caller cannot get this wrong, which is the point — and a
+   future caller must not "simplify" it by moving the check up a layer.
+3. **A failed download report is stated, not silent, and does not lose the image** (§2.12).
+4. `ImageSource::Pixabay` remains a variant, in `ImageSource::ALL`, with
+   `providers::unimplemented_reason` returning the quote above. **It is refused rather than deleted**, so
+   the window can explain the absence — the same shape as `StorageKind`'s SFTP and Lsky reasons. A future
+   implementer must not "just wire it up": that would publish pages violating the provider's terms.
 
-1. **Route this source through the §13.4 cache pool with mandatory attribution.** Search the provider,
-   let the user choose, DOWNLOAD the chosen image into the pool, and upload it to one of the user's own
-   storage targets — which is what "download them to your server first" means, and what §13.1's listing
-   of the source as a *storage target* arguably intends. §13.14's "does not enter the cache pool" then
-   holds only for sources whose terms allow hotlinking, and the difference becomes a per-source policy
-   rather than one rule.
-2. **Keep §13.14 as written and use only sources whose terms permit it.** Unsplash's and Pexels'
-   documentation would each have to be read the same way Pixabay's was; §13.14's parenthetical names
-   Pixabay first, so this option needs a reason to prefer the clause over the source that motivated it.
-3. **Implement the search and the picker, and make the write step the USER's** — show the attribution and
-   the source's terms beside the choice and insert nothing automatically. The least code, and the only
-   one that does not pretend the conflict away.
-
-**What is NOT in doubt:** the searcher itself is a small, verifiable piece — one request builder and one
-response parser per source, which is what `veloct-attach::network`'s shape-only model was waiting for.
-Nothing about it needs a guessed protocol. What needs a decision is the flow §13.14 prescribes, and that
-decision is the user's because it trades a locked clause against a vendor's terms.
+**What is NOT in doubt, and what remains:** nothing about the searcher needed a guessed protocol, which
+is what made the decision cheap once the vendors had been read. What remains is that **no real Unsplash or
+Pexels request has ever been made** (§5.8): the contracts were read from the vendors' documents and
+asserted against `FakeHttpClient`, so the first genuine search from the window will be the first live
+vendor call this repository makes. A user's own key is the only thing needed to close that.
 
 ---
 
@@ -948,65 +1012,61 @@ These are the habits that produced the found bugs, and they are easy to lose.
 
 ## 7. Suggested order for the next agent
 
-**Step 0, before any of the below:** run §3.1 and make the results match §1 — 1356 Rust, 117 frontend,
+**Step 0, before any of the below:** run §3.1 and make the results match §1 — 1394 Rust, 152 frontend,
 52/52 site checks, 0 clippy warnings, exit 0 everywhere. They were measured on the **working tree** the
-works round left, NOT on a commit (§1.2), so the FIRST thing to do is confirm they reproduce from the
-checkout the commit produced, and record the answer either way. If they do not reproduce, the gap
-between this file and the tree is the first thing to find out — that is what `bf75265` did for the four
-cloud-target commits, and it is the standard this repository holds itself to.
+network-image round left, NOT on a commit (§1.2), so the FIRST thing to do is confirm they reproduce from
+the checkout the commit produced and record the answer either way. The works round did exactly this at
+`5edff10`; if they do not reproduce, the gap between this file and the tree is the first thing to find out.
 
 1. **Read `handoff.md` §28 again** and diff it against §4 above and the H table in the matrix.
    `handoff.md` wins over this file, and over any summary of it, including this one.
-2. **§13.14 is now a DECISION rather than a task, and §5.11 is the decision to make.** Search →
-   download-into-the-pool-with-attribution, keep-the-clause-and-check-each-source's-terms, or
-   insert-nothing-and-let-the-user-decide. Pixabay's own documentation forbids permanent hotlinking,
-   which is what §13.14 prescribes for it, so writing the searcher without settling this would ship a
-   published page that violates the source's terms. The searcher itself is small and needs no guessed
-   protocol; the flow is what needs the answer.
-3. **§5.9's one remaining limit is a dependency decision, not a coding one:** §10.3 wants a poster and
-   this build has no headless browser, so the poster is the file the user chooses. If a capture is
-   wanted, decide the mechanism (a headless-Chromium-class crate, or a WebView2 capture path) as a
-   deliberate choice with its build cost measured — do not add a crate to turn a checkbox green.
-4. Keep SFTP and Lsky Pro (§5.3, §5.4) either implemented properly or **explicitly reported**. Never
-   guess a protocol — and note that **Lsky Pro is the last attachment kind with no adapter**, so it is the
-   one that would move §28's H15, provided its upload-token protocol can be verified from a real source.
-   If you implement one, D142's exemption stops applying to it, and its `validate` arm becomes a rule the
+2. **A live smoke test of ONE remote operation is now the single biggest honesty gap** (§5.8), and §13.14
+   made it cheaper than it used to be. Every GitHub, S3, deploy and cloud path is asserted against
+   `FakeHttpClient`, ADR-0016's SigV4 evidence is AWS's published vectors, and the two image providers
+   were read from their own documents but never called. **A free Unsplash or Pexels API key is enough to
+   close it for the image browser** — search once from the window and record it — because both providers
+   issue keys instantly with no approval. That is the highest-value next step and it needs only the user.
+3. **Lsky Pro (§5.4) is now the LAST attachment kind with no adapter**, so it is the one that would move
+   §28's H15, provided its upload-token protocol can be verified from a real source. SFTP (§5.3) is the
+   other, and stays a dependency decision: no `ssh` feature exists on purpose. Never guess a protocol.
+   If you implement one, D142's exemption stops applying to it and its `validate` arm becomes a rule the
    save path enforces.
-5. **A live smoke test of ONE remote operation is the remaining honesty gap** (§5.8): every path is
-   asserted against `FakeHttpClient`, ADR-0016's SigV4 evidence is AWS's published vectors rather than a
-   real request, and §13.14's provider call would be the first live vendor call this repository makes. If
-   the user can supply a throwaway private repository, a private bucket, a token — or a Pixabay key and a
-   ruling on §5.11 — that is worth more than another unit test. It is the only thing that would let anyone
-   write "verified against a live service" anywhere in this repository.
-6. **The installer is built but NOT in CI, and it is the only artefact a user runs.** Re-run
+4. **§5.9's one remaining limit is a dependency decision, not a coding one:** §10.3 wants a poster and
+   this build has no headless browser, so the poster is the file the user chooses. If a capture is wanted,
+   decide the mechanism (a headless-Chromium-class crate, or a WebView2 capture path) as a deliberate
+   choice with its build cost measured — do not add a crate to turn a checkbox green.
+5. **The installer is built but NOT in CI**, and it is the only artefact a user runs. Re-run
    `scripts/build-installer.ps1` after any change to `tauri.conf.json`, the sidecar binaries, the bundle
    inputs or `crates/veloct-sidecar`, and then INSTALL it — §2.10 is why a green build is not evidence
    that a package works. Signing is the gap worth naming if this is ever distributed.
-7. **§5.10 lists FOUR remaining limits** — the two-language ruleset (now with a SECOND transcription
-   beside `storageTargetForm.ts::CRATE_RULE`: `tests/workForm.test.ts`'s ten shapes for
-   `WorkMetadata::validate`), the untested command WRAPPERS (four storage ones and four works ones),
-   §13.8's cleanup leaving a cited URL dead, and the unsigned installer. The first is the one to respect
-   when you add a rule: add it to BOTH sides and to the transcription, or the test that exists to catch a
-   one-sided change will not catch yours.
-8. **When §5 changes, the matrix changes with it.** Every row at `I` must name a test AND the command you
+6. **§5.10 lists FOUR remaining limits** — the two-language ruleset (now with TWO transcriptions beside
+   `storageTargetForm.ts::CRATE_RULE`: `tests/workForm.test.ts`'s ten shapes for `WorkMetadata::validate`
+   and `tests/networkImageForm.test.ts`'s rules), the untested command WRAPPERS (four storage ones and
+   **none of the works or image ones** — the ten works commands need an `AppState` only for four of them,
+   and all five image commands take none, so their bodies ARE driven), §13.8's cleanup leaving a cited URL
+   dead, and the unsigned installer. **The image round is the model to copy:** extract the sequence, take
+   no `State`, and the body becomes testable.
+7. **When §5 changes, the matrix changes with it.** Every row at `I` must name a test AND the command you
    ran; a row that cannot is a row that is wrong. `docs/spec/02-test-matrix.md` §J is where the recorded
    runs go, and this file's §1 table is where the totals go.
-9. **If the tree changes after you record a run, say so in §J rather than replacing the row.** That is
-   what the last three rounds did: the 1317 snapshot stayed when the tree moved under it, the run at
-   `2496604` stayed when two repairs landed on top of it, and the run at `7813fcd` stayed when the works
-   round began. Each is marked superseded with the reason. **§1.2 is this round's version of the same
-   honesty**: the numbers were taken on an unclean tree, the paragraph says so rather than implying a
-   commit boundary that did not exist, and the matrix's §J carries a row saying the same thing.
+8. **If the tree changes after you record a run, say so in §J rather than replacing the row.** The last
+   three rounds each did: the 1317 snapshot stayed when the tree moved under it, the run at `2496604`
+   stayed when two repairs landed on top, and the run at `7813fcd` stayed when the works round began.
+   **§1.2 is the same honesty for the last two rounds**: the works numbers were taken on an unclean tree
+   and then CONFIRMED at `5edff10`; the network-image numbers are still in the first state and say so.
 
-**Three habits worth keeping, all learned the hard way in these rounds:**
+**Four habits worth keeping, all learned the hard way in these rounds:**
 
 - **Prefer a delegation over a second implementation.** `veloct-github` and `veloct-s3` exist because two
-  contracts needed one protocol; the extraction was proven faithful by the tests that did NOT change. When
-  you find yourself writing a map, a rule or a protocol twice, that is the signal.
+  contracts needed one protocol; `providers::search_request` reuses `veloct_s3::uri_encode` for query
+  encoding because that IS RFC 3986; and the credit rule lives once, in the crate, where a caller cannot
+  get it wrong. When you find yourself writing a map, a rule or a protocol twice, that is the signal.
 - **Redact where the secret is known, not where it is displayed** (§2.8). The §18.1 guarantee held at the
-  log sink and failed at the source, and only a test that drove the path end to end found it.
-- **Verify the vendor BEFORE writing the code that talks to it** (§5.11). Reading Pixabay's own
-  documentation took minutes and turned an "easy missing command" into a conflict between a locked clause
-  and a provider's terms. The identical habit had already found §5.3's and §5.4's gaps; the new part is
-  that the answer can be "the clause is what is wrong", which is worth finding before the code exists
-  rather than after it has a test.
+  log sink and failed at the source, and only a test that drove the path end to end found it. **Both image
+  provider keys are opaque strings that match no credential pattern**, so the exact-value layer is the only
+  one that can catch a provider echoing one back.
+- **Verify the vendor BEFORE writing the code that talks to it** (§2.12, §5.11). Reading three providers'
+  documents took minutes and changed the DESIGN — the answer was "the sources were wrong, not the clause".
+  The identical habit had already found §5.3's and §5.4's gaps.
+- **"It builds" and "it works" are different claims** (§2.10). A green `cargo build` shipped an installer
+  with no Node runtime and a launcher that could not find it. Install the artefact and run it.

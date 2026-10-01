@@ -1651,3 +1651,172 @@ button.primary {
   margin: 0;
   font-size: 12px;
 }
+
+/* The network image browser (handoff.md section 13.14).
+   A result grid rather than a list, because choosing a picture is a visual decision — the same reason
+   the works panel draws a poster. The panel borrows the shape of its neighbours and adds only the grid
+   and the thumbnail box. */
+.network-image-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px 14px;
+  gap: 12px;
+}
+
+.network-image-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.network-image-header strong {
+  margin-right: auto;
+}
+
+.network-image-panel h3 {
+  margin: 0 0 6px;
+  font-size: 13px;
+  color: var(--ink-300);
+}
+
+.network-image-panel section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.network-image-panel label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+}
+
+.network-image-panel label > span {
+  font-size: 12px;
+  color: var(--ink-400);
+}
+
+.network-image-panel .row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: flex-end;
+}
+
+.network-image-panel .row .grow {
+  flex: 2;
+}
+
+.network-image-error {
+  color: var(--danger-400);
+  margin: 0;
+}
+
+.network-image-notice {
+  color: var(--accent-400);
+  margin: 0;
+}
+
+.network-image-warning {
+  color: var(--accent-400);
+  margin: 0;
+  font-size: 12px;
+}
+
+.network-image-panel code,
+.network-image-panel .hint code {
+  font-family: 'Cascadia Mono', Consolas, monospace;
+  font-size: 11px;
+  background: var(--ink-850);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+.network-image-panel .danger {
+  border-color: var(--danger-400);
+  color: var(--danger-400);
+}
+
+.network-image-panel button.active {
+  border-color: var(--accent-400);
+  color: var(--accent-400);
+}
+
+/* The attribution switch sits beside the alt field, so it is laid out as a compact inline control
+   rather than a full-height column. */
+.network-image-toggle {
+  flex: 0 0 auto;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+}
+
+.network-image-toggle > span {
+  font-size: 12px;
+  color: var(--ink-400);
+}
+
+.network-image-grid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+}
+
+.network-image-grid > li {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px;
+  border: 1px solid var(--ink-800);
+  border-radius: 6px;
+}
+
+.network-image-thumb {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 4 / 3;
+  overflow: hidden;
+  background: var(--ink-850);
+  border-radius: 4px;
+  font-size: 11px;
+}
+
+.network-image-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.network-image-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 11px;
+  min-width: 0;
+}
+
+.network-image-meta code {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The Markdown that was inserted, shown verbatim so the user can copy it or check the credit line. */
+.network-image-last pre {
+  margin: 0;
+  padding: 8px;
+  border: 1px solid var(--ink-800);
+  border-radius: 6px;
+  background: var(--ink-900);
+  font-family: 'Cascadia Mono', Consolas, monospace;
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}

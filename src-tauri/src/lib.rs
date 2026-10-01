@@ -21,6 +21,7 @@ pub mod backup;
 pub mod deploy;
 pub mod commands;
 pub mod credentials;
+pub mod images;
 pub mod logging;
 pub mod page_creator;
 pub mod publish;
@@ -126,6 +127,11 @@ pub fn run() {
             works::set_work_screenshot,
             works::work_directory,
             works::work_screenshot_limit,
+            images::network_image_sources,
+            images::save_image_source_key,
+            images::delete_image_source_key,
+            images::search_network_images,
+            images::choose_network_image,
         ])
         .setup(|app| {
             // The preview supervisor is started lazily, when a project is opened, so a machine with no

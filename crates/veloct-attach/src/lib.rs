@@ -36,6 +36,19 @@ pub use network::{
     is_network_image, network_image_notice, ImageResult, ImageSearch, ImageSource,
     NetworkImageChoice,
 };
+/// The provider contracts, re-exported for the command surface.
+///
+/// `veloct_attach::network::providers` stays public too, so a caller that needs
+/// `providers::search_request`, `providers::parse_search`, `providers::facts` or
+/// `providers::is_implemented` reaches them by module path. Those four are deliberately NOT hoisted to
+/// the crate root: `is_implemented` and `unimplemented_reason` already exist there for
+/// `StorageKind`, and two free functions of the same name meaning different kinds would be a trap.
+pub use network::providers::{
+    attribution_markdown, download_tracking_request, report_download, search as search_images,
+    source_notice, AuthScheme, HotlinkPolicy, ProviderFacts, SearchQuery, PEXELS_API,
+    PEXELS_MAX_PER_PAGE, PEXELS_SEARCH_PATH, UNSPLASH_API, UNSPLASH_ATTRIBUTION_LINK,
+    UNSPLASH_MAX_PER_PAGE, UNSPLASH_SEARCH_PATH, UNSPLASH_UTM_SOURCE,
+};
 pub use pool::{
     checked_cache_path, validate_original_name, Attachment, AttachmentId, CachePool, CleanupOutcome,
     CleanupRequest, InsertOutcome, PoolListing, ReferenceTask,
