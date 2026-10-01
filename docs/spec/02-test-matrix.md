@@ -281,17 +281,37 @@ The following must hold on a real project directory before "complete version" ca
 | H7 | Page creator with templates/blocks/Markdown | page-creator test |
 | H8 | AI per feature provider/model + correct fallback | C1–C10 |
 | H9 | AI confirm / apply-all / apply-partial | C6, C7 |
-| H10 | Work import, screenshot, iframe preview, main-site isolation | E12, E13, F6, G5 |
+| H10 | Work import, screenshot, iframe preview, main-site isolation | E12, E13, F6, G5, **and D146–D152: the import, the metadata edit, the poster and the export are reachable from the window, the import PLAN is shown before anything is written, §10.1's sibling `preview/` is now produced by an import, and §10.3's poster route is EMITTED and compared byte for byte with the work's own file. STILL PARTIAL for exactly one stated reason: the screenshot is a FILE THE USER CHOOSES, because this build has no headless browser and a capture is a new dependency decision rather than a missing button (PROCESSING.md §5.9, matrix D149)** |
 | H11 | Publish commit + Release tag correct | A1, A7 |
 | H12 | One build per publish; all targets share it | A2, A11, A14 |
 | H13 | Failed target re-publish by original Release | A3, G4 |
 | H14 | 1Panel manual upload of current `dist` | G6 |
-| H15 | Attachments: cache pool, sftp, s3, lsky, github, remote image | B1–B14, D91–D93, **D116–D123 (S3 is now real for BOTH §13.11 and §17.4, verified against AWS's own published SigV4 vectors)**, **D130–D145 (the local directory is a kind of its own, the unconfigured-SFTP-to-local degradation is ended, §13.8's explicit remote cleanup exists at both layers, the target form, §13.2.2's reason and the pre-save kind-gap report are reachable from the window, and a saved target's configuration is now enforced by the crate's own rules). The row stays PARTIAL for exactly four reasons: (1) `sftp` has NO adapter (§5.3 — a dependency decision, not an oversight, and the reason a host-less SFTP target is deliberately still SAVEABLE, D142), (2) `lsky` has NO adapter (§5.4 — its upload-token protocol is not verified in `docs/spec/03-upstream-facts.md`), (3) §13.14's remote image search still has no command (§5.9, shared with H10), and (4) no remote service has ever been contacted (§5.8 — GitHub and S3 are asserted against a fake HTTP client). §28 as a whole is ALSO not met, and not only here: §5.7's installer has never been built (`tauri build` has never run, no NSIS package exists), so nothing in this row should be read as a claim that Veloct is complete** |
+| H15 | Attachments: cache pool, sftp, s3, lsky, github, remote image | B1–B14, D91–D93, **D116–D123 (S3 is now real for BOTH §13.11 and §17.4, verified against AWS's own published SigV4 vectors)**, **D130–D145 (the local directory is a kind of its own, the unconfigured-SFTP-to-local degradation is ended, §13.8's explicit remote cleanup exists at both layers, the target form, §13.2.2's reason and the pre-save kind-gap report are reachable from the window, and a saved target's configuration is now enforced by the crate's own rules)**, **D155 (the live-verified Pixabay contract)**. The row stays PARTIAL for exactly three reasons: (1) `sftp` has NO adapter (§5.3 — a dependency decision, not an oversight, and the reason a host-less SFTP target is deliberately still SAVEABLE, D142), (2) `lsky` has NO adapter (§5.4 — its upload-token protocol is not verified in `docs/spec/03-upstream-facts.md`), and (3) §13.14's remote image search still has no command — **and D155 is why that is the right state rather than an omission: Pixabay's own documentation forbids permanent hotlinking of its image URLs, while §13.14 prescribes writing the remote URL straight into the Markdown, so the flow needs a DECISION before it needs code (PROCESSING.md §5.11)**. Reason (4) of the previous version — "no remote service has ever been contacted" — stands as §5.8 and applies to every row here, but §5.7's installer is no longer one of the reasons, because it has been built, installed and run (D153, D154) |
 | H16 | Dedup safe; multi-reference safe; no auto remote delete | B6, B7, B10, B11, **D16 (both directions of §13.8), D132, D134, D135 (the explicit cleanup, which is the ONLY path that deletes a remote object)** |
 | H17 | Auto backup, manual backup, local export, full restore, content-only restore | D1–D10, D96–D102, D105–D114, **D116–D123. Both of §17.4's cloud targets now exist: GitHub (§17.2 verified against the repository) and S3 (streamed upload, the bucket's own timestamps, retention). A §17.3 finding still blocks the upload while the local archive survives** |
 | H18 | No secret in config, log or backup; secret scan before backup | C8, D7, D8 |
 | H19 | SEO, comments, logging operational | seo/comment/log tests |
 | H20 | Key failure paths have explicit error states, never silent failure | diagnostics tests |
+
+**Judged honestly, as of the works round: 17 of these 20 are done, and H10, H15 and H17 are partial.**
+The H table is the one to read when judging completion — it is short, it mirrors `handoff.md` §28 clause
+by clause, and each row names the evidence it requires. Two rows moved in this round and both moved for
+reasons worth stating rather than counting:
+
+- **H10** went from "no command exists for any of it" to "one decision remains, and it is not a coding
+  one": import, metadata, the poster and export are reachable from the window, §10.1's `preview/` is
+  produced by an import, and §10.3's poster route is emitted and compared byte for byte. What is left is
+  that the screenshot is a file the user chooses, because this build has no headless browser.
+- **H15**'s third reason changed kind. It used to read "remote image search has no command, and the model
+  is in the crate" — an omission. **D155** turns it into a conflict: Pixabay's own documentation forbids
+  the flow §13.14 prescribes, so the clause needs a decision before it needs code. Its fourth reason
+  ("§5.7's installer has never been built") is GONE, because the installer has been built, installed and
+  run (D153, D154).
+
+**Nothing in this table should be read as a claim that Veloct is complete**, and the honest answer to
+"is §28 met" today is no: three rows are partial, §13.14 is blocked on a decision rather than on work,
+`PROCESSING.md` §5.8's "no live service has ever been contacted" applies to every integration row here,
+and the installer is unsigned.
 
 ## I. Honesty rule applied to this matrix
 
