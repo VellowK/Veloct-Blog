@@ -37,15 +37,15 @@ has tests.
 
 | Fact | Value |
 |---|---|
-| Last commit these numbers describe | `c765344` "Implement section 13.14's network image browser…" — see §1.2: the first measurement was on an uncommitted tree, the re-run on this commit **found a real intermittent failure**, and §2.13 is its fix |
-| Working tree | **CLEAN when the numbers above were last confirmed** — §2.13's fix is committed, and three consecutive `--workspace` runs plus twenty for the affected crate were green |
+| Last commit these numbers describe | **`d844f7a`** "Fix the second shared-resource test race, and rebuild the launcher" — where all six of §3.1's checks were re-run on a CLEAN tree and reproduced (§1.2) |
+| Working tree | **CLEAN at `d844f7a`**, where the six checks were confirmed. The first measurements of both the works and network-image rounds were taken on unclean trees, which §1.2 records rather than hides |
 | Rust tests | **1394 passed, 0 failed, 5 ignored** (+38 over `5edff10`'s 1356; 17 workspace crates + `src-tauri`) |
 | Frontend tests | **152 passed** (vitest: 24 `frontmatter` + 57 `storageTargetForm` + 36 `workForm` + 35 **`networkImageForm`**) |
 | `clippy --workspace --all-targets` | **0 warnings** |
 | Site build verifier | **52/52 checks** — unchanged this round: `site/` is untouched by §13.14, and §J names the command behind every number |
 | Test matrix | **232 rows at `I`, 0 at `P`** (224 + 8 for §13.14 and the two races it exposed), out of **252** rows across tables A–G |
 | Shell commands registered | **87** (82 + the five network-image commands) |
-| Installer | **`target/release/bundle/nsis/Veloct_0.1.0_x64-setup.exe`, 27.90 MiB** — built, installed, probed and uninstalled (§2.10, §2.11); NOT rebuilt this round, because §13.14 touches neither the bundle inputs nor the sidecar |
+| Installer | **`target/release/bundle/nsis/Veloct_0.1.0_x64-setup.exe`, 27.90 MiB** — built, installed, probed and uninstalled (§2.10, §2.11); NOT rebuilt this round, because §13.14 touches neither the bundle inputs nor the sidecar. **The sidecar LAUNCHER was rebuilt** (§2.2), because that crate was touched even though the edit was test-only |
 
 Every command above exits **0** on success. That matters and is itself a recent fix — see §2.
 
@@ -227,12 +227,20 @@ moment its numbers were taken. What that does and does not weaken:
   later agent can check them the way `bf75265` did for the four cloud-target commits.
 
 **The network-image round's numbers (1394 / 152 / 52-of-52 / 0 warnings) were measured on a tree that was
-still uncommitted, and re-running them on commit `c765344` DID NOT reproduce them — it exposed a real
-intermittent failure in `veloct-sidecar`'s test harness (1324 passed, exit 101).** That failure is
-diagnosed and fixed in §2.13, and the fixed tree then ran green **three consecutive `--workspace` times**
-and **twenty consecutive times** for the affected crate. **So the numbers now hold for the committed tree
-plus the one-line fix, and re-running §3.1 is still the first task for the next agent** — the point of
-recording it this way is that the habit caught something real rather than confirming a formality.
+still uncommitted, and re-running them on commit `c765344` DID NOT reproduce them — TWICE, in two
+different ways.** The first re-run exited 101 with 1324 passed (an environment-variable race, §2.13); the
+fix for that revealed a second, exit 101 with 893 passed (the OS credential store, §2.14, whose second
+victim was pre-existing). **Both are fixed, and the numbers were then confirmed on a CLEAN tree at
+`d844f7a`: two consecutive `--workspace` runs at 1394 passed, 0 failed, 5 ignored; clippy 0 warnings;
+`build-sidecar.ps1 -Check` green after rebuilding the launcher; 152 frontend tests; `tsc` clean; 52/52
+site checks; `git status --short` EMPTY.** Plus 5 further `--workspace` runs and 20 `-p veloct-sidecar`
+runs during the diagnosis, all green.
+
+**So §1's table is reproducible from a checkout, and the two failures are the strongest evidence in this
+file for the rule that produced them.** Had either round recorded its number and moved on, the next agent
+would have inherited a suite that fails roughly one run in three, with no diagnosis — and one of the
+flaky tests would have looked like a product bug in a path (`delete_storage_target` forgetting a
+credential, D143) that was working correctly all along.
 
 **The matrix at 232 `I` / 0 `P` is a claim about recorded evidence, not proof that §28 is met.**
 It has been wrong in that direction before: at one point it read 93 `I` while the desktop
