@@ -20,6 +20,7 @@ pub mod cloud_backup;
 pub mod deploy;
 pub mod error;
 pub mod project;
+pub mod works;
 
 pub use attachments::{
     attachment_ids, mime_type_for, AddOutcome, AttachmentService, AttachmentView, ObjectView,
@@ -48,3 +49,10 @@ pub use cloud_backup::{
 };
 pub use error::CommandError;
 pub use project::{CreateProjectOptions, ProjectRecord, ProjectService};
+pub use works::{
+    export, find as find_work, import as import_work, list_works, plan_import as plan_work_import,
+    remove as remove_work, set_screenshot as set_work_screenshot,
+    update_metadata as update_work_metadata, work_directory, WorkImportOutcomeView,
+    WorkImportPlanView, WorkImportWarningView, WorkView, WorksListView, MAX_SCREENSHOT_BYTES,
+    SCREENSHOT_RELATIVE_PATH, SUPPORTED_IMAGE_FORMATS,
+};

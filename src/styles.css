@@ -1455,3 +1455,199 @@ button.primary {
   border-color: var(--danger-400);
   color: var(--danger-400);
 }
+
+/* The works system (handoff.md section 10; PROCESSING.md section 5.9).
+   The panel is the third view beside the attachment pool and the backup panel, so it borrows their
+   shape and adds only what a work's row needs: a poster, the body's facts, and the per-work actions. */
+.works-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px 14px;
+  gap: 12px;
+}
+
+.works-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.works-header strong {
+  margin-right: auto;
+}
+
+.works-panel h3 {
+  margin: 0 0 6px;
+  font-size: 13px;
+  color: var(--ink-300);
+}
+
+.works-panel section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.works-panel label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+}
+
+.works-panel label > span {
+  font-size: 12px;
+  color: var(--ink-400);
+}
+
+.works-panel .row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: flex-end;
+}
+
+.works-panel .row .grow {
+  flex: 2;
+}
+
+.works-panel textarea {
+  resize: vertical;
+}
+
+.works-error {
+  color: var(--danger-400);
+  margin: 0;
+}
+
+.works-notice {
+  color: var(--accent-400);
+  margin: 0;
+}
+
+.works-warning {
+  color: var(--accent-400);
+  margin: 0;
+  font-size: 12px;
+}
+
+.works-panel code,
+.works-panel .hint code {
+  font-family: 'Cascadia Mono', Consolas, monospace;
+  font-size: 11px;
+  background: var(--ink-850);
+  padding: 1px 4px;
+  border-radius: 3px;
+  margin-right: 4px;
+}
+
+.works-plan,
+.works-result {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  border: 1px solid var(--ink-800);
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.works-plan p,
+.works-result p {
+  margin: 0;
+}
+
+.works-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.works-list > li {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 8px;
+  border: 1px solid var(--ink-800);
+  border-radius: 6px;
+}
+
+.works-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+/* The poster is the card image the works index emits at /work-previews/<slug>/screenshot.webp, so a
+   work with no screenshot shows the same "暂无截图" the published wall shows. */
+.works-poster {
+  flex: 0 0 96px;
+  width: 96px;
+  height: 54px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background: var(--ink-850);
+  border-radius: 4px;
+  font-size: 11px;
+}
+
+.works-poster img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.works-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+}
+
+.works-title {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.works-tag {
+  margin-right: 6px;
+  color: var(--ink-400);
+}
+
+.works-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.works-panel .danger {
+  border-color: var(--danger-400);
+  color: var(--danger-400);
+}
+
+.works-poster-form,
+.works-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--ink-800);
+  border-radius: 6px;
+  background: var(--ink-900);
+}
+
+.works-poster-form p,
+.works-edit p {
+  margin: 0;
+  font-size: 12px;
+}

@@ -121,3 +121,46 @@ allows **no origins**, so every request is denied until an explicit URL scope is
    2.8.0 (a real upstream version skew; Veloct avoids the JS HTTP plugin entirely).
 6. EdgeOne's upload API. Veloct implements EdgeOne as a manual/export target (ADR-0012) rather
    than inventing endpoints.
+7. Unsplash's and Pexels's image-search protocols. **Pixabay's has now been read (section 4), and
+   reading it changed a decision — which is the argument for reading the other two before writing
+   either.**
+
+## 4. Image providers (read live, and one of them contradicts a locked clause)
+
+Read from Pixabay's own API documentation on **2026-10-01**. This is the source §13.1 names first and
+§13.14's parenthetical example.
+
+| Fact | Value |
+|---|---|
+| Endpoint | `GET https://pixabay.com/api/` |
+| Required | `key` |
+| Query parameters | `q`, `lang` (incl. `zh`), `id`, `image_type`, `orientation`, `category`, `min_width`, `min_height`, `colors`, `editors_choice`, `safesearch`, `order`, `page`, `per_page` (3–200, default 20) |
+| Response | `{ total, totalHits, hits: [ … ] }` |
+| A hit | `id`, `pageURL`, `type`, `tags`, `previewURL`, `previewWidth/Height`, `webformatURL`, `webformatWidth/Height`, `largeImageURL`, `imageWidth`, `imageHeight`, `imageSize`, `views`, `downloads`, `likes`, `user_id`, `user`, `userImageURL`; `fullHDURL`/`imageURL`/`vectorURL` only on an approved account |
+| Rate limit | 100 requests / 60 s, state in `X-RateLimit-Limit` / `-Remaining` / `-Reset` |
+| Caching | "requests must be cached for 24 hours" |
+| `webformatURL` lifetime | the URL is **valid for 24 hours**; `_640` in it can be replaced with `_180`/`_340`/`_960` |
+| Errors | a proper HTTP status with a plain-text body, e.g. 429 `API rate limit exceeded` |
+
+### 4.1 The clause that matters: hotlinking is forbidden
+
+Pixabay's documentation says, of the URLs it returns:
+
+> Returned image URLs may be used for temporarily displaying search results. However, permanent
+> hotlinking of images (using Pixabay URLs in your app) is not allowed. If you intend to use the
+> images, please download them to your server first.
+
+`handoff.md` §13.14 prescribes: `搜索 → 用户选择 → 直接写入远程 URL → Markdown`, and adds
+**不进入附件缓存池,不下载,不再上传** — the exact opposite, for exactly this source.
+
+**Consequence, and it is recorded rather than resolved.** No searcher is written against a guessed
+protocol, and §13.14 is left unimplemented at the command layer. The three coherent options — route
+this source through §13.4's cache pool with attribution, keep the clause and use only sources whose
+terms allow it, or insert nothing and let the user decide — are written up in `PROCESSING.md` §5.11,
+with matrix row `D155` as the evidence. **A future implementer must not "just wire it up": that would
+publish pages that violate the provider's terms, which §20's honesty rules forbid.**
+
+Two facts worth carrying forward for whichever option is chosen: a `webformatURL` **expires after 24
+hours**, so a Markdown file that hotlinks one becomes a broken image within a day even if the terms had
+allowed it; and the 24-hour cache requirement means a per-keystroke search box would violate the API's
+own usage rule, so any search UI needs an explicit submit.

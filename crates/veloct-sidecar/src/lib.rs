@@ -116,12 +116,35 @@ pub fn target_triple() -> Result<&'static str> {
 }
 
 /// The bundled runtime's file name, `veloct-node-<triple>.exe` on Windows.
+///
+/// This is the name a Cargo build tree and a Tauri bundle SOURCE use. An installed bundle renames it
+/// — see [`node_bundled_file_name`] — so both names travel together through
+/// [`node_file_names`].
 pub fn node_file_name(triple: &str) -> String {
     if cfg!(windows) {
         format!("{NODE_SIDECAR_STEM}-{triple}.exe")
     } else {
         format!("{NODE_SIDECAR_STEM}-{triple}")
     }
+}
+
+/// The name an INSTALLED Tauri bundle gives the runtime, with the target triple stripped.
+pub fn node_bundled_file_name() -> String {
+    if cfg!(windows) {
+        format!("{NODE_SIDECAR_STEM}.exe")
+    } else {
+        NODE_SIDECAR_STEM.to_string()
+    }
+}
+
+/// Both names a bundled runtime is found under, in the order they should be tried.
+pub fn node_file_names(triple: &str) -> Vec<String> {
+    let mut names = vec![node_file_name(triple)];
+    let bundled = node_bundled_file_name();
+    if !names.contains(&bundled) {
+        names.push(bundled);
+    }
+    names
 }
 
 /// Find the bundled Node runtime.
@@ -131,6 +154,16 @@ pub fn node_file_name(triple: &str) -> String {
 /// 1. `VELOCT_NODE`, an explicit path, for a build tree or a test.
 /// 2. Beside the sidecar executable, which is where Tauri puts an `externalBin` at runtime.
 /// 3. One directory up, which is where Tauri puts resources relative to a binary in `binaries/`.
+///
+/// **BOTH names are tried, and the second one is not a nicety.** A Tauri bundle RENAMES an
+/// `externalBin`: the file is built and shipped as `binaries/veloct-node-x86_64-pc-windows-msvc.exe`
+/// (the `-<triple>` suffix is what a Cargo build tree needs) but it is INSTALLED as
+/// `veloct-node.exe`, with the triple stripped. Measured against a real
+/// `Veloct_0.1.0_x64-setup.exe`: the installed directory holds `veloct-astro-sidecar.exe`,
+/// `veloct-desktop.exe` and `veloct-node.exe`. Searching only the triple-suffixed name therefore
+/// finds the runtime in a development tree and NEVER in an installed application — a preview that
+/// works for the person who built it and fails for the person who installed it, which ADR-0005's
+/// "never from `PATH`" rule exists to prevent in the other direction.
 pub fn resolve_node(beside: &Path) -> Result<PathBuf> {
     if let Some(explicit) = std::env::var_os(NODE_ENV) {
         let path = PathBuf::from(explicit);
@@ -147,19 +180,25 @@ pub fn resolve_node(beside: &Path) -> Result<PathBuf> {
     }
 
     let triple = target_triple()?;
-    let name = node_file_name(triple);
+    let names = node_file_names(triple);
 
     let mut candidates: Vec<PathBuf> = Vec::new();
     // Beside the executable.
     if let Some(directory) = beside.parent() {
-        candidates.push(directory.join(&name));
+        for name in &names {
+            candidates.push(directory.join(name));
+        }
         // One level up: a `binaries/` subdirectory beside resources.
         if let Some(parent) = directory.parent() {
-            candidates.push(parent.join(&name));
-            candidates.push(parent.join("binaries").join(&name));
+            for name in &names {
+                candidates.push(parent.join(name));
+                candidates.push(parent.join("binaries").join(name));
+            }
         }
     }
-    candidates.push(beside.join(&name));
+    for name in &names {
+        candidates.push(beside.join(name));
+    }
 
     for candidate in &candidates {
         if candidate.is_file() {
@@ -170,7 +209,8 @@ pub fn resolve_node(beside: &Path) -> Result<PathBuf> {
     Err(VeloctError::NotConfigured {
         what: "the bundled Node runtime".to_string(),
         hint: Some(format!(
-            "expected {name} beside the application; looked in {}",
+            "expected {} beside the application; looked in {}",
+            names.join(" or "),
             candidates
                 .iter()
                 .map(|path| path.display().to_string())
@@ -320,6 +360,38 @@ mod tests {
         std::fs::write(&node, b"fake").unwrap();
         let resolved = without_env(|| resolve_node(&sidecar).unwrap());
         assert_eq!(resolved, node);
+    }
+
+    #[test]
+    fn a_runtime_under_the_name_an_installed_bundle_gives_it_is_found() {
+        // Measured, not assumed: a Tauri NSIS bundle installs the runtime as `veloct-node.exe`, with the
+        // target triple STRIPPED — `binaries/veloct-node-x86_64-pc-windows-msvc.exe` in the build tree
+        // becomes `veloct-node.exe` in the install directory, beside `veloct-desktop.exe`. Searching only
+        // the triple-suffixed name found the runtime in a development tree and NEVER in an installed app.
+        let dir = tempfile::TempDir::new().unwrap();
+        let sidecar = dir.path().join("veloct-astro-sidecar");
+        let node = dir.path().join(node_bundled_file_name());
+        std::fs::write(&node, b"fake").unwrap();
+        let resolved = without_env(|| resolve_node(&sidecar).unwrap());
+        assert_eq!(resolved, node);
+    }
+
+    #[test]
+    fn both_runtime_names_are_tried_and_the_triple_suffixed_one_comes_first() {
+        let triple = target_triple().unwrap();
+        let names = node_file_names(triple);
+        assert_eq!(names.len(), 2, "{names:?}");
+        assert_eq!(names[0], node_file_name(triple));
+        assert_eq!(names[1], node_bundled_file_name());
+        // A build tree uses the suffixed name, so it must win when both exist: two runtimes in one
+        // directory is a mistake, and picking the wrong one silently is worse than picking a defined one.
+        let dir = tempfile::TempDir::new().unwrap();
+        let sidecar = dir.path().join("veloct-astro-sidecar");
+        let suffixed = dir.path().join(node_file_name(triple));
+        let bundled = dir.path().join(node_bundled_file_name());
+        std::fs::write(&suffixed, b"suffixed").unwrap();
+        std::fs::write(&bundled, b"bundled").unwrap();
+        assert_eq!(without_env(|| resolve_node(&sidecar).unwrap()), suffixed);
     }
 
     /// Install a fake Astro package whose `package.json` declares `bin`.

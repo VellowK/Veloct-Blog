@@ -35,6 +35,7 @@ import {
   unimplementedKinds,
   uploadControl,
   validateDraft,
+  type StorageTargetDraft,
 } from '../src/lib/storageTargetForm';
 
 /** One target view, with every field `StorageTargetView` carries and only the interesting ones overridden. */
@@ -528,6 +529,41 @@ describe('why a draft cannot be saved', () => {
       validateDraft({ ...s3Draft(), pathPrefix: '../outside' }),
     ).toContain('..');
     expect(validateDraft({ ...s3Draft(), pathPrefix: '/absolute' })).toContain('相对路径');
+  });
+
+  it('does not check a prefix for a kind that will not submit it', () => {
+    // PROCESSING.md §5.10.1's last two-language divergence. `buildSaveRequest` submits `pathPrefix` only
+    // for s3/github/local, but the rule used to run for every kind — so a value left over from a kind
+    // switch kept blocking the save for a kind whose form does not even render the field, and the user
+    // could not clear it without switching back. Over-refusing rather than under-refusing, and this is
+    // the fix.
+    for (const kind of ['sftp', 'lsky']) {
+      const carried = { ...emptyDraft(kind), id: 'x', name: 'X', pathPrefix: '../outside' };
+      expect(fieldKeysForKind(kind)).not.toContain('pathPrefix');
+      expect(validateDraft(carried), `${kind} still checks a field it does not submit`).toBeNull();
+      // And the request really does drop it, which is what makes the rule above the right one.
+      expect(buildSaveRequest(carried).pathPrefix).toBeUndefined();
+    }
+
+    // The kinds that DO submit it are still checked, so the fix cannot be read as "this rule is gone".
+    // Each is given the fields it requires, so the reason that comes back is the PREFIX's and not a
+    // missing bucket or repository.
+    const complete: Record<string, Partial<StorageTargetDraft>> = {
+      s3: { bucket: 'assets' },
+      github: { repository: 'owner/repo' },
+      local: {},
+    };
+    for (const kind of ['s3', 'github', 'local']) {
+      expect(fieldKeysForKind(kind)).toContain('pathPrefix');
+      const reason = validateDraft({
+        ...emptyDraft(kind),
+        id: 'x',
+        name: 'X',
+        ...complete[kind],
+        pathPrefix: '../outside',
+      });
+      expect(reason, `${kind} accepted a prefix that escapes the target directory`).toContain('..');
+    }
   });
 
   it('accepts a complete draft, so a reason is only shown when there is one', () => {

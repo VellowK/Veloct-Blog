@@ -10,6 +10,7 @@
 // script access to the main site's storage, which is exactly what the contract forbids.
 
 import BaseLayout from '../../layouts/BaseLayout.astro';
+import LazyImage from '../../components/LazyImage.astro';
 import { readSiteConfig } from '../../lib/site-config.mjs';
 import { formatDate } from '../../lib/format.ts';
 import { readWorks } from '../../lib/works.mjs';
@@ -57,13 +58,12 @@ const view = Astro.url.searchParams.get('view') === 'list' ? 'list' : 'grid';
         >
           <a href={`/works/${work.slug}/`} class="block no-underline">
             <span class="block aspect-video bg-ink-850" data-veloct-work-poster>
-              {work.screenshot ? (
-                <img
-                  src={`/work-previews/${work.slug}/screenshot.webp`}
+              {work.posterUrl ? (
+                <LazyImage
+                  src={work.posterUrl}
                   alt={`${work.title} 截图`}
-                  loading="lazy"
-                  decoding="async"
-                  class="h-full w-full object-cover"
+                  ratio="16 / 9"
+                  class="h-full w-full"
                 />
               ) : (
                 <span class="grid h-full place-items-center text-sm muted">暂无截图</span>

@@ -602,8 +602,7 @@ export interface ObjectView {
 }
 
 /** The automatic backup rule's state (handoff.md section 17.5). */
-export interface AutoBackupStateView {
-  tracker: {
+export interface AutoBackupStateView {  tracker: {
     last_change_seconds: number;
     changed_since_backup: boolean;
     idle_seconds: number;
@@ -617,6 +616,99 @@ export interface AutoBackupStateView {
   cloud_retention: number;
   /** Whether a secret finding is waiting for acknowledgement (section 17.3). */
   needs_acknowledgement: boolean;
+}
+
+/** How a work's files arrived (handoff.md section 10.2). */
+export interface WorkSourceView {
+  kind: 'zip' | 'folder';
+  original_name: string;
+}
+
+/**
+ * A work's metadata, verbatim from `work.json` (handoff.md section 10.1).
+ *
+ * This is the truth source rather than a projection of one, so `updateWork` sends it back whole:
+ * a field the window does not understand is still preserved because the window round-trips the
+ * object it read.
+ */
+export interface WorkMetadataView {
+  id: string;
+  slug: string;
+  title: string;
+  author: string;
+  summary: string;
+  completed_at: string | null;
+  imported_at: string;
+  source: WorkSourceView;
+  entry: string;
+  tags: string[];
+  cover: string | null;
+  screenshot: string | null;
+  size_bytes: number;
+  notes: string;
+}
+
+/** One work, as the window sees it. */
+export interface WorkView {
+  metadata: WorkMetadataView;
+  /** Whether `site/` exists at all. */
+  has_body: boolean;
+  file_count: number;
+  /** Whether the build will emit anything for this work. */
+  is_servable: boolean;
+  /** Whether a poster image exists on disk right now. */
+  has_screenshot: boolean;
+  /** The poster route the build emits, or null when there is no poster. */
+  screenshot_url: string | null;
+  /** The poster exists but `work.json` names a different path, so the two disagree. */
+  screenshot_drift: boolean;
+}
+
+export interface WorksListView {
+  works: WorkView[];
+  /** How many works the build will actually emit. */
+  servable: number;
+}
+
+/** Section 10.1's size warning, which never changes the truth source. */
+export interface WorkImportWarningView {
+  total_bytes: number;
+  threshold: number;
+  message: string;
+}
+
+/** What an import WILL do, produced without writing anything. */
+export interface WorkImportPlanView {
+  title: string;
+  slug: string;
+  id: string;
+  entry: string;
+  file_count: number;
+  total_bytes: number;
+  metadata: WorkMetadataView;
+  skipped_directories: string[];
+  stripped_prefix: string | null;
+  /** Images the source carries that Veloct will NOT use as the poster. */
+  unused_images: string[];
+  warning: WorkImportWarningView | null;
+  /** Why the import cannot proceed, when it cannot. */
+  blocked_reason: string | null;
+}
+
+export interface WorkImportOutcomeView {
+  work: WorkView;
+  files_written: number;
+  total_bytes: number;
+  directory: string;
+  slug: string;
+  warning: WorkImportWarningView | null;
+}
+
+/** How a chosen path should be imported, decided by what the path IS. */
+export interface WorkImportSourceView {
+  kind: 'zip' | 'folder';
+  path: string;
+  name: string;
 }
 
 export const api = {
@@ -1152,4 +1244,74 @@ export const api = {
       category: options?.category ?? null,
       search: options?.search ?? null,
     }),
+
+  // -------------------------------------------------------------------------------------------
+  // Works (handoff.md section 10). A work's truth source is `works/<stable-id>/work.json` plus the
+  // sibling `site/`, so every call here reads or writes FILES and none of them touches SQLite.
+  // -------------------------------------------------------------------------------------------
+
+  /** Every work, newest completion first. */
+  listWorks: () => invoke<WorksListView>('list_works'),
+
+  /** How a chosen path should be imported, without importing it. */
+  describeWorkSource: (path: string) => invoke<WorkImportSourceView>('describe_work_source', { path }),
+
+  /**
+   * What an import would do, writing nothing (section 10.2).
+   *
+   * Shown before anything happens, so the entry file, the file count, the size warning and the
+   * skipped directories are the user's decision rather than a surprise after the fact.
+   */
+  planWorkImport: (options: {
+    sourcePath: string;
+    sourceKind: 'zip' | 'folder';
+    title: string;
+    author: string;
+  }) =>
+    invoke<WorkImportPlanView>('plan_work_import', {
+      sourcePath: options.sourcePath,
+      sourceKind: options.sourceKind,
+      title: options.title,
+      author: options.author,
+    }),
+
+  /** Import a work from a ZIP archive or a folder (section 10.2). */
+  importWork: (options: {
+    sourcePath: string;
+    sourceKind: 'zip' | 'folder';
+    title: string;
+    author: string;
+  }) =>
+    invoke<WorkImportOutcomeView>('import_work', {
+      sourcePath: options.sourcePath,
+      sourceKind: options.sourceKind,
+      title: options.title,
+      author: options.author,
+    }),
+
+  /** Export a work's body as an archive that re-imports identically (section 10.5). */
+  exportWork: (id: string, destination: string) =>
+    invoke<number>('export_work', { id, destination }),
+
+  /**
+   * Replace a work's editable metadata.
+   *
+   * The stable id and the import provenance are the caller's whatever is sent, because section 3.2
+   * makes the id the directory name: an edit that could change it would move the body.
+   */
+  updateWork: (id: string, metadata: WorkMetadataView) =>
+    invoke<WorkView>('update_work', { id, metadata }),
+
+  /** Remove a work and its body. */
+  removeWork: (id: string) => invoke<void>('remove_work', { id }),
+
+  /** Store a poster image for a work and point its metadata at it (section 10.1's `preview/`). */
+  setWorkScreenshot: (id: string, sourcePath: string) =>
+    invoke<WorkView>('set_work_screenshot', { id, sourcePath }),
+
+  /** Where a work's files live, so the window can name the directory rather than guess it. */
+  workDirectory: (id: string) => invoke<string>('work_directory', { id }),
+
+  /** The largest poster image the crate will store, so the window can say it BEFORE an attempt. */
+  workScreenshotLimit: () => invoke<number>('work_screenshot_limit'),
 };

@@ -25,6 +25,7 @@ pub mod logging;
 pub mod page_creator;
 pub mod publish;
 pub mod state;
+pub mod works;
 
 pub use commands::{AppInfo, DocumentView, PreviewView, ProjectView, SaveView};
 pub use state::{AppState, NullSpawner, OpenProject, ShellSpawner};
@@ -93,8 +94,7 @@ pub fn run() {
             attachments::upload_eligibility,
             attachments::upload_attachment,
             attachments::delete_remote_object,
-            attachments::attachment_objects,
-            backup::manual_backup,
+            attachments::attachment_objects,            backup::manual_backup,
             backup::export_backup,
             backup::list_backups,
             backup::prune_backups,
@@ -116,6 +116,16 @@ pub fn run() {
             deploy::set_deploy_enabled,
             deploy::deploy_now,
             deploy::deploy_resendable,
+            works::list_works,
+            works::describe_work_source,
+            works::plan_work_import,
+            works::import_work,
+            works::export_work,
+            works::update_work,
+            works::remove_work,
+            works::set_work_screenshot,
+            works::work_directory,
+            works::work_screenshot_limit,
         ])
         .setup(|app| {
             // The preview supervisor is started lazily, when a project is opened, so a machine with no

@@ -17,7 +17,8 @@ pub mod metadata;
 pub use import::{
     detect_entry, detect_wrapper, export_work, import_from_directory, import_from_zip, import_work,
     plan_import, safe_relative_path, ImportOptions, ImportOutcome, ImportPlan, ImportSource,
-    PlannedFile, SizeWarning, SlugCollision, MAX_RECOMMENDED_BYTES, SKIPPED_DIRECTORIES,
+    PlannedFile, SizeWarning, SlugCollision, MAX_RECOMMENDED_BYTES, PREVIEW_PREFIX,
+    SKIPPED_DIRECTORIES,
 };
 pub use metadata::{
     list_works, read_work, write_work, WorkMetadata, WorkRecord, WorkSource, WorkSourceKind,

@@ -89,6 +89,43 @@ async function copyWorkBody(work, worksRoot) {
   };
 }
 
+/**
+ * Copy one work's `preview/` files to the MAIN site root, where the poster wall expects them.
+ *
+ * `handoff.md` section 10.1 puts `preview/` beside `site/` rather than inside it, and section
+ * 10.3's poster wall reads `/work-previews/<slug>/screenshot.webp`. Nothing else writes that route,
+ * so without this the poster is always a placeholder even when the work ships a screenshot — which
+ * is exactly the gap PROCESSING.md section 5.9 recorded.
+ *
+ * The copy is driven by what is ON DISK rather than by what `work.json` names, so a work whose
+ * metadata points at a file that is not there produces no route at all rather than a route that
+ * 404s on a published page.
+ */
+async function copyWorkPreviews(work, siteRoot) {
+  const source = join(work.directory, 'preview');
+  if (!existsSync(source)) return [];
+
+  const target = join(siteRoot, 'work-previews', work.slug);
+  await rm(target, { recursive: true, force: true });
+  await mkdir(target, { recursive: true });
+  await cp(source, target, { recursive: true });
+
+  const files = [];
+  const walk = async (directory, prefix) => {
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) {
+        await walk(join(directory, entry.name), relative);
+      } else if (entry.isFile()) {
+        files.push(relative);
+      }
+    }
+  };
+  await walk(source, '');
+  files.sort();
+  return files;
+}
+
 export function splitPublishRoots() {
   return {
     name: 'veloct:split-publish-roots',
@@ -112,10 +149,16 @@ export function splitPublishRoots() {
 
         for (const work of works) {
           const entry = await copyWorkBody(work, worksRoot);
+          // The poster lives on the MAIN site root, not in the works root: it is a card image the
+          // shell page shows, not part of the work that runs on the works origin.
+          entry.previews = await copyWorkPreviews(work, siteRoot);
           manifest.push(entry);
           logger.info(
             `works origin: ${work.slug}/ (${entry.files.length} file${entry.files.length === 1 ? '' : 's'})`,
           );
+          if (entry.previews.length > 0) {
+            logger.info(`work previews: /work-previews/${work.slug}/ (${entry.previews.join(', ')})`);
+          }
         }
 
         // A frozen manifest so a rebuild can be compared without walking the trees

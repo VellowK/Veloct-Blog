@@ -36,6 +36,7 @@ import DeployPanel from './DeployPanel';
 import LogView from './LogView';
 import PageCreator, { AiSettingsPanel } from './PageCreator';
 import PublishPanel from './PublishPanel';
+import WorksPanel from './WorksPanel';
 import {
   dueReason,
   hashText,
@@ -179,6 +180,8 @@ export default function App() {
   const [aiSettings, setAiSettings] = useState<AiSettingsView | null>(null);
   const [showPageCreator, setShowPageCreator] = useState(false);
   const [showAiSettings, setShowAiSettings] = useState(false);
+  // Section 10's works system: import, metadata, the poster image and the independent Works Origin.
+  const [showWorks, setShowWorks] = useState(false);
   const splitRef = useRef<HTMLDivElement | null>(null);
   const draggingRef = useRef(false);
 
@@ -473,6 +476,20 @@ export default function App() {
               </button>
               <button
                 type="button"
+                className={showWorks ? 'active' : ''}
+                onClick={() => {
+                  setShowWorks((showing) => !showing);
+                  setShowBackups(false);
+                  setShowAttachments(false);
+                  setShowLog(false);
+                  setShowPublish(false);
+                }}
+                title="作品系统:导入、封面与独立 Origin(handoff.md 第 10 节)"
+              >
+                作品
+              </button>
+              <button
+                type="button"
                 className={showBackups ? 'active' : ''}
                 onClick={() => {
                   setShowBackups((showing) => !showing);
@@ -523,6 +540,8 @@ export default function App() {
       <main className="editor">
         {showDeploy ? (
           <DeployPanel enabled={project !== null} />
+        ) : showWorks ? (
+          <WorksPanel enabled={project !== null} />
         ) : showBackups ? (
           <BackupPanel enabled={project !== null} />
         ) : showAttachments ? (

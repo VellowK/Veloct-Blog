@@ -38,5 +38,6 @@ pub use store::{list_documents, read_document, write_document, DocumentPath};
 pub use works::{
     detect_entry, export_work, import_from_directory, import_from_zip, import_work, list_works,
     plan_import, read_work, write_work, ImportOptions, ImportOutcome, ImportPlan, ImportSource,
-    SizeWarning, SlugCollision, WorkMetadata, WorkRecord, WorkSource, WorkSourceKind, WORK_JSON,
+    SizeWarning, SlugCollision, WorkMetadata, WorkRecord, WorkSource, WorkSourceKind, PREVIEW_PREFIX,
+    WORK_JSON,
 };

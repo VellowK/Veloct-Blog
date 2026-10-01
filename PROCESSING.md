@@ -1,23 +1,30 @@
 # PROCESSING.md — state of Veloct, and what the next agent should do
 
-A **status and orientation document** for whoever picks this up next, written after three consecutive
-rounds of work on the cloud targets and the AI settings. It is not a contract: `handoff.md` remains the
-locked product contract and always wins, and `docs/spec/*` records the decisions `handoff.md` leaves open.
+A **status and orientation document** for whoever picks this up next, written after four consecutive
+rounds of work: the cloud targets, the AI settings, §13's storage targets, and §10's works system.
+It is not a contract: `handoff.md` remains the locked product contract and always wins, and
+`docs/spec/*` records the decisions `handoff.md` leaves open.
 
 **Read in this order:**
 1. `handoff.md` §28 — the completion definition. It is the only authority on what "done" means.
-2. This file — §1 for where the work stands, **§5 for what is genuinely missing**, §7 for what to do next.
+2. This file — §1 for where the work stands, **§5 for what is genuinely missing** (§5.11 is a DECISION,
+   not a task), §7 for what to do next.
 3. `README.md` — how to build and test on this machine.
-4. `docs/spec/00-architecture.md` — the ADRs, including the two added by these rounds (ADR-0015, ADR-0016).
+4. `docs/spec/00-architecture.md` — the ADRs, including ADR-0015 and ADR-0016.
+5. `docs/spec/03-upstream-facts.md` — what has been verified against a real upstream source, live.
 
-**Before changing anything**, run §3.1 and make the six numbers match. They were measured on commit
-`7813fcd`, and the working tree is **CLEAN** (§1.1) — every round is committed, so nothing here is a
-claim about work that no checkout can reproduce.
+**Before changing anything**, run §3.1 and make the results match §1. **They were measured on a working
+tree rather than on a commit (§1.2), which is a stated weaker claim than the previous three rounds made**
+— so confirming them from the checkout is the first task, not a formality.
 
 **The single most useful habit for this repository:** when a contract clause says a feature exists,
-`grep` for a caller before believing it. Two of the three rounds here found their work that way — a whole
-model (`CloudTarget`, `Provider::list_models`) implemented, tested, and called by nothing — and the §13
-round found a third: a validation function whose only reader was a test (§5.10, §2.9).
+`grep` for a caller before believing it. Three of the four rounds here found their work that way — a whole
+model (`CloudTarget`, `Provider::list_models`) implemented, tested and called by nothing; the §13 round's
+validation function whose only reader was a test (§5.10, §2.9); and the works round's `import_work`,
+`list_works`, `export_work` and the `/work-previews/<slug>/` poster route, each of which §10 names and
+none of which had a caller or a writer (§5.9). **The fourth round added the mirror image of the habit:**
+read the VENDOR before writing the code that talks to it — Pixabay's own documentation forbids the flow
+§13.14 prescribes, which is a gap the code could never have reported (§5.11).
 
 ---
 
@@ -25,25 +32,26 @@ round found a third: a validation function whose only reader was a test (§5.10,
 
 | Fact | Value |
 |---|---|
-| Last commit these numbers describe | `7813fcd Refuse a non-absolute public URL prefix in the form, not at save` — **every commit after it changes documentation only**, so it is still the last commit that touches code |
-| Working tree | **CLEAN** — the §13 round, the storage-kind follow-up and the two repairs are committed (`2496604`, `f29dcda`, `7813fcd`); every commit after them is documentation only (§1.1) |
-| Rust tests | **1330 passed, 0 failed, 5 ignored** (+35 over `bf75265`'s 1295; 17 workspace crates + `src-tauri`) |
-| Frontend tests | **80 passed** (vitest: 24 `frontmatter` + 56 `storageTargetForm`) |
+| Last commit these numbers describe | **the working tree at the time of the runs, not a commit** — see §1.2. The previous recorded boundary was `7813fcd` |
+| Working tree | **NOT clean while the numbers were measured**: the works round's change set was uncommitted when §3.1 was run. See §1.2, which says what that does and does not weaken |
+| Rust tests | **1356 passed, 0 failed, 5 ignored** (+26 over `7813fcd`'s 1330; 17 workspace crates + `src-tauri`) |
+| Frontend tests | **117 passed** (vitest: 24 `frontmatter` + 57 `storageTargetForm` + 36 **`workForm`**) |
 | `clippy --workspace --all-targets` | **0 warnings** |
-| Site build verifier | **46/46 checks** — **NOT re-run this round**: `site/` is untouched by it, and §J of the matrix names the command behind every number here |
-| Test matrix | **214 rows at `I`, 0 at `P`** (198 + 16 for §13's form, its cleanup, the storage-kind report and the save-path validation), out of **234** rows across tables A–G |
-| Shell commands registered | **72** (70 + `delete_remote_object` + `storage_kinds`) |
+| Site build verifier | **52/52 checks** — up from 46; the six this round added cover §10.3's poster route, which nothing emitted before (D148) |
+| Test matrix | **224 rows at `I`, 0 at `P`** (214 + 10 for the works round), out of **244** rows across tables A–G |
+| Shell commands registered | **82** (72 + the ten works commands) |
+| Installer | **`target/release/bundle/nsis/Veloct_0.1.0_x64-setup.exe`, 27.90 MiB** — §5.7 is CLOSED; see §2.10 and §2.11 for the two defects building it exposed |
 
 Every command above exits **0** on success. That matters and is itself a recent fix — see §2.
 
-**These numbers were measured on commit `7813fcd` and are reproducible from it**, which is the point
-of the commits: before them, four rounds of work had been verified in a working tree and never in a
-checkout, and a number that is true of one directory on one machine is a weaker claim than it looks.
-`docs/spec/02-test-matrix.md` §J holds the run, the per-crate rows that sum to 1330 exactly, and the two
-earlier runs it supersedes. The commits that carry the paragraph you are reading come straight after
-`7813fcd` and change only this file and the matrix — `git diff --stat 7813fcd HEAD` names exactly those
-two — and no verify command reads either of them, so if §3.1 does not reproduce these numbers from a
-checkout, something outside this repository changed and that is the first thing to find out.
+**Every number in the table above was measured on the WORKING TREE the works round left behind, not on
+a commit**, and §1.2 states exactly what that does and does not weaken. The previous boundary —
+commit `7813fcd`, reproducible from a checkout — is still in the matrix's §J, and the runs recorded
+there carry the per-crate rows. The rule the earlier rounds established still stands: **a number that
+is true of one directory on one machine is a weaker claim than one a checkout reproduces**, so the
+first thing the next agent should do is run §3.1 on the committed tree and check that 1356, 117, 52/52
+and exit-0-clippy still hold; if they do not, the gap between this file and the tree is the first thing
+to find out.
 
 ### 1.1 What these rounds changed
 
@@ -128,18 +136,81 @@ src/lib/storageTargetForm.ts                                           NEW  the 
 tests/storageTargetForm.test.ts                                        NEW  those tests, including the nine shapes transcribed from the crate
 ```
 
+8. **§10's works system is reachable from the window** — the round this file's new numbers describe.
+   `import_work`, `list_works` and `export_work` had **no caller above `veloct-content`**, so a user
+   could not import a work, see one, give it a poster, or export it: §5.9's gap, and H10 with it.
+   A new `crates/veloct-app/src/works.rs` service (19 tests) plus a `src-tauri/src/works.rs` command
+   module (10 commands, 5 tests) plus `src/WorksPanel.tsx` and `src/lib/workForm.ts` (36 tests) close
+   it. **+19 `veloct-app`, +5 `veloct-desktop`, +2 `veloct-sidecar`, +37 frontend tests.**
+
+9. **§10.1's `preview/` became reachable, and §10.3's poster route is EMITTED** — the same round found
+   that `import_work` wrote EVERY planned file under `site/`, so the sibling `preview/` directory the
+   layout names could not be produced by an import; and that `site/`'s works index pointed at
+   `/work-previews/<slug>/screenshot.webp` while **nothing wrote that route**. The fixture work's
+   `work.json` had named `preview/screenshot.webp` since it was created, and the poster wall had shown
+   a placeholder ever since. `veloct_content::works::PREVIEW_PREFIX` now lifts `preview/` out of the
+   body, `split-publish-roots.mjs` copies it to the main site root, and the verifier goes from
+   **46/46 to 52/52 checks**, including a BYTE-FOR-BYTE comparison against the work's own file.
+
+10. **The installer EXISTS, and building it exposed two defects that made a packaged app unusable** —
+    §5.7's gap. `scripts/build-installer.ps1` (NEW) wraps the Tauri CLI with the environment fixes
+    `scripts/cargo.ps1` documents; the package is **27.90 MiB** and installs `veloct-desktop.exe`,
+    `veloct-astro-sidecar.exe` and `veloct-node.exe`. See §2.10 and §2.11 — neither defect could be
+    seen from a `cargo build`, and both would have shipped.
+
+The paths THIS round changed:
+
+```text
+crates/veloct-app/src/works.rs                    NEW  the works service, and the poster's rules (19 tests)
+crates/veloct-app/src/lib.rs                      the module and its re-exports
+crates/veloct-content/src/works.rs                PREVIEW_PREFIX re-exported
+crates/veloct-content/src/works/import.rs         PREVIEW_PREFIX, and the body/preview write split
+crates/veloct-sidecar/src/lib.rs                  node_bundled_file_name + node_file_names (§2.11)
+src-tauri/src/works.rs                            NEW  ten commands, and the import-source decisions (5 tests)
+src-tauri/src/lib.rs                              the ten registrations (82 commands now)
+src-tauri/tauri.conf.json                         binaries/veloct-node added to externalBin (§2.10)
+src/WorksPanel.tsx                                NEW  the panel
+src/lib/workForm.ts                               NEW  its decisions, as a pure module (36 tests)
+src/lib/api.ts, src/App.tsx, src/styles.css       the bindings, the 作品 button, the panel's styles
+src/lib/storageTargetForm.ts                      §5.10.1's last divergence, gated by kind
+tests/workForm.test.ts                            NEW  36 tests
+tests/storageTargetForm.test.ts                   +1 test for that divergence
+site/src/lib/works.mjs                            previews/posterUrl read from DISK
+site/src/pages/works/index.astro                  the poster through LazyImage, only when it exists
+site/src/integrations/split-publish-roots.mjs     copyWorkPreviews → dist/site/work-previews/
+site/scripts/verify-build.mjs                     six checks for the poster route
+scripts/build-installer.ps1                       NEW  the documented way to build the NSIS package
+package.json                                      @tauri-apps/cli and @tauri-apps/plugin-dialog as devDependencies
+works/01J8Z5Q0K3W7M9V2B4N6P8R2AG/preview/         the fixture work's real poster images (sharp, once)
+```
+
 The many `*.log` files in the working directory are this session's captured verification output, and
 `.gitignore` line 25 ignores `*.log`, so they are NOT part of the change set; they are safe to read
 (they are the raw evidence for the numbers in §1) and safe to delete.
 
-**The matrix at 214 `I` / 0 `P` is a claim about recorded evidence, not proof that §28 is met.**
+### 1.2 Every number in §1 was measured on an UNCLEAN tree, and that is stated rather than tidied away
+
+The works round's verification was run **before** its commit, so `git status --short` was not empty at
+the moment the numbers were taken. What that does and does not weaken:
+
+- **What is unaffected.** The tree that produced 1356 / 117 / 52-of-52 / 0 clippy warnings is exactly
+  the tree the commit carries: no file was edited between the last run and the commit, and the
+  per-crate rows sum to 1356 exactly — so the runs describe a real, self-consistent tree rather than an
+  aspiration. Every command exited 0, and the site verifier's byte-for-byte poster comparison is a
+  stronger check than a count.
+- **What IS weaker.** The numbers are not *yet* reproducible from a checkout, which is the standard the
+  previous three rounds were held to and the reason those commits exist at all. **The next agent should
+  re-run §3.1 on the committed tree and either confirm the numbers or record the difference**, exactly
+  as `bf75265` did for the four cloud-target commits. This paragraph exists so that gap is a stated
+  fact rather than an unstated one — the matrix's §J has a row saying the same thing.
+
+**The matrix at 224 `I` / 0 `P` is a claim about recorded evidence, not proof that §28 is met.**
 It has been wrong in that direction before: at one point it read 93 `I` while the desktop
 workbench did not exist at all. When you find a gap, the matrix row is what is wrong.
-The rows this round added (D130–D145) each name the test AND the crate, and where a row cannot
-assert something (an untested refusal, a command WRAPPER no test drives) it says so in the row as a
-**stated limit** rather than implying coverage — `docs/spec/02-test-matrix.md` §I makes that the rule.
 Three of those limits were closed by the repairs above and the rows that carried them were corrected
-rather than left standing (D18, D131, D134, D137).
+rather than left standing (D18, D131, D134, D137); the ten rows this round added (D146–D155) each name
+the test AND the crate, D155 is an external fact rather than a test, and §5.11 is where its consequence
+is argued.
 
 ---
 
@@ -274,6 +345,65 @@ KEPT rather than softened (a test asserts the SFTP arm still refuses while the s
 they remain the shape a future adapter will have to satisfy. **A reader who finds this exemption and
 "fixes" it by validating everything would delete the only way to record an unimplemented target — do not.**
 
+### 2.10 A Tauri bundle RENAMES an `externalBin`, so `externalBin` is not the whole story
+
+Two separate defects, both of which a `cargo build -p veloct-desktop` and a launch smoke test cannot
+see, and both of which would have shipped in §5.7's installer:
+
+1. **`externalBin` listed only the Astro sidecar.** `src-tauri/tauri.conf.json` said
+   `["binaries/veloct-astro-sidecar"]`, while `crates/veloct-sidecar/src/lib.rs` exists precisely to
+   resolve a BUNDLED Node runtime (ADR-0005: "Node.js is a bundled sidecar, never a user prerequisite").
+   The first NSIS package was **5.49 MiB** and installed `veloct-desktop.exe` and
+   `veloct-astro-sidecar.exe` — **no Node at all**. Adding `binaries/veloct-node` took it to
+   **27.90 MiB** and the install directory gained `veloct-node.exe`. **A packaged application could
+   never have started a preview**, and the error a user would have seen named a file the package simply
+   did not contain.
+
+2. **The installed name has the target triple STRIPPED.** This is the part that is easy to miss: the
+   build tree ships `binaries/veloct-node-x86_64-pc-windows-msvc.exe` (the suffix is what a Cargo build
+   needs), and Tauri installs it as **`veloct-node.exe`**. `resolve_node` searched only the suffixed
+   name, so it found the runtime in a development tree and **never** in an installed application — a
+   preview that works for the person who built it and fails for the person who installed it, which is
+   the exact failure ADR-0005's "never from `PATH`" rule exists to prevent in the other direction.
+
+**Both directions were measured rather than reasoned about.** Against the pre-fix package, the
+package's OWN launcher exits 2:
+
+```text
+veloct-astro-sidecar: not configured: the bundled Node runtime
+  expected veloct-node-x86_64-pc-windows-msvc.exe beside the application; looked in
+  …\veloct-install-probe2\veloct-node-x86_64-pc-windows-msvc.exe, …\veloct-node-x86_64-pc-windows-msvc.exe,
+  …\binaries\veloct-node-x86_64-pc-windows-msvc.exe, …\veloct-astro-sidecar.exe\veloct-node-…exe
+```
+
+…while `veloct-node.exe` sat in that very directory. After the fix, the same installed layout launches
+the real Astro dev server (`[vite] connected`, `[content] Syncing content`). `node_bundled_file_name`
+and `node_file_names` are the two names, two tests drive them, and one pins the ORDER so a build tree
+holding both cannot silently pick the wrong runtime.
+
+**The generalisable rule:** "the bundle builds" and "the installed application works" are different
+claims. §5.7 was recorded as an unmet clause for rounds while `cargo build` was green, and the first
+attempt at closing it shipped a package with a missing runtime — so a build command is not evidence
+that a package is usable until something INSTALLS it and runs it.
+
+### 2.11 The `write` tool mangled `§` into `搂`, in a NEW file
+
+The mirror image of the `Set-Content` corruption §3 warns about. Writing
+`crates/veloct-app/src/works.rs` produced **twelve** occurrences of U+6402 (`搂`) where `§` (U+00A7) was
+intended, with no BOM and no replacement character — so `read` showed correct-looking prose in the
+places that mattered and the damage was only visible from the CHARACTER CODES:
+
+```powershell
+$t = [System.IO.File]::ReadAllText($p)
+($t.ToCharArray() | Where-Object { [int]$_ -eq 0x6402 }).Count   # 12, and 0 for U+00A7
+```
+
+It was repaired by a same-value swap under `[System.IO.File]::WriteAllText` with
+`UTF8Encoding($false)`, and the repair is verified by counting BOTH code points afterwards (0 and 12).
+**`Get-Content` cannot be used to check this** — PowerShell 5.1 decodes a BOM-less UTF-8 file with the
+system code page, so a correct `§` and a mangled one both print as mojibake. Count the code points, or
+use the `read` tool.
+
 ---
 
 ## 3. Environment facts (non-obvious, all necessary)
@@ -291,7 +421,14 @@ they remain the shape a future adapter will have to satisfy. **A reader who find
   `tauri.conf.json` points `frontendDist` at it. `npm run dev:ui` is only for HMR work.
 - Node 24, npm 11, `rustc 1.97.1`, MSVC BuildTools, WebView2. Only
   `x86_64-pc-windows-msvc` is installed, so the sidecar must stay suffixed
-  `-x86_64-pc-windows-msvc.exe`.
+  `-x86_64-pc-windows-msvc.exe` **in the build tree**. See §2.10: an INSTALLED bundle strips that
+  suffix, so both names have to be searched at runtime.
+- **The installer is built by `scripts/build-installer.ps1`, not by `tauri build` directly.** The Tauri
+  CLI needs `cargo` on `PATH` and the isolated `CARGO_HOME`, which is exactly what `scripts/cargo.ps1`
+  fixes for Cargo; without them it fails with `failed to run 'cargo metadata' command ... program not
+  found`. The CLI is a devDependency (`@tauri-apps/cli`), so the script runs
+  `node node_modules/@tauri-apps/cli/tauri.js build --bundles nsis`. The first run also downloads NSIS
+  itself and `nsis_tauri_utils.dll` from GitHub, which is why it needs the network once.
 - **The pinned Node runtime is fetched, not committed** (`scripts/fetch-node.ps1`, pin in
   `scripts/node-runtime.toml`, 89 MB, hash-verified against Node's own `SHASUMS256.txt`). The
   2.66 MB launcher IS committed. If `src-tauri/binaries/veloct-node-*.exe` is missing, run the
@@ -310,13 +447,27 @@ they remain the shape a future adapter will have to satisfy. **A reader who find
 ### 3.1 The commands to run before claiming anything
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\cargo.ps1 test --workspace     # exit 0, 1330 passed, 5 ignored
+powershell -ExecutionPolicy Bypass -File .\scripts\cargo.ps1 test --workspace     # exit 0, 1356 passed, 5 ignored
 powershell -ExecutionPolicy Bypass -File .\scripts\cargo.ps1 clippy --workspace --all-targets
 powershell -ExecutionPolicy Bypass -File .\scripts\build-sidecar.ps1 -Check
-cmd /c "npm.cmd run test:ui"                                                       # 80 passed
+cmd /c "npm.cmd run test:ui"                                                       # 117 passed
 cmd /c "npm.cmd run build:ui"                                                      # tsc clean
 # in site/:
-$env:VELOCT_BUILD_TIME="2026-01-01T12:00:00.000Z"; npm.cmd run build; node scripts/verify-build.mjs
+$env:VELOCT_BUILD_TIME="2026-01-01T12:00:00.000Z"; npm.cmd run build; node scripts/verify-build.mjs   # 52/52
+```
+
+The installer is a separate, slower command (it runs a release build and downloads NSIS on the first
+run). Run it when `tauri.conf.json`, the sidecar binaries or the bundle inputs change, and then
+**install the package and run it** — §2.10 is why a green build is not evidence that a package works:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\build-installer.ps1
+# -> target/release/bundle/nsis/Veloct_0.1.0_x64-setup.exe
+# verify what the package actually CONTAINS, without touching the real install:
+#   Start-Process <setup.exe> -ArgumentList '/S',"/D=$env:TEMP\veloct-probe" -Wait
+#   Get-ChildItem $env:TEMP\veloct-probe      # veloct-desktop.exe, veloct-astro-sidecar.exe, veloct-node.exe
+#   & "$env:TEMP\veloct-probe\veloct-astro-sidecar.exe" dev   # must reach the Astro dev server
+#   & "$env:TEMP\veloct-probe\uninstall.exe" /S
 ```
 
 Three integration tests are `#[ignore]`d because they spawn real processes. Run them explicitly
@@ -332,14 +483,16 @@ when you touch the areas they cover:
 
 ## 4. What IS implemented
 
-All numbers are test counts. The matrix holds **234 rows across tables A-G** (A 23, B 14,
-C 12, D 147, E 21, F 6, G 11) plus a separate **20-row H table** which IS the `handoff.md` §28
-acceptance checklist, one row per headline requirement. **214 of the A-G rows carry a status and
-all 214 are `I`**; the remaining 20 are table headers or rows whose status lives in a linked row.
-The sixteen new ones are `D130`–`D145`: §13's form, the local kind, the end of the
+All numbers are test counts. The matrix holds **244 rows across tables A-G** (A 23, B 14,
+C 12, D 157, E 21, F 6, G 11) plus a separate **20-row H table** which IS the `handoff.md` §28
+acceptance checklist, one row per headline requirement. **224 of the A-G rows carry a status and
+all 224 are `I`**; the remaining 20 are table headers or rows whose status lives in a linked row.
+The sixteen previous new ones were `D130`–`D145`: §13's form, the local kind, the end of the
 unconfigured-SFTP degradation, §13.8's explicit cleanup, §13.2.2's reason, the storage-kind
 report the window reads before a target exists, and the save path's enforcement of the crate's
-own rules.
+own rules. **This round's ten are `D146`–`D155`**: the works service, the `preview/` split, the
+site's poster route, the poster command, the command registrations, the form's pure module, §5.10.1's
+last divergence, the installer, the sidecar's bundled name, and the live-verified Pixabay contract.
 
 **The H table is the one to read when judging completion.** It is short, it mirrors §28 clause
 by clause, and each row names the evidence it requires.
@@ -349,27 +502,33 @@ by clause, and each row names the evidence it requires.
 | `veloct-core` | Errors (with `hint()`), secrets/redaction, atomic writes, `ProjectRoot`, `FileRevision`, HTTP client trait + fakes, clock, ids |
 | `veloct-markdown` | Frontmatter, directives, paragraph ids `<!--p:ULID-->`, references, rewrite, diagnostics, parse |
 | `veloct-storage` | SQLite schema + migrations, rebuildable index, `ai_settings` (providers, models, features, fallback), **and the re-exported `Connection` its own API takes** |
-| `veloct-content` | Content model, WIP lifecycle, paragraph ids, `create_from_source`, works import/metadata |
+| `veloct-content` | Content model, WIP lifecycle, paragraph ids, `create_from_source`, works import/metadata, **and `PREVIEW_PREFIX`: §10.1's `preview/` is a SIBLING of the body, which is what an import now produces** |
 | `veloct-git` | Change sets, publish commits, release tags, worktrees |
 | `veloct-logging` | `[info]/[warning]/[error]`, mandatory redaction AT CONSTRUCTION, rotation, log page |
 | `veloct-process` | Preview supervisor, port reservation, readiness probes |
 | `veloct-release` | `release.json` (no commit sha), frozen inputs, deterministic fingerprint, one build → two roots, **`publish()`** = freeze → build → commit → tag |
-| `veloct-sidecar` | The Astro launcher: resolves the bundled Node from the sidecar path, NEVER `PATH` (ADR-0005) |
+| `veloct-sidecar` | The Astro launcher: resolves the bundled Node from the sidecar path, NEVER `PATH` (ADR-0005), **under BOTH names a bundle can give it** (§2.10) |
 | `veloct-deploy` | Three logical targets × main/works sub-targets, Cloudflare adapter, manual exports, roll-up (`partial` vs `failed`), re-send, **SEO push lifecycle** |
 | `veloct-ai` | Providers, per-feature model mapping, CANCELLED-safe fallback, context, apply plans, **the page creator**, **model discovery + a connection test whose failure message is redacted at the source** (§2.8) |
 | `veloct-attach` | Three independent state axes, reference sets, dedup, cache pool, upload transaction, **GitHub, S3 and the local-directory attachment targets (`StorageKind::Local`, §13.10 where the server is this machine)**, **§13.8's explicit `delete_remote_object` — the only path that removes a remote object**, and the canonical MIME map |
 | `veloct-github` | The GitHub Contents API, ONCE: `Repository`, `GitHubContents` (put/get/list/delete/repository_info), `base64_encode`, the 100 MB ceiling. No policy — that stays with the dependent (ADR-0015) |
 | `veloct-s3` | S3 / S3-compatible, ONCE: SigV4 (`CanonicalRequest`, `uri_encode`, the signing-key chain), and `S3Client` (streamed put, HEAD, paginated LIST, DELETE, a signed connection test). No policy either (ADR-0016) |
 | `veloct-backup` | Selection rules, gzip archive + manifest, secret scan, staging restore, retention, target orchestration, **the GitHub and S3 cloud backup targets — §17.2 verified against the repository, and S3's streamed upload plus the bucket's own timestamps** |
-| `veloct-app` | Orchestration services: attachments, backup/restore, deploy, autobackup, **cloud backup targets in SQLite + the run record**, plus `CommandError` |
-| `src-tauri` | The Tauri shell: **72 registered commands**, `AppState`, preview wiring, credential store (keyring), sidecar resolution, **the storage-target commands including §13.8's `delete_remote_object` and `storage_kinds`, which reports each kind's adapter status from the crate without touching project state** |
-| `src/` | The workbench: 3-pane layout, **Tiptap WYSIWYG** editor with a Markdown view, draggable split with a REAL Astro iframe preview, autosave, conflict UI, log page, **AI settings with model discovery, a connection test and a model list**, page creator, attachments **with the storage-target FORM, §13.8's remote cleanup, §13.2.2's eligibility reason and the kind-gap report read before the first save**, publish, backups (including cloud targets), deploy |
+| `veloct-app` | Orchestration services: attachments, backup/restore, deploy, autobackup, **cloud backup targets in SQLite + the run record**, **the works service (import, list, export, metadata, poster, remove) whose truth source is FILES and which therefore takes no connection**, plus `CommandError` |
+| `src-tauri` | The Tauri shell: **82 registered commands**, `AppState`, preview wiring, credential store (keyring), sidecar resolution, **the storage-target commands including §13.8's `delete_remote_object` and `storage_kinds`, which reports each kind's adapter status from the crate without touching project state**, **the ten works commands, and `describe_work_source`, which decides ZIP vs folder from what the path IS** |
+| `src/` | The workbench: 3-pane layout, **Tiptap WYSIWYG** editor with a Markdown view, draggable split with a REAL Astro iframe preview, autosave, conflict UI, log page, **AI settings with model discovery, a connection test and a model list**, page creator, attachments **with the storage-target FORM, §13.8's remote cleanup, §13.2.2's eligibility reason and the kind-gap report read before the first save**, **作品: §10's works panel with the import PLAN shown before anything is written, metadata editing, the poster picker and export**, publish, backups (including cloud targets), deploy |
 
 **Verified end-to-end against real processes**, not only unit tests:
 
 - A real desktop binary builds and launches (`target/debug/veloct-desktop.exe`, ~37 MB).
 - The sidecar starts the real Astro dev server through the real bundled Node: `GET /` → HTTP 200,
   an article route → 200, and `taskkill /T` frees the port.
+- **A real NSIS package was built, silently INSTALLED, listed, probed and uninstalled** (§2.10):
+  `Veloct_0.1.0_x64-setup.exe` is 27.90 MiB and installs `veloct-desktop.exe`,
+  `veloct-astro-sidecar.exe` and `veloct-node.exe`; the INSTALLED launcher launches the real Astro dev
+  server. This is the one §5.7 claim that a `cargo build` could not have made.
+- **A real Astro build emits the works poster**: `dist/site/work-previews/demo-counter/screenshot.webp`
+  was compared BYTE FOR BYTE with the work's own `preview/screenshot.webp` (52/52 verifier checks).
 - `publish` runs a real Astro build, emits `dist/site` + `dist/works`, writes `release.json`,
   commits, tags, and the tag resolves to the commit the publish record names.
 - Backup/restore against the repository's own content: 56 files archived; full restore wrote 56;
@@ -382,8 +541,8 @@ believing any summary, including this one. Judged against the evidence that exis
 
 | # | Requirement | Honest verdict |
 |---|---|---|
-| H1 | Create and manage a project | **done** — `ProjectService`, 70 shell commands |
-| H2 | Markdown edit, autosave 2 s / 30 s / save-on-close | **done** — `src/lib/autosave.ts`, 71 frontend tests |
+| H1 | Create and manage a project | **done** — `ProjectService`, 82 shell commands |
+| H2 | Markdown edit, autosave 2 s / 30 s / save-on-close | **done** — `src/lib/autosave.ts`, 117 frontend tests |
 | H3 | SQLite index rebuilds | **done** — `veloct-storage::rebuild` |
 | H4 | Real Astro live preview, same project as production | **done** — sidecar smoke test: HTTP 200, article route 200 |
 | H5 | WIP control, stable URL, finished redirect | **done** |
@@ -391,12 +550,12 @@ believing any summary, including this one. Judged against the evidence that exis
 | H7 | Page creator | **done** — `veloct-ai::page` + `src/PageCreator.tsx` |
 | H8 | AI per-feature provider/model + fallback | **done** |
 | H9 | AI confirm / apply-all / apply-partial | **done** (apply lives in `veloct-ai::apply`; the UI exposes confirm) |
-| H10 | Work import, screenshot, iframe preview, isolation | **PARTIAL — see §5.9** |
+| H10 | Work import, screenshot, iframe preview, isolation | **PARTIAL, and this round moved it to the edge: import (ZIP and folder), the poster image and export are ALL reachable from the window**, the import PLAN is shown before anything is written, the stable id and import provenance are protected from a metadata edit, and §10.1's `preview/` is now produced by an import and EMITTED by the build at `/work-previews/<slug>/screenshot.webp` — the route that had no writer before, so the poster wall always rendered 暂无截图. The iframe preview and the isolation are done (`F6`, `G5`, the sandbox checks). **What is STILL PARTIAL and exactly why: the screenshot is a FILE THE USER CHOOSES rather than one Veloct captures.** This build has no headless browser; `PROCESSING.md` §5.9 records that rather than papering over it, and the command's own doc says so. A headless capture is a new dependency decision (a `chromiumoxide`-class crate or a WebView2 capture path), which is not one to take silently. Everything else in §5.9 is closed; the remaining work is that one decision |
 | H11 | Publish commit + Release tag | **done** — real publish integration run |
 | H12 | One build per publish, all targets share it | **done** |
 | H13 | Failed target re-publish by original Release | **done** — `resendable_sub_targets` |
 | H14 | 1Panel manual upload of current `dist` | **done** as a manual export |
-| H15 | Attachments: cache pool, **sftp, s3, lsky**, github, remote image | **PARTIAL, and this round moved it: the local directory is a kind of its own, the unconfigured-SFTP-to-local degradation is gone, §13.8's explicit remote cleanup exists at both layers, the window can report a kind's gap BEFORE a target of that kind is saved, and a saved target's configuration is now enforced by the crate's own rules at save time (§2.9).** What is STILL PARTIAL and exactly why: **(1) `sftp` has NO adapter** — configurable, and it reports the gap instead of guessing a protocol (§5.3, a dependency decision — and the reason a host-less SFTP target stays SAVEABLE, §2.9); **(2) `lsky` has NO adapter** for the same reason — its upload-token protocol is not verified in `docs/spec/03-upstream-facts.md` (§5.4); **(3) remote image** search exists in `veloct-attach::network` but has no command and no button, so §13.14 is unusable from the window (§5.9, shared with H10); **(4) nothing has ever contacted a live service** — GitHub and S3 are asserted against a fake HTTP client and the local kind writes to the filesystem (§5.8). The pool, the three axes, dedup, multi-reference, §13.8's no-auto-delete rule, the kind report and the save-path validation are done (B1–B14, D16, D91–D93, D116–D123, D130–D145). **§28 as a whole is not met either, and not only here: §5.7's installer has never been built — `tauri build` has never run and no NSIS package exists** |
+| H15 | Attachments: cache pool, **sftp, s3, lsky**, github, remote image | **PARTIAL, and this round REPLACED a guess with a verified fact.** What is done: the pool, the three axes, dedup, multi-reference, §13.8's no-auto-delete rule and explicit cleanup, the local kind, the kind report, the save-path validation, GitHub and S3, and the target form (B1–B14, D16, D91–D93, D116–D123, D130–D145). What is STILL PARTIAL and exactly why: **(1) `sftp` has NO adapter** — configurable, and it reports the gap instead of guessing a protocol (§5.3, a dependency decision, and the reason a host-less SFTP target stays SAVEABLE, §2.9); **(2) `lsky` has NO adapter** — its upload-token protocol is still not verified (§5.4); **(3) remote image** search exists in `veloct-attach::network` and still has no command and no button — **and this round found out WHY that is the right state rather than an omission**: Pixabay's own documentation, read live (§5.11, D155), says permanent hotlinking of its image URLs is NOT allowed and that images must be downloaded to your own server first, while §13.14 prescribes writing the remote URL straight into the Markdown. That is a conflict between a locked clause and a vendor's terms, so it is recorded as a DECISION for the user rather than resolved by guessing a protocol; **(4) nothing has ever contacted a live service** — GitHub and S3 are asserted against a fake HTTP client (§5.8), so §13.14's provider call would be the first. **§5.7's installer is now CLOSED** — it is no longer one of the reasons this row is partial |
 | H16 | Dedup safe, multi-reference safe, no auto remote delete | **done** |
 | H17 | Auto backup, manual backup, local export, full restore, content-only restore | **PARTIAL — all five work, and BOTH of §17.4's cloud targets are now real: GitHub (§17.2 verified against the repository on every upload) and S3 (§13.11's client, a streamed upload, the bucket's own timestamps). Targets live in SQLite's `backup_targets`, each run is recorded per target in `backups` (§22.7), and §17.3's finding blocks the upload while the local archive survives. What is still missing is NOT the target model — see §5.8: no live service has ever been contacted** |
 | H18 | No secret in config/log/backup; scan before backup | **done** — scan runs BEFORE the archive is written; and see §2.8, where wiring a feature found a leak on a path review had missed |
@@ -406,13 +565,19 @@ believing any summary, including this one. Judged against the evidence that exis
 **So: 17 of 20 are done, and H10, H15 and H17 are partial.** The three partials are the honest
 answer to "is §28 met" today. Nothing above should be read as a claim that Veloct is complete.
 
+**What changed in this judgement, stated plainly, because a reader of the previous version needs it:**
+H10 moved from "no command exists for any of it" to "one decision remains, and it is not a coding
+one"; H15's third reason moved from "no command, and the model is in the crate" to "the provider's own
+terms forbid the flow the clause prescribes, so implementing it would be the guess §20 forbids"; and
+**§5.7's installer — named in this table as one of the four things keeping §28 unmet — is DONE.**
+
 ---
 
 ## 5. What is NOT implemented
 
-Ordered by how much of §28 they block. **§5.1, §5.2, §5.5 and §5.6 are CLOSED** — they are kept, clearly
+Ordered by how much of §28 they block. **§5.1, §5.2, §5.5, §5.6 and §5.7 are CLOSED** — they are kept, clearly
 marked, because earlier versions of this file called them the biggest gaps and a reader looking for those
-sentences must find out what happened to them. The OPEN items are §5.3, §5.4, §5.7, §5.8, §5.9 and §5.10.
+sentences must find out what happened to them. The OPEN items are §5.3, §5.4, §5.8, §5.9, §5.10 and §5.11.
 
 **Judge §28 against the H table in `docs/spec/02-test-matrix.md`, not against this list.** This list is
 where the gaps are argued; the H table is what says whether they matter.
@@ -556,13 +721,30 @@ called them**, and that the panel asked the user to type a model id. Both halves
 What is still NOT here: a per-provider `context_window` is stored but never shown, and a model list is
 fetched only when the user asks — there is no background refresh, which §11.2 does not require.
 
-### 5.7 The NSIS installer
+### 5.7 CLOSED: the NSIS installer
 
-`src-tauri/tauri.conf.json` sets `bundle.targets = ["nsis"]`, but **`tauri build` has never run**:
-`tauri-cli` is not installed, and installing it needs the network (crates.io IS reachable — that is how
-`veloct-s3`'s two new dependencies arrived — so `cargo install tauri-cli` or an `npx @tauri-apps/cli`
-devDependency would work). What is verified is `cargo build -p veloct-desktop` plus a launch smoke test,
-NOT a packaged installer.
+Kept here rather than deleted, because the old text called this one of the four things keeping §28
+unmet and a reader looking for that sentence must find out what happened to it. **It is no longer a
+gap.** `tauri build` has run and a package exists:
+
+- **`target/release/bundle/nsis/Veloct_0.1.0_x64-setup.exe`, 27.90 MiB**, built by
+  `scripts/build-installer.ps1` (NEW) in 5m53s.
+- The Tauri CLI is a **devDependency** (`@tauri-apps/cli` 2.12.1), so the build is reproducible from a
+  checkout instead of depending on a global install. `scripts/build-installer.ps1` exists because a
+  bare `tauri build` fails here with `failed to run 'cargo metadata' command ... program not found`:
+  the CLI shells out to Cargo, and `cargo` is not on `PATH` — the same environment problem
+  `scripts/cargo.ps1` documents for Cargo itself.
+- The package was **silently installed into a temporary directory, listed, probed and uninstalled**,
+  not merely produced. It contains `veloct-desktop.exe`, `veloct-astro-sidecar.exe` and
+  `veloct-node.exe`, and the installed launcher reaches the real Astro dev server.
+- **Building it found two defects that would have shipped**, and they are the reason this section is
+  written as more than "the build succeeded" — see §2.10. The first package was 5.49 MiB and carried
+  no Node runtime at all, because `externalBin` named only the Astro sidecar; and an installed bundle
+  STRIPS the target triple from a sidecar's name, which `resolve_node` did not know.
+
+What is still NOT here: the package is **unsigned**, so Windows SmartScreen will warn a user who runs
+it, and `bundleVCRuntime` is `false` (a machine without the MSVC runtime relies on the WebView2
+installer path). Neither is a correctness problem and neither is claimed away.
 
 ### 5.8 Smaller, stated gaps
 
@@ -580,22 +762,29 @@ NOT a packaged installer.
   the same way — so a re-send names the same remote object rather than creating a second one, but an
   `archive_sha256` field in the sidecar record would be cheaper than a full second read.
 
-### 5.9 H10 is partial: work import, screenshots and remote images have no command
+### 5.9 CLOSED except for one stated limit: work import, the poster and export are reachable from the window
 
-Verified by search, not memory: `src-tauri/src/*.rs` contains **zero** references to
-`network_image`/`image_search`, to `screenshot`, and to `import_work`/`work_import`. The model
-exists in the crates:
+Kept here rather than deleted, because the old text said `src-tauri/src/*.rs` contained **zero**
+references to `import_work`/`work_import`, to a screenshot, and to `network_image`/`image_search`, and
+that the poster route had no writer. **Three of those four are now closed**, and re-verified the same
+way, by search:
 
-- `veloct-attach::network` has `ImageSource`, `ImageResult`, `ImageSearch`, `NetworkImageChoice`,
-  `is_network_image`, `network_image_notice` — §13.14's search → choose → write the remote URL.
-- `veloct-content::works` has `metadata` and `import` — §10's work import.
-- The poster-wall **screenshot route** (`/work-previews/<slug>/screenshot.webp`) is not emitted by
-  the site either.
+| What the old text said | State now |
+|---|---|
+| `import_work` has no caller above `veloct-content` | **called** — `veloct_app::works::import`, reached from the `import_work` command, from `src/WorksPanel.tsx` |
+| `list_works` / `export_work` had no caller | **called** — `list_works`, `export_work` commands; the panel lists, edits metadata, exports and removes |
+| the poster route `/work-previews/<slug>/screenshot.webp` is emitted by nothing | **emitted** — `split-publish-roots.mjs`'s `copyWorkPreviews` writes it to `dist/site/`, the verifier compares it BYTE FOR BYTE, and the works index references it |
+| §10.1's `preview/` could not be produced by an import | **fixed** — `PREVIEW_PREFIX` lifts a `preview/` entry out of the body, so an import now produces the layout §10.1 names |
+| `veloct-content::works`' import had no plan step in the window | **planned first** — `plan_work_import` writes nothing, and the panel shows the entry file, the file count, the size warning, the skipped directories and the unusable images before the import is offered |
 
-So §28's "the works system" is reachable in that works can be imported BY THE LIBRARY and their
-pages build into `dist/works` on a separate origin, but a user cannot import a work, generate a
-screenshot, or search for a remote image from the window. Each is a command plus a button, and
-each is small.
+**What is STILL a limit, and it is a decision rather than an omission: the screenshot is a file the
+user CHOOSES, because this build has no headless browser.** §10.3 wants a poster; Veloct stores the
+image the user picked at `preview/screenshot.webp`, converts nothing, and says so in the command's own
+documentation and in the panel's own text. A capture would need a new dependency (a headless-Chromium
+class crate, or a WebView2 capture path) — a decision worth taking deliberately, not by adding a crate
+to make a checkbox green.
+
+The remote-image half of the old §5.9 is NOT closed, and §5.11 is why.
 
 ### 5.10 Limits that REMAIN after this round (three items CLOSED here, and moved out of this list)
 
@@ -618,22 +807,21 @@ What REMAINS, each still a **stated limit** in the matrix row that covers it:
 
 1. **The configuration rules live in two languages, and only one of them is authoritative.** The crate
    (`StorageConfig::validate`) is the authority; the window (`storageTargetForm.ts::validateDraft`) has
-   its own copy because the frontend cannot call Rust. One member of that duplication was closed this
-   round — the public URL prefix, which the window now refuses in the field (`7813fcd`, D145) — and what
-   guards the pair is a TRANSCRIPTION: nine shapes in `CRATE_RULE` whose verdicts are copied from the
-   crate and compared against the window's, so a one-sided change is a failing test rather than an
-   oversight. **The remaining known divergence is deliberate**: the crate's SFTP arm demands a host and a
-   username while the form asks SFTP for no field at all, because a kind with no adapter is exempt from
-   the save-path validation (D142) and a half-filled SFTP target is one of the ways §13.10's gap stays
-   visible. It is recorded in `validateDraft`'s own doc comment. **A transcription is not a shared
-   implementation** — adding a rule to one side must add it to `CRATE_RULE` too. **One more member of the
-   same pair, found while reviewing `f29dcda` and PRE-DATING it:** `validateDraft` checks `pathPrefix` for
-   a leading `/` and for `..` regardless of kind, while `buildSaveRequest` submits that field only for
-   `s3`/`github`/`local`. A value left over from a kind switch therefore keeps blocking the save for SFTP
-   or Lsky Pro — a field the form does not even render for those kinds, so the user cannot clear it
-   without switching back to the kind that showed it. It OVER-refuses rather than under-refuses, the crate
-   is not involved, and it is recoverable; it is recorded here because it is the same two-language problem
-   and a future repair can gate those two checks by kind, as the other four already are.
+   its own copy because the frontend cannot call Rust. Two members of that duplication were closed in
+   these rounds — the public URL prefix, which the window now refuses in the field (`7813fcd`, D145), and
+   **the `pathPrefix` over-refusal this list recorded LAST round, now gated by kind (D152)**: the leading
+   `/` and `..` checks ran for every kind while `buildSaveRequest` submits that field only for
+   `s3`/`github`/`local`, so a leftover value blocked a save for a kind whose form does not render the
+   field — the user could not clear it without switching back. What still guards the pair is a
+   TRANSCRIPTION: nine shapes in `CRATE_RULE` whose verdicts are copied from the crate and compared
+   against the window's, so a one-sided change is a failing test rather than an oversight. **The remaining
+   known divergence is deliberate**: the crate's SFTP arm demands a host and a username while the form asks
+   SFTP for no field at all, because a kind with no adapter is exempt from the save-path validation (D142)
+   and a half-filled SFTP target is one of the ways §13.10's gap stays visible. It is recorded in
+   `validateDraft`'s own doc comment. **A transcription is not a shared implementation** — adding a rule to
+   one side must add it to `CRATE_RULE` too, and `tests/workForm.test.ts` is now the SECOND transcription
+   of the same kind (`WorkMetadata::validate`'s ten shapes), which is the pattern to copy rather than to
+   start a third variant of.
 2. **A command WRAPPER that needs an `AppState` is still not driven by a test, and the credential half
    of the save path's ORDER has no test that would catch a reorder.** `f29dcda` extracted the save and
    delete sequences (`save_target_config`, `delete_target_config`) precisely so the behaviour is
@@ -646,11 +834,70 @@ What REMAINS, each still a **stated limit** in the matrix row that covers it:
    credential before validating would still pass every test. That half is right in the source and is
    reviewed, but it is not covered — a one-line test passing a credential with a rejected configuration
    would close it. A WebView or `AppState` test would close the first half; this repository has neither
-   by choice.
+   by choice. **The works round ADDED ten more of these** (`src-tauri/src/works.rs`): four need an
+   `AppState`, and six do not and are driven (`describe_work_source`, `work_screenshot_limit`, and the
+   import-source decisions behind them). That is the same shape and the same stated limit, not a new one.
 3. **§13.8's cleanup can leave an article pointing at a URL that no longer resolves.** The confirmation
    says the Markdown is not touched, and §13.8 does not ask for a rewrite — but a user who cleans up an
    object a published article cites gets a broken image and no automatic repair. Worth a decision if it
    ever bites.
+4. **The installer is unsigned, and that is a packaging gap rather than a code one.** §5.7 is closed in
+   the sense that a package exists, installs and runs; a user who runs it meets SmartScreen. `bundleVCRuntime`
+   is also `false`. Neither is hidden in the UI, and neither is worth fixing without a certificate.
+
+### 5.11 §13.14's prescribed flow is FORBIDDEN by the provider's own terms, and that is a decision for the user
+
+This is the one gap this round found by *verifying* rather than by guessing, and it is written as a
+decision rather than a bug because the two things in conflict are both authoritative.
+
+**What was verified, live, from Pixabay's own API documentation (2026-10-01):**
+
+- `GET https://pixabay.com/api/`, `key` required, plus `q`, `lang` (incl. `zh`), `image_type`,
+  `orientation`, `category`, `min_width`/`min_height`, `colors`, `editors_choice`, `safesearch`,
+  `order`, `page`, `per_page` (3–200, default 20), and optional `callback`/`pretty`.
+- The response is `{ total, totalHits, hits: [{ id, pageURL, type, tags, previewURL, webformatURL,
+  largeImageURL, imageWidth, imageHeight, imageSize, user, userImageURL, ... }] }`, and rate-limit state
+  arrives in `X-RateLimit-Limit` / `-Remaining` / `-Reset` headers.
+- Operationally: **100 requests / 60 s**, a **24-hour cache requirement**, and "the API is made for real
+  human requests" — no systematic mass downloads.
+
+**The conflict.** Pixabay's documentation says, of the URLs it returns:
+
+> Returned image URLs may be used for temporarily displaying search results. However, permanent
+> hotlinking of images (using Pixabay URLs in your app) is not allowed. If you intend to use the images,
+> please download them to your server first.
+
+`handoff.md` §13.14 prescribes exactly the opposite flow:
+
+```text
+搜索 → 用户选择 → 直接写入远程 URL → Markdown
+不进入附件缓存池,不下载,不再上传。
+```
+
+So for THIS source, implementing §13.14 as written would produce published pages that violate the
+provider's terms — and §20 forbids both a silent failure and an invented vendor behaviour. §13.1 names
+"免费网络图片供应来源(如 Pixabay)" as an attachment storage target, and §13.2's cache pool already has the
+machinery a compliant flow needs (cache, dedup, target, attribution).
+
+**The decision, stated as options rather than taken silently:**
+
+1. **Route this source through the §13.4 cache pool with mandatory attribution.** Search the provider,
+   let the user choose, DOWNLOAD the chosen image into the pool, and upload it to one of the user's own
+   storage targets — which is what "download them to your server first" means, and what §13.1's listing
+   of the source as a *storage target* arguably intends. §13.14's "does not enter the cache pool" then
+   holds only for sources whose terms allow hotlinking, and the difference becomes a per-source policy
+   rather than one rule.
+2. **Keep §13.14 as written and use only sources whose terms permit it.** Unsplash's and Pexels'
+   documentation would each have to be read the same way Pixabay's was; §13.14's parenthetical names
+   Pixabay first, so this option needs a reason to prefer the clause over the source that motivated it.
+3. **Implement the search and the picker, and make the write step the USER's** — show the attribution and
+   the source's terms beside the choice and insert nothing automatically. The least code, and the only
+   one that does not pretend the conflict away.
+
+**What is NOT in doubt:** the searcher itself is a small, verifiable piece — one request builder and one
+response parser per source, which is what `veloct-attach::network`'s shape-only model was waiting for.
+Nothing about it needs a guessed protocol. What needs a decision is the flow §13.14 prescribes, and that
+decision is the user's because it trades a locked clause against a vendor's terms.
 
 ---
 
@@ -696,54 +943,65 @@ These are the habits that produced the found bugs, and they are easy to lose.
 
 ## 7. Suggested order for the next agent
 
-**Step 0, before any of the below:** run §3.1 and make the six results match §1. They were measured on
-commit `7813fcd`, so if they do not reproduce, first check that you are looking at a tree whose
-`.rs`/`.ts`/`.tsx` files match that commit — the documents were updated by commits after it and by
-nothing else. The working tree is **CLEAN** (§1.1): every round here is committed (`050a3c5`, `57003e5`,
-`61ffde7`, `7df0625`, `bf75265`, `2496604`, `f29dcda`, `7813fcd`), so there is nothing to decide about
-an uncommitted change set — and no `git checkout` can erase uncommitted work, because there is none.
+**Step 0, before any of the below:** run §3.1 and make the results match §1 — 1356 Rust, 117 frontend,
+52/52 site checks, 0 clippy warnings, exit 0 everywhere. They were measured on the **working tree** the
+works round left, NOT on a commit (§1.2), so the FIRST thing to do is confirm they reproduce from the
+checkout the commit produced, and record the answer either way. If they do not reproduce, the gap
+between this file and the tree is the first thing to find out — that is what `bf75265` did for the four
+cloud-target commits, and it is the standard this repository holds itself to.
 
 1. **Read `handoff.md` §28 again** and diff it against §4 above and the H table in the matrix.
    `handoff.md` wins over this file, and over any summary of it, including this one.
-2. **§5.5's storage-target form is DONE** — do not build it again. `src/AttachmentPanel.tsx` creates,
-   edits and deletes targets, §13.8's 仅删除远程对象 exists per attachment, §13.2.2's reason is
-   shown before an attempt, the kind-gap report is read before the first save, and a save is validated
-   by the crate's rules (§2.9); the evidence is matrix rows `D130`–`D145` and the runs in §J. **The real
-   next gap is §5.9 / H10**: workspace import, the poster-wall screenshot route, and §13.14's remote
-   image search have models in the crates (`veloct-content::works`, `veloct-attach::network`) and NO
-   command, so each is a command plus a button — and the remote-image one would move H15.
-3. **Attempt the NSIS installer (§5.7)** now that the network is confirmed reachable — it is one of
-   the four things §4.1 names as keeping §28 unmet, and nothing in this repository has ever built a
-   package.
+2. **§13.14 is now a DECISION rather than a task, and §5.11 is the decision to make.** Search →
+   download-into-the-pool-with-attribution, keep-the-clause-and-check-each-source's-terms, or
+   insert-nothing-and-let-the-user-decide. Pixabay's own documentation forbids permanent hotlinking,
+   which is what §13.14 prescribes for it, so writing the searcher without settling this would ship a
+   published page that violates the source's terms. The searcher itself is small and needs no guessed
+   protocol; the flow is what needs the answer.
+3. **§5.9's one remaining limit is a dependency decision, not a coding one:** §10.3 wants a poster and
+   this build has no headless browser, so the poster is the file the user chooses. If a capture is
+   wanted, decide the mechanism (a headless-Chromium-class crate, or a WebView2 capture path) as a
+   deliberate choice with its build cost measured — do not add a crate to turn a checkbox green.
 4. Keep SFTP and Lsky Pro (§5.3, §5.4) either implemented properly or **explicitly reported**. Never
    guess a protocol — and note that **Lsky Pro is the last attachment kind with no adapter**, so it is the
    one that would move §28's H15, provided its upload-token protocol can be verified from a real source.
    If you implement one, D142's exemption stops applying to it, and its `validate` arm becomes a rule the
    save path enforces.
 5. **A live smoke test of ONE remote operation is the remaining honesty gap** (§5.8): every path is
-   asserted against `FakeHttpClient`, and ADR-0016's SigV4 evidence is AWS's published vectors rather than
-   a real request. If the user can supply a throwaway private repository, a private bucket and a token,
-   that is worth more than another unit test — and it is the only thing that would let anyone write
-   "verified against a live service" anywhere in this repository.
-6. **§5.10 now lists THREE remaining limits, not four** — the dead `validate()`, the untested
-   §13.8 refusal and the untested credential removal were CLOSED by `f29dcda`/`7813fcd`. What is left is
-   the two-language ruleset (with its `CRATE_RULE` transcription and the deliberate SFTP asymmetry), the
-   untested command WRAPPERS, and §13.8's cleanup leaving a cited URL dead. The first is the one to
-   respect when you add a rule: add it to BOTH sides and to the transcription, or the test that exists
-   to catch a one-sided change will not catch yours.
-7. **When §5 changes, the matrix changes with it.** Every row at `I` must name a test AND the command you
+   asserted against `FakeHttpClient`, ADR-0016's SigV4 evidence is AWS's published vectors rather than a
+   real request, and §13.14's provider call would be the first live vendor call this repository makes. If
+   the user can supply a throwaway private repository, a private bucket, a token — or a Pixabay key and a
+   ruling on §5.11 — that is worth more than another unit test. It is the only thing that would let anyone
+   write "verified against a live service" anywhere in this repository.
+6. **The installer is built but NOT in CI, and it is the only artefact a user runs.** Re-run
+   `scripts/build-installer.ps1` after any change to `tauri.conf.json`, the sidecar binaries, the bundle
+   inputs or `crates/veloct-sidecar`, and then INSTALL it — §2.10 is why a green build is not evidence
+   that a package works. Signing is the gap worth naming if this is ever distributed.
+7. **§5.10 lists FOUR remaining limits** — the two-language ruleset (now with a SECOND transcription
+   beside `storageTargetForm.ts::CRATE_RULE`: `tests/workForm.test.ts`'s ten shapes for
+   `WorkMetadata::validate`), the untested command WRAPPERS (four storage ones and four works ones),
+   §13.8's cleanup leaving a cited URL dead, and the unsigned installer. The first is the one to respect
+   when you add a rule: add it to BOTH sides and to the transcription, or the test that exists to catch a
+   one-sided change will not catch yours.
+8. **When §5 changes, the matrix changes with it.** Every row at `I` must name a test AND the command you
    ran; a row that cannot is a row that is wrong. `docs/spec/02-test-matrix.md` §J is where the recorded
    runs go, and this file's §1 table is where the totals go.
-8. **If the tree changes after you record a run, say so in §J rather than replacing the row.** That is
-   what this round did twice: the 1317 snapshot stayed when the tree moved under it, and the run at
-   `2496604` stayed when the two repairs landed on top of it. Each is marked superseded with the reason,
-   and the newest run at commit `7813fcd` is the authoritative one. A run whose totals no longer match is
-   a fact about the repository, not a mistake to tidy away.
+9. **If the tree changes after you record a run, say so in §J rather than replacing the row.** That is
+   what the last three rounds did: the 1317 snapshot stayed when the tree moved under it, the run at
+   `2496604` stayed when two repairs landed on top of it, and the run at `7813fcd` stayed when the works
+   round began. Each is marked superseded with the reason. **§1.2 is this round's version of the same
+   honesty**: the numbers were taken on an unclean tree, the paragraph says so rather than implying a
+   commit boundary that did not exist, and the matrix's §J carries a row saying the same thing.
 
-**Two habits worth keeping, both learned the hard way in these rounds:**
+**Three habits worth keeping, all learned the hard way in these rounds:**
 
 - **Prefer a delegation over a second implementation.** `veloct-github` and `veloct-s3` exist because two
   contracts needed one protocol; the extraction was proven faithful by the tests that did NOT change. When
   you find yourself writing a map, a rule or a protocol twice, that is the signal.
 - **Redact where the secret is known, not where it is displayed** (§2.8). The §18.1 guarantee held at the
   log sink and failed at the source, and only a test that drove the path end to end found it.
+- **Verify the vendor BEFORE writing the code that talks to it** (§5.11). Reading Pixabay's own
+  documentation took minutes and turned an "easy missing command" into a conflict between a locked clause
+  and a provider's terms. The identical habit had already found §5.3's and §5.4's gaps; the new part is
+  that the answer can be "the clause is what is wrong", which is worth finding before the code exists
+  rather than after it has a test.

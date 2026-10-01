@@ -13,6 +13,20 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /**
+ * The directory `preview/` lives in, relative to the work directory (`handoff.md` section 10.1).
+ *
+ * A `preview/` entry belongs to the WORK, not to its body, so the integration copies it to the
+ * site root rather than into `dist/works/`. Keeping the name here means the reader and the writer
+ * of that decision cannot disagree.
+ */
+export const PREVIEW_DIRECTORY = 'preview';
+
+/** Where the site serves a work's preview files from (`handoff.md` section 10.3's poster). */
+export function previewRoute(slug) {
+  return `/work-previews/${slug}/`;
+}
+
+/**
  * The `works/` directory of the project this site belongs to.
  *
  * The path is derived from the build's working directory rather than from `import.meta.url`. That is
@@ -80,6 +94,17 @@ export function readWorks() {
     }
 
     const siteDir = join(directory, entry.name, 'site');
+    const previewDir = join(directory, entry.name, PREVIEW_DIRECTORY);
+    // The preview files that ACTUALLY exist, rather than the ones `work.json` names. The two can
+    // disagree — an imported work whose poster arrived under another name, a file deleted by hand —
+    // and a poster `<img>` pointing at a route the build will not emit is a broken image on a
+    // published page. The page therefore reads this list.
+    const previews = existsSync(previewDir)
+      ? readdirSync(previewDir, { withFileTypes: true })
+          .filter((file) => file.isFile())
+          .map((file) => file.name)
+          .sort()
+      : [];
     works.push({
       /** The permanent directory name, which is the stable id. */
       id: entry.name,
@@ -95,6 +120,12 @@ export function readWorks() {
       cover: meta.cover ?? null,
       tags: Array.isArray(meta.tags) ? meta.tags : [],
       notes: meta.notes ?? '',
+      /** The preview file names that exist on disk, e.g. `screenshot.webp` and `cover.webp`. */
+      previews,
+      /** The poster URL the build will actually emit, or null when there is no poster to emit. */
+      posterUrl: previews.includes('screenshot.webp')
+        ? `${previewRoute(meta.slug ?? entry.name)}screenshot.webp`
+        : null,
       /** Whether the static body exists at all, so the UI can say so instead of showing a blank. */
       hasBody: existsSync(siteDir),
     });

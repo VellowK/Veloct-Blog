@@ -45,6 +45,15 @@ pub const SKIPPED_DIRECTORIES: &[&str] = &[
 /// 64 MiB. The number is a WARNING threshold only; nothing changes because of it.
 pub const MAX_RECOMMENDED_BYTES: u64 = 64 * 1024 * 1024;
 
+/// The directory whose contents belong to the WORK rather than to its body.
+///
+/// `handoff.md` §10.1's layout is `work.json`, a sibling `preview/` and a sibling `site/`, so
+/// `preview/` is the one prefix an import lifts out of the body. It is a constant rather than a
+/// detection because a body that happens to contain a `preview/` directory of its own would
+/// otherwise be ambiguous, and a guess there would either move a body file out of the site or
+/// serve a poster the work does not own.
+pub const PREVIEW_PREFIX: &str = "preview/";
+
 /// Where an import is coming from.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
@@ -628,10 +637,23 @@ pub fn import_work(
         let Some(bytes) = contents.get(&file.relative_path) else {
             continue;
         };
-        let target = site_dir.join(&file.relative_path);
+        // handoff.md section 10.1's layout puts the body under `site/` and the poster images in a
+        // SIBLING `preview/`, not inside the body. A `preview/` entry therefore lands at the work
+        // directory's own `preview/`, and everything else lands in `site/`. Writing the poster into
+        // the body would serve a file the contract says belongs to the work rather than to the site,
+        // and the site's `/work-previews/<slug>/screenshot.webp` route would have nothing to emit.
+        let target = match file.relative_path.strip_prefix(PREVIEW_PREFIX) {
+            Some(rest) if !rest.is_empty() => work_dir.join("preview").join(rest),
+            _ => site_dir.join(&file.relative_path),
+        };
         // Belt and braces: the path was validated on the way in, and the resolved target is checked
-        // to be inside the work directory before anything is written.
-        let resolved = veloct_core::paths::ensure_within(&site_dir, &target)?;
+        // to be inside the directory it belongs to before anything is written.
+        let root = if target.starts_with(&site_dir) {
+            &site_dir
+        } else {
+            &work_dir
+        };
+        let resolved = veloct_core::paths::ensure_within(root, &target)?;
         veloct_core::workdir::ensure_parent(&resolved)?;
         veloct_core::workdir::write_bytes_if_changed(&resolved, bytes)?;
         written += 1;

@@ -261,6 +261,54 @@ check(
   'the shell page is what embeds the work from the works origin',
 );
 
+// handoff.md section 10.1 puts `preview/` beside `site/`, and section 10.3's poster wall reads
+// `/work-previews/<slug>/screenshot.webp`. Nothing but the split-publish-roots integration writes
+// that route, so it is checked against the work's OWN preview directory: the two must agree, or the
+// poster is a placeholder while the screenshot sits in the project (PROCESSING.md section 5.9).
+const fixturePreview = join(projectRoot, 'works', '01J8Z5Q0K3W7M9V2B4N6P8R2AG', 'preview');
+const fixturePoster = join(fixturePreview, 'screenshot.webp');
+const emittedPoster = join(siteRoot, 'work-previews', FIXTURES.workSlug, 'screenshot.webp');
+
+check(
+  'a work whose preview/ carries no screenshot is not claimed to have a poster',
+  !exists(fixturePreview) ||
+    exists(fixturePoster) ||
+    !exists(join(siteRoot, 'work-previews', FIXTURES.workSlug)),
+  'a preview directory with no screenshot.webp must not produce a poster route',
+);
+if (exists(fixturePoster)) {
+  check(
+    'the work poster is emitted at /work-previews/<slug>/screenshot.webp',
+    exists(emittedPoster),
+    `missing ${emittedPoster}`,
+  );
+  check(
+    'the emitted poster is the work screenshot, byte for byte',
+    exists(emittedPoster) && readFileSync(emittedPoster).equals(readFileSync(fixturePoster)),
+    'the poster route must carry the work screenshot and not something else',
+  );
+  check(
+    'the poster wall page references the poster route it emitted',
+    (routeHtml('/works/') ?? '').includes(`/work-previews/${FIXTURES.workSlug}/screenshot.webp`),
+    'a poster that no page references would never be requested',
+  );
+}check(
+  'the poster route is NOT in the works publish root',
+  !exists(join(worksDist, 'work-previews')),
+  'the poster belongs to the shell page, not to the body served from the works origin',
+);
+check(
+  'the works manifest names the preview files it copied',
+  (() => {
+    const manifestPath = join(worksDist, 'works-manifest.json');
+    if (!exists(manifestPath)) return false;
+    const manifest = JSON.parse(read(manifestPath));
+    const entry = manifest.works?.find((work) => work.slug === FIXTURES.workSlug);
+    return Array.isArray(entry?.previews);
+  })(),
+  'so a rebuild can be compared without walking dist/',
+);
+
 // ---------------------------------------------------------------------------------------------
 // 7. The sandbox contract — handoff.md section 10.4
 // ---------------------------------------------------------------------------------------------

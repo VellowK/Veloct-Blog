@@ -447,7 +447,13 @@ export function validateDraft(draft: StorageTargetDraft): string | null {
   }
 
   const prefix = draft.pathPrefix.trim();
-  if (prefix !== '') {
+  // Only a kind that SUBMITS this field is checked, mirroring `buildSaveRequest` and the public-URL rule
+  // below. `fieldKeysForKind` renders `pathPrefix` for `s3`/`github`/`local` only, so a value left over
+  // from a kind switch used to keep blocking a save for SFTP or Lsky Pro — a field those kinds do not
+  // render, which the user could not clear without switching back to the kind that showed it. That
+  // OVER-refused rather than under-refused, and it is the last member of the two-language pair that
+  // PROCESSING.md §5.10.1 recorded.
+  if (fieldKeysForKind(kind).includes('pathPrefix') && prefix !== '') {
     if (kind === 'local' && prefix.includes(':')) {
       return `目录前缀 ${prefix} 不能包含冒号:它会被当成盘符,把文件写到目标目录之外(§13.10)。`;
     }
