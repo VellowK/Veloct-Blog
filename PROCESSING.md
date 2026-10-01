@@ -32,8 +32,8 @@ read the VENDOR before writing the code that talks to it — Pixabay's own docum
 
 | Fact | Value |
 |---|---|
-| Last commit these numbers describe | **the working tree at the time of the runs, not a commit** — see §1.2. The previous recorded boundary was `7813fcd` |
-| Working tree | **NOT clean while the numbers were measured**: the works round's change set was uncommitted when §3.1 was run. See §1.2, which says what that does and does not weaken |
+| Last commit these numbers describe | **`5edff10` "Make section 10's works system reachable, and build the installer"** — where §3.1 was re-run and reproduced on a CLEAN tree (§1.2) |
+| Working tree | **CLEAN at commit `5edff10`**, where every command in §3.1 was re-run and reproduced (§1.2). The first verification of this round was taken on the uncommitted change set, which §1.2 records rather than hides |
 | Rust tests | **1356 passed, 0 failed, 5 ignored** (+26 over `7813fcd`'s 1330; 17 workspace crates + `src-tauri`) |
 | Frontend tests | **117 passed** (vitest: 24 `frontmatter` + 57 `storageTargetForm` + 36 **`workForm`**) |
 | `clippy --workspace --all-targets` | **0 warnings** |
@@ -188,7 +188,7 @@ The many `*.log` files in the working directory are this session's captured veri
 `.gitignore` line 25 ignores `*.log`, so they are NOT part of the change set; they are safe to read
 (they are the raw evidence for the numbers in §1) and safe to delete.
 
-### 1.2 Every number in §1 was measured on an UNCLEAN tree, and that is stated rather than tidied away
+### 1.2 Every number in §1 was measured on an UNCLEAN tree — and then CONFIRMED on the commit
 
 The works round's verification was run **before** its commit, so `git status --short` was not empty at
 the moment the numbers were taken. What that does and does not weaken:
@@ -198,11 +198,16 @@ the moment the numbers were taken. What that does and does not weaken:
   per-crate rows sum to 1356 exactly — so the runs describe a real, self-consistent tree rather than an
   aspiration. Every command exited 0, and the site verifier's byte-for-byte poster comparison is a
   stronger check than a count.
-- **What IS weaker.** The numbers are not *yet* reproducible from a checkout, which is the standard the
-  previous three rounds were held to and the reason those commits exist at all. **The next agent should
-  re-run §3.1 on the committed tree and either confirm the numbers or record the difference**, exactly
-  as `bf75265` did for the four cloud-target commits. This paragraph exists so that gap is a stated
-  fact rather than an unstated one — the matrix's §J has a row saying the same thing.
+- **What was weaker, and is now closed.** The numbers were not reproducible from a checkout *while the
+  change set was uncommitted*, which is the standard the previous three rounds were held to. **They were
+  then re-run on the committed tree — commit `5edff10` — and every one reproduced**: Rust **1356 passed,
+  0 failed, 5 ignored**, frontend **117 passed**, `tsc` clean, the site verifier **52/52**, and
+  `build-sidecar.ps1 -Check` reporting the committed launcher matches a fresh build. **`git status
+  --short` was EMPTY at the moment of that run**, so §1's table is now reproducible from a checkout after
+  all, and a later agent can check it the same way `bf75265` did for the four cloud-target commits.
+
+The paragraph above is kept in both directions on purpose: the first verification really was taken on an
+unclean tree, and tidying that fact away would hide how the repository got from one state to the other.
 
 **The matrix at 224 `I` / 0 `P` is a claim about recorded evidence, not proof that §28 is met.**
 It has been wrong in that direction before: at one point it read 93 `I` while the desktop
