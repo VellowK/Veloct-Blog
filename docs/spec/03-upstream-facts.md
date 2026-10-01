@@ -196,6 +196,17 @@ prohibited: replicating Pexels' core functionality (a wallpaper app), and workin
 
 **No download-reporting step is documented**, so Veloct makes no request beyond the search.
 
+**Availability, verified again on 2026-10-02 — and NOT implied by the contract above: Pexels has paused
+new API key issuance.** The page a new user actually requests a key on, `https://www.pexels.com/api/`,
+says so **twice**: "New API key issuance is currently paused." **The Authorization section of THIS
+documentation page still says the opposite** — "Anyone with a Pexels account can request an API key,
+which you will receive instantly" — so a reader who checks the documentation rather than the request
+page reaches the wrong conclusion. The endpoints remain up (an unauthenticated
+`GET https://api.pexels.com/v1/search` returns **401**) and existing keys still work, which is why
+Veloct's implementation is kept rather than deleted. `PROCESSING.md` §5.12 records the decision to leave
+the source as it is, matrix row **D165** records the fact, and the consequence a user meets is that
+`ImageSource::Pexels` is still selectable while **nothing in the UI says a new user cannot obtain a key**.
+
 ### 4.3 Pixabay — the source §13.1 names, and the reason it is NOT implemented
 
 Read from Pixabay's own API documentation. Its contract is perfectly clear (`GET https://pixabay.com/api/`,

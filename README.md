@@ -67,13 +67,19 @@ handoff.md           the locked product contract
 Three environment quirks are handled by `scripts/cargo.ps1`. Use it; a bare `cargo` will fail.
 
 ```powershell
-# Rust
-powershell -ExecutionPolicy Bypass -File scripts/cargo.ps1 test --workspace --exclude veloct-desktop
-powershell -ExecutionPolicy Bypass -File scripts/cargo.ps1 check -p veloct-desktop
+# Rust — the recorded total INCLUDES veloct-desktop: 1395 passed, 0 failed, 7 ignored.
+# The checklist is PROCESSING.md section 3.1; the runs behind the numbers are 02-test-matrix.md section J.
+powershell -ExecutionPolicy Bypass -File scripts/cargo.ps1 test --workspace
+powershell -ExecutionPolicy Bypass -File scripts/cargo.ps1 clippy --workspace --all-targets
 
-# Frontend and site (npm.ps1 is blocked here, so use npm.cmd)
+# Frontend and site (npm.ps1 is blocked here, so use npm.cmd).
+# The root package is the desktop workbench and has NO `build` script: `npm.cmd run build` here
+# exits 1 with "Missing script: build". The workbench builds with `build:ui`; the Astro template
+# builds inside site/, which has its own package.json.
 npm.cmd install
-npm.cmd run build
+npm.cmd run test:ui
+npm.cmd run build:ui
+cd site; npm.cmd install; npm.cmd run build; node scripts/verify-build.mjs   # 52/52 checks
 ```
 
 Why the wrapper exists:

@@ -9,7 +9,9 @@ It is not a contract: `handoff.md` remains the locked product contract and alway
 **Read in this order:**
 1. `handoff.md` §28 — the completion definition. It is the only authority on what "done" means.
 2. This file — §1 for where the work stands, **§5 for what is genuinely missing** (§5.11 is a decision
-   that has been TAKEN; **§5.12 is a decision that was deliberately NOT acted on, and it is the one thing
+   that has been TAKEN; **§5.12 is a decision whose Option A was TAKEN on 2026-10-02 — the FACT is now
+   recorded in `docs/spec/03-upstream-facts.md` §4.2 and matrix row D165, while the behaviour is
+   deliberately unchanged — and it is the one thing
    to read before touching Pexels**), §7 for what to do next.
 3. `README.md` — how to build and test on this machine.
 4. `docs/spec/00-architecture.md` — the ADRs, including ADR-0015 and ADR-0016.
@@ -17,7 +19,10 @@ It is not a contract: `handoff.md` remains the locked product contract and alway
    including the two image providers' full contracts (§4).
 
 **Three things about the state you are inheriting, so nothing here reads as vaguer than it is:**
-- **The tree is CLEAN and equals `585de01`**, where all six of §3.1's checks were run and reproduced.
+- **The tree is CLEAN, and its CODE is byte-identical to `585de01`** (`git diff --stat 585de01 HEAD` is
+  `PROCESSING.md` only), where all six of §3.1's checks were run and reproduced — **and they were run AGAIN
+  on `8ba4219` for this handover, reproducing every number exactly** (§1, §J). **The correction you are
+  reading changes documentation only**, so it moves none of the code those numbers describe.
 - **Superseded runs are kept, not tidied away.** §1.2 and the matrix's §J both carry rows for runs that
   were later replaced, because the history of what a number used to be is a fact about the repository.
 - **Two real test races were found by re-running a suite that had already been recorded green** (§2.13,
@@ -44,13 +49,13 @@ has tests.
 
 | Fact | Value |
 |---|---|
-| Last commit these numbers describe | **`585de01`** "Verify Unsplash against the LIVE service, the first real remote call in this repository" — where all six of §3.1's checks were run on a CLEAN tree and reproduced (§1.2) |
-| Working tree | **CLEAN and byte-identical to `585de01`.** Both the works and network-image rounds were FIRST measured on unclean trees, which §1.2 records rather than hides; both were then re-run on their commits, and the network-image re-run exposed two real test races (§2.13, §2.14) |
-| Rust tests | **1395 passed, 0 failed, 7 ignored** (+39 over `5edff10`'s 1356; 17 workspace crates + `src-tauri`). The 7 ignored are the 3 real-process integration tests, 1 each in `publish_integration` and `end_to_end_release`, and **2 in `crates/veloct-attach/tests/live_providers.rs` — the live provider checks, which are `#[ignore]`d because the ordinary suite must never depend on a vendor's uptime** |
+| Last commit these numbers describe | **`8ba4219`** "Bring PROCESSING.md up to date for handover, and record the Pexels decision" — which is **`585de01`** "Verify Unsplash against the LIVE service, the first real remote call in this repository" plus a documentation-only change to this file. All six of §3.1's checks were run on a CLEAN tree at `585de01` and reproduced (§1.2), and **run again on `8ba4219` for this handover, reproducing every number exactly** (§J) |
+| Working tree | **CLEAN at the moment of this handover's re-run** (`git status --short` was EMPTY). **The CODE is byte-identical to `585de01`** — `git diff --stat 585de01 HEAD` is `PROCESSING.md` only, which is the difference between "the code did not move" and the earlier claim that the whole tree did not. **The commit that carries THIS correction changes DOCUMENTATION ONLY** (`PROCESSING.md`, `README.md`, `docs/spec/02-test-matrix.md`, `docs/spec/03-upstream-facts.md`), so it moves no line of code the numbers below describe and does not invalidate them; §J's last row names the run they come from and says the same thing. Both the works and network-image rounds were FIRST measured on unclean trees, which §1.2 records rather than hides; both were then re-run on their commits, and the network-image re-run exposed two real test races (§2.13, §2.14) |
+| Rust tests | **1395 passed, 0 failed, 7 ignored** (+39 over `5edff10`'s 1356; **the workspace is 17 members — 16 crates plus `src-tauri`** — and its 17 per-crate rows in §J sum to 1394, the 1395th being the one `live_providers` test that runs with no key and no network). The 7 ignored are the 3 real-process integration tests, 1 each in `publish_integration` and `end_to_end_release`, and **2 in `crates/veloct-attach/tests/live_providers.rs` — the live provider checks, which are `#[ignore]`d because the ordinary suite must never depend on a vendor's uptime** |
 | Frontend tests | **152 passed** (vitest: 24 `frontmatter` + 57 `storageTargetForm` + 36 `workForm` + 35 **`networkImageForm`**) |
 | `clippy --workspace --all-targets` | **0 warnings** |
 | Site build verifier | **52/52 checks** — unchanged this round: `site/` is untouched by §13.14, and §J names the command behind every number |
-| Test matrix | **233 rows at `I`, 0 at `P`** (224 + 9 for §13.14, the two races it exposed and the live verification), out of **253** rows across tables A–G |
+| Test matrix | **234 rows at `I`, 0 at `P`** (224 + 9 for §13.14, the two races it exposed and the live verification, + 1 for §5.12's re-verified Pexels pause), out of **254** rows across tables A–G |
 | Shell commands registered | **87** (82 + the five network-image commands) |
 | Installer | **`target/release/bundle/nsis/Veloct_0.1.0_x64-setup.exe`, 27.90 MiB** — built, installed, probed and uninstalled (§2.10, §2.11); NOT rebuilt this round, because §13.14 touches neither the bundle inputs nor the sidecar. **The sidecar LAUNCHER was rebuilt** (§2.2), because that crate was touched even though the edit was test-only |
 
@@ -59,9 +64,11 @@ Every command above exits **0** on success. That matters and is itself a recent 
 **Every number in the table above was measured on the CLEAN committed tree `585de01`**, after the two
 test races §2.13 and §2.14 describe had been fixed. §1.2 tells that story in full, including the part
 that is uncomfortable: the first measurements of both recent rounds were taken on UNCLEAN trees, and
-re-running them on their commits is what found the races. **If §3.1 does not reproduce 1395 / 152 / 52-of-52
-/ exit-0-clippy from a checkout, something outside this repository changed and that is the first thing to
-find out.**
+re-running them on their commits is what found the races. **They were then re-run on `8ba4219` — the tree
+this handover actually describes — and reproduced exactly: 1395 passed / 0 failed / 7 ignored, 152
+frontend tests, 52/52 site checks, 0 clippy warnings, exit 0 on every command (§J).** **If §3.1 does not
+reproduce 1395 / 152 / 52-of-52 / exit-0-clippy from a checkout, something outside this repository changed
+and that is the first thing to find out.**
 
 ### 1.1 What these rounds changed
 
@@ -637,11 +644,11 @@ found by re-running a suite that had already been recorded green.
 ### 3.1 The commands to run before claiming anything
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\cargo.ps1 test --workspace     # exit 0, 1356 passed, 5 ignored
-powershell -ExecutionPolicy Bypass -File .\scripts\cargo.ps1 clippy --workspace --all-targets
-powershell -ExecutionPolicy Bypass -File .\scripts\build-sidecar.ps1 -Check
-cmd /c "npm.cmd run test:ui"                                                       # 117 passed
-cmd /c "npm.cmd run build:ui"                                                      # tsc clean
+powershell -ExecutionPolicy Bypass -File .\scripts\cargo.ps1 test --workspace     # exit 0, 1395 passed, 0 failed, 7 ignored
+powershell -ExecutionPolicy Bypass -File .\scripts\cargo.ps1 clippy --workspace --all-targets   # exit 0, 0 warnings
+powershell -ExecutionPolicy Bypass -File .\scripts\build-sidecar.ps1 -Check       # exit 0, the committed launcher matches a fresh build
+cmd /c "npm.cmd run test:ui"                                                       # 152 passed
+cmd /c "npm.cmd run build:ui"                                                      # tsc clean, exit 0
 # in site/:
 $env:VELOCT_BUILD_TIME="2026-01-01T12:00:00.000Z"; npm.cmd run build; node scripts/verify-build.mjs   # 52/52
 ```
@@ -745,7 +752,7 @@ believing any summary, including this one. Judged against the evidence that exis
 | H12 | One build per publish, all targets share it | **done** |
 | H13 | Failed target re-publish by original Release | **done** — `resendable_sub_targets` |
 | H14 | 1Panel manual upload of current `dist` | **done** as a manual export |
-| H15 | Attachments: cache pool, **sftp, s3, lsky**, github, remote image | **PARTIAL, and §13.14 is now DONE: the remote image browser is implemented against Unsplash and Pexels** — the two sources whose terms require or permit §13.14's flow — with keys in the OS credential store, the credit line enforced by the crate where the provider demands it, Unsplash's mandatory download report, and Pixabay refused in its own words. **Unsplash is verified against the LIVE service (D164)**; **Pexels is implemented and tested but currently unusable, because it has paused new API key issuance — see §5.12, which records that as a known and deliberate state rather than fixing it.** What is done besides: the pool, the three axes, dedup, multi-reference, §13.8's no-auto-delete rule and explicit cleanup, the local kind, the kind report, the save-path validation, GitHub and S3, and the target form (B1–B14, D16, D91–D93, D116–D123, D130–D145, D155–D164). What is STILL PARTIAL and exactly why: **(1) `sftp` has NO adapter** — configurable, and it reports the gap instead of guessing a protocol (§5.3, a dependency decision, and the reason a host-less SFTP target stays SAVEABLE, §2.9); **(2) `lsky` has NO adapter** — its upload-token protocol is still unverified (§5.4), and it is now **the last attachment kind with no adapter**; **(3) everything EXCEPT Unsplash has never contacted a live service** (§5.8) — and Pexels cannot be contacted by a new user at all (§5.12) |
+| H15 | Attachments: cache pool, **sftp, s3, lsky**, github, remote image | **PARTIAL, and §13.14 is now DONE: the remote image browser is implemented against Unsplash and Pexels** — the two sources whose terms require or permit §13.14's flow — with keys in the OS credential store, the credit line enforced by the crate where the provider demands it, Unsplash's mandatory download report, and Pixabay refused in its own words. **Unsplash is verified against the LIVE service (D164)**; **Pexels is implemented and tested but currently unusable, because it has paused new API key issuance — the fact is recorded in `docs/spec/03-upstream-facts.md` §4.2 and matrix row **D165**, and §5.12 records it as a known and deliberate state rather than fixing it.** What is done besides: the pool, the three axes, dedup, multi-reference, §13.8's no-auto-delete rule and explicit cleanup, the local kind, the kind report, the save-path validation, GitHub and S3, and the target form (B1–B14, D16, D91–D93, D116–D123, D130–D145, D155–D164). What is STILL PARTIAL and exactly why: **(1) `sftp` has NO adapter** — configurable, and it reports the gap instead of guessing a protocol (§5.3, a dependency decision, and the reason a host-less SFTP target stays SAVEABLE, §2.9); **(2) `lsky` has NO adapter** — its upload-token protocol is still unverified (§5.4), and it is now **the last attachment kind with no adapter**; **(3) everything EXCEPT Unsplash has never contacted a live service** (§5.8) — and Pexels cannot be contacted by a new user at all (D165, §5.12) |
 | H16 | Dedup safe, multi-reference safe, no auto remote delete | **done** |
 | H17 | Auto backup, manual backup, local export, full restore, content-only restore | **PARTIAL — all five work, and BOTH of §17.4's cloud targets are now real: GitHub (§17.2 verified against the repository on every upload) and S3 (§13.11's client, a streamed upload, the bucket's own timestamps). Targets live in SQLite's `backup_targets`, each run is recorded per target in `backups` (§22.7), and §17.3's finding blocks the upload while the local archive survives. What is still missing is NOT the target model — see §5.8: no live service has ever been contacted** |
 | H18 | No secret in config/log/backup; scan before backup | **done** — scan runs BEFORE the archive is written; and see §2.8, where wiring a feature found a leak on a path review had missed |
@@ -1108,7 +1115,7 @@ Unsplash was verified against the real service on 2026-10-01 (D164, §1.1 item 1
 first live vendor call this repository has made. **Pexels has not been contacted, and as of 2026-10-01 it
 CANNOT be by a new user** — see §5.12.
 
-### 5.12 RECORDED, NOT ACTED ON: Pexels has paused new API key issuance, and the source is still offered
+### 5.12 RECORDED — and since 2026-10-02 also WRITTEN DOWN (Option A taken): Pexels has paused new API key issuance, and the source is still offered
 
 **Read this before "fixing" anything about Pexels.** The §13.14 round implemented TWO sources, chose them
 because their terms describe the clause (§5.11), and verified Unsplash live. **Pexels's implementation is
@@ -1117,9 +1124,17 @@ complete and is covered by real tests, counted by name rather than estimated: 11
 `src-tauri/src/images.rs` go through the command layer** — plus `tests/live_providers.rs`, whose Pexels
 case is ready to run for anyone who already holds a key. Its contract was read from its own API reference.
 
-**The problem, verified on 2026-10-01 from Pexels's own API page** — the sentence appears twice:
+**The problem, verified on 2026-10-01 from Pexels's own API page and RE-VERIFIED on 2026-10-02 — the sentence appears twice there:**
 
 > **New API key issuance is currently paused.**
+
+**The re-verification found something the first reading did not, and it is the reason this is written into
+`docs/spec/03-upstream-facts.md` rather than left here:** Pexels's two pages **contradict each other**. The
+request page (`https://www.pexels.com/api/`) carries the sentence above twice; the **documentation** page
+(`https://www.pexels.com/api/documentation/`) still says, in its Authorization section, "Anyone with a
+Pexels account can request an API key, **which you will receive instantly**". §5.11 sent the next reader to
+that documentation page for the provider's contract, so a reader who checks the fact there reaches the
+opposite conclusion. Matrix row **D165** records this, which is Option A of the table below.
 
 So: the protocol works and its tests pass, the endpoints still answer (an unauthenticated
 `GET https://api.pexels.com/v1/search` returns **401**, so the service is up), existing keys still work —
@@ -1127,7 +1142,8 @@ but **a new user cannot obtain a key**, and the window offers Pexels as though t
 
 **The user's decision was to LEAVE IT ALONE for now** — their words were
 「先留着假接口不管他」, i.e. "keep the not-really-working integration for now, don't bother with it". That is
-a deliberate choice, not an oversight, so:
+a deliberate choice, not an oversight, and it is a decision about the BEHAVIOUR: recording the fact
+(Option A, below) does not change how the source behaves, and is all that has been done since. So:
 
 - **Do not delete the Pexels implementation.** Its protocol, its `ProviderFacts`, its parser and the 30
   tests counted above are the reason re-enabling it later is one predicate rather than a rewrite. The
@@ -1137,15 +1153,17 @@ a deliberate choice, not an oversight, so:
   something code can work around.
 - **The known rough edge, stated rather than hidden:** `ImageSource::Pexels` has `is_implemented() == true`
   and is therefore rendered as a normal, selectable source in `src/NetworkImagePanel.tsx`. A user who
-  clicks it is asked for a key they cannot obtain, and **nothing in the UI or the repository currently says
-  why** — this section is the only record.
+  clicks it is asked for a key they cannot obtain, and **nothing in the UI says why**. The REPOSITORY now
+  says why — `docs/spec/03-upstream-facts.md` §4.2 carries the fact and its two-page contradiction, matrix
+  row **D165** records the verification, and this section carries the decision. **Before 2026-10-02 this
+  section was the only record; that is the one thing Option A changed.**
 
-**Two ways to close it, both small, whenever the user wants:**
+**Two ways to close it; the first was TAKEN on 2026-10-02, and the second is still available:**
 
 | Option | Change | Effect |
 |---|---|---|
-| **A — record the fact only** | Add the pause to `docs/spec/03-upstream-facts.md` §4.2 and a matrix row | No behaviour or UI change; the next reader learns why the source is unusable |
-| **B — split "implemented" from "offered"** | `is_implemented` (a protocol exists) vs `is_offered` (a user can get a key), a `not_offered_reason`, `search_with` refuses a not-offered source, and `sourceOptions` filters on it | The panel stops listing Pexels and shows the provider's own words instead; a key holder can still search, and the live test still runs; when the pause lifts it is one predicate |
+| **A — record the fact only — TAKEN (2026-10-02)** | The pause, and the contradiction between Pexels's two pages, are now in `docs/spec/03-upstream-facts.md` §4.2; matrix row **D165** records the live verification; this section keeps the decision | No behaviour or UI change, and the fact is no longer findable ONLY in this file. **It is not a fix**: Pexels is still offered, and the UI still does not say why it cannot be used |
+| **B — split "implemented" from "offered" — NOT taken** | `is_implemented` (a protocol exists) vs `is_offered` (a user can get a key), a `not_offered_reason`, `search_with` refuses a not-offered source, and `sourceOptions` filters on it | The panel stops listing Pexels and shows the provider's own words instead; a key holder can still search, and the live test still runs; when the pause lifts it is one predicate |
 
 **Option B was written and then reverted on the user's instruction**, so the reasoning survives here even
 though the code does not. It is the option that keeps `is_implemented` honest — today that single
@@ -1213,8 +1231,9 @@ test races (§2.13, §2.14) that had been passing by luck.
    its source is still shown in the window, and **no new user can obtain a key** because Pexels has paused
    issuance. That is a deliberate, recorded decision ("先留着假接口不管他"), not an oversight, so **do not
    delete the implementation and do not invent a workaround**. §5.12 has the two small options for closing
-   it if the user asks. The only thing missing right now is that nothing in the UI says why the source
-   cannot be used.
+   it; **Option A was taken on 2026-10-02** (the fact is in `03-upstream-facts.md` §4.2 and matrix row
+   D165), and **Option B is the one still available if the user ever asks for it**. The only thing missing
+   right now is that nothing in the UI says why the source cannot be used.
 3. **A live smoke test of ONE remote operation is still the biggest honesty gap** (§5.8) — and §13.14
    narrowed it and showed how cheap closing it is. **Unsplash is verified live** (D164): a real search, a
    real attribution and a real download report, all through the crate's own code. GitHub, S3, Cloudflare
