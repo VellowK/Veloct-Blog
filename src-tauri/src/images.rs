@@ -36,11 +36,10 @@ use crate::commands::command_invalid;
 
 /// The credential handle for an image source's API key.
 ///
-/// Namespaced separately from a provider's (`provider:<id>`) because both live in the same OS store and
-/// a source id is not a provider id: one `unsplash` colliding with the other would silently share or
-/// overwrite a key.
+/// Delegates to [`crate::credentials::handle_for_image_source`], so the format has ONE definition: a
+/// change there that this function did not follow would silently orphan every saved key.
 fn handle_for(source: ImageSource) -> String {
-    format!("image-source:{}", source.as_str())
+    crate::credentials::handle_for_image_source(source.as_str())
 }
 
 /// One source as the window sees it.
@@ -441,6 +440,7 @@ mod tests {
 
     #[test]
     fn every_source_is_reported_with_its_state_and_the_two_offered_ones_are_named() {
+        let _store = crate::credentials::store_guard();
         let views = network_image_sources();
         assert_eq!(views.len(), ImageSource::ALL.len());
 
@@ -485,6 +485,7 @@ mod tests {
 
     #[test]
     fn a_plain_text_key_never_appears_in_a_source_view() {
+        let _store = crate::credentials::store_guard();
         // §12.1: the window reports whether a key exists, not what it is. The view type has no field
         // for a value, and this asserts the serialised shape rather than trusting that.
         let json = serde_json::to_string(&network_image_sources()).unwrap();
@@ -519,6 +520,7 @@ mod tests {
 
     #[test]
     fn a_key_round_trips_through_the_os_store_and_a_source_reports_that_it_exists() {
+        let _store = crate::credentials::store_guard();
         // The value is never read back out through a view, so the assertion is on `has_key`.
         let handle = handle_for(ImageSource::Pexels);
         let _ = crate::credentials::remove(&handle);
@@ -765,6 +767,7 @@ mod tests {
 
     #[test]
     fn the_pixabay_reason_survives_a_round_trip_through_the_view_type() {
+        let _store = crate::credentials::store_guard();
         // The window shows this sentence, so it must be the provider's own words and not a placeholder.
         let views = network_image_sources();
         let pixabay = views.iter().find(|view| view.source == "pixabay").unwrap();

@@ -43,7 +43,7 @@ has tests.
 | Frontend tests | **152 passed** (vitest: 24 `frontmatter` + 57 `storageTargetForm` + 36 `workForm` + 35 **`networkImageForm`**) |
 | `clippy --workspace --all-targets` | **0 warnings** |
 | Site build verifier | **52/52 checks** — unchanged this round: `site/` is untouched by §13.14, and §J names the command behind every number |
-| Test matrix | **230 rows at `I`, 0 at `P`** (224 + 6 for §13.14), out of **250** rows across tables A–G |
+| Test matrix | **232 rows at `I`, 0 at `P`** (224 + 8 for §13.14 and the two races it exposed), out of **252** rows across tables A–G |
 | Shell commands registered | **87** (82 + the five network-image commands) |
 | Installer | **`target/release/bundle/nsis/Veloct_0.1.0_x64-setup.exe`, 27.90 MiB** — built, installed, probed and uninstalled (§2.10, §2.11); NOT rebuilt this round, because §13.14 touches neither the bundle inputs nor the sidecar |
 
@@ -234,12 +234,12 @@ and **twenty consecutive times** for the affected crate. **So the numbers now ho
 plus the one-line fix, and re-running §3.1 is still the first task for the next agent** — the point of
 recording it this way is that the habit caught something real rather than confirming a formality.
 
-**The matrix at 230 `I` / 0 `P` is a claim about recorded evidence, not proof that §28 is met.**
+**The matrix at 232 `I` / 0 `P` is a claim about recorded evidence, not proof that §28 is met.**
 It has been wrong in that direction before: at one point it read 93 `I` while the desktop
 workbench did not exist at all. When you find a gap, the matrix row is what is wrong.
 Three of those limits were closed by earlier repairs and the rows that carried them were corrected
-rather than left standing (D18, D131, D134, D137); the sixteen rows the last two rounds added
-(D146–D161) each name the test AND the crate, D155 is an external fact rather than a test, and §5.11 is
+rather than left standing (D18, D131, D134, D137); the eighteen rows the last two rounds added
+(D146–D163) each name the test AND the crate, D155 is an external fact rather than a test, and §5.11 is
 where its consequence is argued.
 
 ---
@@ -275,6 +275,15 @@ that fixed "a site with its dependencies installed is reported as missing its te
 **Being accurate about the cost:** a stale launcher still RUNS — it is a self-contained Rust
 binary, so it does not fail with a missing symbol. It silently has older behaviour, which is
 worse. Run `-Check` after touching `crates/veloct-sidecar`.
+
+**A TEST-ONLY edit to that crate is still an edit, which is not obvious and cost time this round.** The
+network-image round changed nothing in the launcher's behaviour — the edit was a doc comment and a line
+inside `#[cfg(test)] mod tests` — and `-Check` still went red, because the built binary's hash changed
+anyway. **The build is deterministic** (two consecutive rebuilds give an identical hash, verified), so
+the difference is real but invisible from the outside; the new binary is the same SIZE (2 801 152 bytes)
+and behaves identically. **The rule is therefore "any touch to `crates/veloct-sidecar` ⇒ rebuild and
+commit the launcher"**, not "any change to its behaviour". Rebuilding is cheap; a stale launcher is
+silent.
 
 ### 2.3 `VeloctError`'s hint is not in its `Display`
 
@@ -512,6 +521,45 @@ uncommitted tree is a weaker claim, and the difference is not academic**: the pr
 same code passed, and the post-commit run of the same code failed. Had the round recorded 1394 and moved
 on, the next agent would have inherited a flaky suite and no idea why. `bf75265` re-ran four cloud-target
 commits for the same reason; this round is what happens when the habit pays off.
+
+### 2.14 The SAME class of race, a second time: the OS credential store is process-wide too
+
+Fixing §2.13 was not the end of it. The very next full-suite run failed **differently** — exit 101 with
+893 passed, and this time two tests in `veloct-desktop`:
+
+```text
+images::tests::a_key_round_trips_through_the_os_store_and_a_source_reports_that_it_exists
+  panicked: the OS store holds it                       <- exists() was FALSE straight after a set
+attachments::tests::deleting_a_target_forgets_its_stored_credential_and_an_unknown_id_changes_nothing
+  panicked: and its stored credential no longer resolves <- exists() was TRUE straight after a remove
+```
+
+**Both symptoms are a STALE read, in opposite directions, of one process-wide resource.**
+`--test-threads=1` made all 134 pass, which identified the cause immediately. Windows' credential APIs
+are not isolated per handle across threads in one process, and `keyring` gives no such guarantee.
+
+The second failing test is **pre-existing** (`D143`, from the §13 round): it had been passing because it
+was the ONLY test in that binary hammering the real store. This round added a second one — §13.14's key
+round trip — and two tests sharing the store in parallel is one more than the store tolerates.
+
+**The fix is the same shape as §2.13, deliberately:** one lock, in the module that owns the resource,
+with every test that touches it taking it as its first line.
+
+```rust
+let _store = crate::credentials::store_guard();
+```
+
+`credentials::store_guard()` is the ONE place the lock exists, and it documents why, so the next test
+added against the real store copies a line instead of re-deriving a race. `handle_for_image_source` also
+moved into `credentials.rs` for the same reason: one definition of the handle format.
+
+**Verified by 5 consecutive `--workspace` runs, all 1394 passed, 0 failed, 5 ignored.**
+
+**The generalisable rule, now demonstrated twice in one round:** a test that touches a process-wide
+resource — an environment variable, the OS credential store, a fixed port, a shared temp path — needs a
+lock shared with every other test that touches it. **`--test-threads=1` passing is the diagnostic**, and
+"the suite passed last time" is not evidence that it will pass next time. Both of this round's races were
+found by re-running a suite that had already been recorded green.
 
 ---
 

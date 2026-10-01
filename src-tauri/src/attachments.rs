@@ -1141,6 +1141,11 @@ mod tests {
 
     #[test]
     fn deleting_a_target_forgets_its_stored_credential_and_an_unknown_id_changes_nothing() {
+        // The OS credential store is process-wide and this test asserts against the REAL one, so it is
+        // serialised with every other test that reads or writes it. See `credentials::store_guard`: with
+        // the tests running in parallel, `exists` was observed returning a stale `true` immediately after
+        // a `remove`, which failed this assertion.
+        let _store = crate::credentials::store_guard();
         let project = tempfile::TempDir::new().unwrap();
         let id = "t9-credential-target";
         let handle = crate::credentials::handle_for(&format!("storage:{id}"));

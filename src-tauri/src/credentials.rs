@@ -101,6 +101,45 @@ pub fn handle_for(provider_id: &str) -> String {
     format!("provider:{provider_id}")
 }
 
+/// The handle for a network image source's API key (`handoff.md` §13.14).
+///
+/// A SEPARATE namespace from a provider's, because both live in the same store and a source id is not a
+/// provider id: one `unsplash` handle shared between them would silently overwrite or read the other's
+/// key.
+pub fn handle_for_image_source(source: &str) -> String {
+    format!("image-source:{source}")
+}
+
+/// Serialises tests that use the REAL OS credential store.
+///
+/// **The store is a process-wide resource, and these tests exercise it for real** — `delete_storage_target`
+/// forgetting a credential (D143) and §13.14's key round trip are both facts only the OS store can
+/// answer, so a fake would prove nothing. But Windows' credential APIs are not isolated per handle
+/// across threads in one process: with the tests running in parallel, `exists` was observed returning a
+/// STALE answer in both directions — `false` immediately after a `set`, and `true` immediately after a
+/// `remove` — which failed `images::tests::a_key_round_trips_through_the_os_store_and_a_source_reports_that_it_exists`
+/// and, at the same time, the pre-existing
+/// `attachments::tests::deleting_a_target_forgets_its_stored_credential_and_an_unknown_id_changes_nothing`.
+/// `--test-threads=1` makes both pass, which is what identified the cause.
+///
+/// This is the same shape as `veloct-sidecar`'s `ENV_LOCK` (PROCESSING.md §2.13): a shared, process-wide
+/// resource needs ONE lock, and every test that touches it takes it. Reading-only tests take it too,
+/// because a read concurrent with another test's write is exactly the interleaving that produced the
+/// stale answers.
+///
+/// Take it as the FIRST line of a test:
+///
+/// ```ignore
+/// let _store = crate::credentials::store_guard();
+/// ```
+#[cfg(test)]
+pub(crate) fn store_guard() -> std::sync::MutexGuard<'static, ()> {
+    static STORE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    STORE_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
