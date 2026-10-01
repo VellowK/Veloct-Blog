@@ -422,7 +422,12 @@ export function buildSaveRequest(draft: StorageTargetDraft): StorageTargetSaveRe
  * Why the draft cannot be saved, in the user's terms, or `null` when it can.
  *
  * Mirrors `veloct_attach::StorageConfig::validate` for the fields the window owns, so a configuration mistake
- * is reported as one here instead of as a confusing failure at the first upload.
+ * is reported as one here, in the field that was typed, instead of as a confusing failure at the first upload.
+ *
+ * Deliberately NOT a copy of the whole ruleset: the crate's SFTP arm demands a host and a username, while this
+ * form asks SFTP for no field at all. That divergence stays open because an unimplemented kind is exempt from
+ * `validate()` on the save path, so demanding those fields here would block configuring a target this build
+ * cannot upload to anyway.
  */
 export function validateDraft(draft: StorageTargetDraft): string | null {
   const kind = normaliseKind(draft.kind);
@@ -454,6 +459,24 @@ export function validateDraft(draft: StorageTargetDraft): string | null {
     }
     if (prefix.includes('..')) {
       return `路径前缀 ${prefix} 不能包含 ..,否则会把文件写到目标目录之外。`;
+    }
+  }
+
+  // §13.6 keeps the public URL prefix apart from the object's actual path, and the Markdown address is the two
+  // put together. A relative prefix (or a protocol-relative one) therefore produces a URL no browser can
+  // resolve. `StorageConfig::validate` refuses it; saying so HERE means the user reads the reason under the
+  // field they typed instead of seeing a backend message after a save that could never have succeeded.
+  //
+  // Two boundaries, both deliberate:
+  //  * Empty stays ALLOWED. The crate treats that as "no URL can be derived yet" and refuses later, at
+  //    `public_url`, when an address is actually needed — a target the user is still configuring is a
+  //    legitimate state, and requiring the field would block saving one before its URL is known.
+  //  * Only a kind that SUBMITS this field is checked, mirroring `buildSaveRequest`. Otherwise a value hidden by
+  //    a kind switch could block a save whose cause the user cannot even see.
+  if (fieldKeysForKind(kind).includes('publicUrlPrefix')) {
+    const publicUrl = draft.publicUrlPrefix.trim();
+    if (publicUrl !== '' && !publicUrl.startsWith('http://') && !publicUrl.startsWith('https://')) {
+      return `公开 URL 前缀 ${publicUrl} 必须是以 http:// 或 https:// 开头的完整地址:它要和对象路径拼接起来才是浏览器打开的地址(§13.6),相对地址拼出来的 URL 无法解析。`;
     }
   }
 

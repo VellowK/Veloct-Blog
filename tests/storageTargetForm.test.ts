@@ -538,6 +538,124 @@ describe('why a draft cannot be saved', () => {
   });
 });
 
+/**
+ * The public URL prefix is the one crate rule the form now states as well.
+ *
+ * It is not tidiness. Without it the window accepted `cdn.example.com/assets`, attempted the save, and the
+ * crate refused it — so the user met `the public URL prefix "…" must start with http:// or https://`, an
+ * English backend message after a save that could never succeed, where the in-form reason belongs.
+ */
+describe('the public URL prefix must be an absolute URL (§13.6)', () => {
+  const draftWith = (publicUrlPrefix: string) => ({ ...s3Draft(), publicUrlPrefix });
+
+  it('accepts an http:// prefix', () => {
+    expect(validateDraft(draftWith('http://cdn.example.com/assets'))).toBeNull();
+  });
+
+  it('accepts an https:// prefix', () => {
+    expect(validateDraft(draftWith('https://cdn.example.com/assets'))).toBeNull();
+  });
+
+  it('refuses a bare host with a path, and says the concatenated address cannot be resolved', () => {
+    const reason = validateDraft(draftWith('cdn.example.com/x'));
+    expect(reason).toContain('cdn.example.com/x');
+    // The reason has to say WHY rather than only that the value is wrong: §13.6 keeps the public URL prefix apart
+    // from the object's own path, and the address written into the Markdown is the two concatenated.
+    expect(reason).toContain('拼接');
+    expect(reason).toContain('无法解析');
+    expect(reason).toContain('13.6');
+  });
+
+  it('refuses a protocol-relative prefix, which borrows the scheme from wherever it is pasted', () => {
+    expect(validateDraft(draftWith('//cdn.example.com'))).toContain('http:// 或 https://');
+  });
+
+  it('refuses a root-relative prefix, which would resolve against the site instead of the storage', () => {
+    expect(validateDraft(draftWith('/assets'))).toContain('http:// 或 https://');
+  });
+
+  it('refuses a bare host', () => {
+    expect(validateDraft(draftWith('example.com'))).toContain('http:// 或 https://');
+  });
+
+  it('still allows an empty prefix, because a target may not know its URL yet', () => {
+    // The crate reads an empty prefix as "no URL can be derived yet" and refuses later, at `public_url`, at the
+    // point an address is actually needed. Requiring the field here would block saving a target the user is
+    // still configuring, which is why this rule has that boundary.
+    expect(validateDraft(draftWith(''))).toBeNull();
+  });
+});
+
+/**
+ * The window and the crate agree about the public URL prefix, and this table is where the agreement is recorded.
+ *
+ * The other side is `StorageConfig::validate` in `crates/veloct-attach/src/storage.rs`:
+ *
+ * ```rust
+ * if !self.public_url_prefix.trim().is_empty()
+ *     && !self.public_url_prefix.starts_with("http://")
+ *     && !self.public_url_prefix.starts_with("https://")
+ * {
+ *     return Err(format!(
+ *         "the public URL prefix {:?} must start with http:// or https://",
+ *         self.public_url_prefix
+ *     ));
+ * }
+ * ```
+ *
+ * A vitest file cannot call Rust, so `crateAccepts` is TRANSCRIBED from that rule — it is the crate's verdict,
+ * not a second copy of `validateDraft`'s. That is the point: if the Rust rule changes, this table and the
+ * window's rule have to be edited together, and either side changed alone turns into a red test here instead of
+ * into an unexplained backend message in the window. Changing one side without the other should be a visible,
+ * deliberate act with a reason, never an oversight.
+ *
+ * The shapes are what the FORM can send. `buildSaveRequest` trims every field, so the crate receives the trimmed
+ * text and the window judges the trimmed text too — which is why the whitespace row agrees on `true`.
+ */
+describe('the window and the crate say the same thing about a public URL prefix', () => {
+  const CRATE_RULE: ReadonlyArray<{ shape: string; prefix: string; crateAccepts: boolean }> = [
+    { shape: 'absolute http', prefix: 'http://cdn.example.com', crateAccepts: true },
+    { shape: 'absolute https with a path', prefix: 'https://cdn.example.com/assets', crateAccepts: true },
+    { shape: 'empty (no URL derivable yet)', prefix: '', crateAccepts: true },
+    { shape: 'bare host with a path', prefix: 'cdn.example.com/x', crateAccepts: false },
+    { shape: 'protocol-relative', prefix: '//cdn.example.com', crateAccepts: false },
+    { shape: 'root-relative', prefix: '/assets', crateAccepts: false },
+    { shape: 'bare host', prefix: 'example.com', crateAccepts: false },
+    // The crate's `starts_with` is case-sensitive, so an uppercase scheme is refused on both sides.
+    { shape: 'uppercase scheme', prefix: 'HTTPS://cdn.example.com', crateAccepts: false },
+    // Trimmed before it is sent, so both sides see `https://cdn.example.com`.
+    { shape: 'surrounding whitespace', prefix: '  https://cdn.example.com  ', crateAccepts: true },
+  ];
+
+  it('matches the crate rule for every shape the form can send', () => {
+    for (const { shape, prefix, crateAccepts } of CRATE_RULE) {
+      const reason = validateDraft({ ...s3Draft(), publicUrlPrefix: prefix });
+      expect(
+        reason === null,
+        `${shape}: ${JSON.stringify(prefix)} — the crate ${crateAccepts ? 'accepts' : 'refuses'} it`,
+      ).toBe(crateAccepts);
+    }
+  });
+
+  it('covers every boundary shape, so deleting a row is a failing test rather than a silent gap', () => {
+    const shapes = CRATE_RULE.map((entry) => entry.prefix);
+    for (const required of [
+      '',
+      'http://cdn.example.com',
+      'https://cdn.example.com/assets',
+      'cdn.example.com/x',
+      '//cdn.example.com',
+      '/assets',
+      'example.com',
+    ]) {
+      expect(shapes).toContain(required);
+    }
+    // Both verdicts have to be represented, or the loop above could agree by accepting everything.
+    expect(CRATE_RULE.some((entry) => entry.crateAccepts)).toBe(true);
+    expect(CRATE_RULE.some((entry) => !entry.crateAccepts)).toBe(true);
+  });
+});
+
 describe('the upload eligibility reason (§13.2.2)', () => {
   const blocked: UploadEligibility = {
     can_upload: false,
