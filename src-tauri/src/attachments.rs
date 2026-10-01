@@ -351,19 +351,14 @@ pub fn save_storage_target(
     // means "leave the stored one alone").
     let needs_credential = kind != veloct_attach::StorageKind::Local;
     let handle = crate::credentials::handle_for(&format!("storage:{}", request.id));
-    if needs_credential {
-        if let Some(secret) = request.credential.filter(|value| !value.trim().is_empty()) {
-            crate::credentials::set(&handle, secret.trim())?;
-        }
-    }
 
     let mut config = veloct_attach::StorageConfig::new(&request.id, &request.name, kind);
     config.key_prefix = request.path_prefix.filter(|value| !value.trim().is_empty());
     config.public_url_prefix = request.public_url_prefix.unwrap_or_default();
     config.repository = request.repository.filter(|value| !value.trim().is_empty());
     config.branch = request.branch.filter(|value| !value.trim().is_empty());
-    // §13.11's S3 fields. The access key ID is configuration; the SECRET key is `request.credential`,
-    // which was written to the OS store above and never reaches this file.
+    // §13.11's S3 fields. The access key ID is configuration; the SECRET key is `request.credential`, which
+    // the save path writes to the OS store and which never reaches this file.
     config.endpoint = request.endpoint.filter(|value| !value.trim().is_empty());
     config.region = request.region.filter(|value| !value.trim().is_empty());
     config.bucket = request.bucket.filter(|value| !value.trim().is_empty());
@@ -372,12 +367,15 @@ pub fn save_storage_target(
     // nothing would make the window report a missing credential for a target that needs none.
     config.credential_ref = if needs_credential { Some(handle) } else { None };
 
-    let mut list = read_storage_targets(project.root.as_path())?;
-    match list.iter_mut().find(|existing| existing.id.as_str() == request.id) {
-        Some(existing) => *existing = config,
-        None => list.push(config),
-    }
-    write_storage_targets(project.root.as_path(), &list)?;
+    // The credential VALUE only, when one arrived for a kind that uses one. It is handed to the save path
+    // rather than written here, so the order below (validate, then credential, then the list) holds.
+    let credential = if needs_credential {
+        request.credential.filter(|value| !value.trim().is_empty())
+    } else {
+        None
+    };
+
+    save_target_config(project.root.as_path(), config, credential)?;
 
     let _ = project.log(
         veloct_logging::LogEvent::info(veloct_logging::Category::Attachment, "storage target saved")
@@ -388,17 +386,74 @@ pub fn save_storage_target(
     Ok(())
 }
 
+/// The save path's own sequence for one target: validate, write the credential, write the list.
+///
+/// Extracted from the command so a test can drive it without a WebView. That extraction is the point of this
+/// function existing at all: `StorageConfig::validate` had NO production caller, so the rules it states — the
+/// `Local` drive-letter/UNC prefix rule among them — were enforced by nothing but a unit test and LOOKED
+/// enforced, which is exactly the shape PROCESSING.md §2.6 records as dead schema. A user met the mistake at
+/// the first upload instead of at save time, which is the opposite of what §28's "key failure paths must have
+/// explicit error states" asks for.
+///
+/// The ORDER is part of the contract:
+///
+/// 1. **validate**, so a refused configuration writes nothing at all — no row, and no credential either;
+/// 2. **the credential**, if a value arrived (§12.2: it goes to the OS store, never to this file);
+/// 3. **the list**, replacing this id's entry or appending a new one.
+fn save_target_config(
+    project_root: &std::path::Path,
+    config: veloct_attach::StorageConfig,
+    credential: Option<String>,
+) -> Result<(), CommandError> {
+    // Only a kind this build IMPLEMENTS is validated.
+    //
+    // An unimplemented kind is EXEMPT on purpose. `validate`'s SFTP arm demands a host and a username and its
+    // Lsky arm an instance address, and a half-filled target of one of those kinds is currently one of the
+    // ways §13.10/§13.12's gap becomes visible in the target list (the window can record "I have no adapter
+    // for this" before the protocol fields exist). Refusing the save would delete that path. The arms
+    // themselves are deliberately KEPT: they state the shape the adapters will need, so they stay a unit
+    // test's subject and must not be softened into accepting anything.
+    if veloct_attach::is_implemented(config.kind) {
+        config.validate().map_err(command_invalid)?;
+    }
+
+    if let (Some(handle), Some(secret)) = (config.credential_ref.as_deref(), credential) {
+        crate::credentials::set(handle, secret.trim())?;
+    }
+
+    let id = config.id.as_str().to_string();
+    let mut list = read_storage_targets(project_root)?;
+    match list.iter_mut().find(|existing| existing.id.as_str() == id) {
+        Some(existing) => *existing = config,
+        None => list.push(config),
+    }
+    write_storage_targets(project_root, &list)
+}
+
 /// Remove a storage target, and its stored credential.
 #[tauri::command]
 pub fn delete_storage_target(state: State<'_, AppState>, id: String) -> Result<(), CommandError> {
     let project = state.project()?;
-    let mut list = read_storage_targets(project.root.as_path())?;
+    delete_target_config(project.root.as_path(), &id)
+}
+
+/// The delete path's own sequence for one target: drop the row, write the list, forget the credential.
+///
+/// Extracted from the command for the same reason `save_target_config` is: the credential removal had no test
+/// that could reach it, and "the OS store no longer resolves the handle" is the half a user cannot see.
+///
+/// An id that is not in the list is an explicit error and the list is left EXACTLY as it was — nothing is
+/// written and no credential is removed, because a typo must not be able to forget a real target's secret.
+fn delete_target_config(project_root: &std::path::Path, id: &str) -> Result<(), CommandError> {
+    let mut list = read_storage_targets(project_root)?;
     let before = list.len();
     list.retain(|config| config.id.as_str() != id);
     if list.len() == before {
         return Err(command_invalid(format!("there is no storage target {id}")));
     }
-    write_storage_targets(project.root.as_path(), &list)?;
+    write_storage_targets(project_root, &list)?;
+    // `delete_storage_target` also removes the credential, which is what the window's confirmation says. §13.8
+    // means the remote FILES are untouched by this.
     let _ = crate::credentials::remove(&crate::credentials::handle_for(&format!("storage:{id}")));
     Ok(())
 }
@@ -965,5 +1020,177 @@ mod tests {
             include_str!("lib.rs").contains("attachments::storage_kinds"),
             "storage_kinds must be in the invoke_handler list"
         );
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // The SAVE and DELETE paths, driven through the same functions the commands call. These go through
+    // `save_target_config` / `delete_target_config` rather than calling `validate()` themselves: the defect
+    // being closed is precisely that `validate()` had no caller, so a test that calls it directly would have
+    // missed it.
+    // ---------------------------------------------------------------------------------------------
+
+    fn local_config(id: &str, prefix: &str) -> veloct_attach::StorageConfig {
+        let mut config =
+            veloct_attach::StorageConfig::new(id, "本机目录", veloct_attach::StorageKind::Local);
+        config.key_prefix = Some(prefix.to_string());
+        config
+    }
+
+    #[test]
+    fn a_local_target_with_a_drive_letter_prefix_is_refused_when_it_is_saved_and_writes_nothing() {
+        // The rule t2 added to `validate`'s `Local` arm, enforced where a user meets it: at SAVE time. Before
+        // this task the only reader of that rule was a unit test, so the window accepted the prefix and the
+        // escaping write was refused later, by `ensure_within`, at the first upload.
+        let project = tempfile::TempDir::new().unwrap();
+
+        let error = save_target_config(
+            project.path(),
+            local_config("on-this-machine", "D:/images"),
+            None,
+        )
+        .expect_err("a drive-letter prefix must be refused");
+        assert!(
+            error.to_string().contains("D:/images"),
+            "the message must name the prefix: {error}"
+        );
+
+        // A UNC root is the same mistake spelled differently.
+        let error = save_target_config(
+            project.path(),
+            local_config("on-this-machine", "\\\\server\\share"),
+            None,
+        )
+        .expect_err("a UNC prefix must be refused");
+        assert!(error.to_string().contains("relative path"), "{error}");
+
+        // NOTHING was written by either refusal — the rule runs before the list is touched.
+        assert!(
+            !project.path().join(STORAGE_TARGETS_FILE).exists(),
+            "a refused save must not create the target list"
+        );
+        assert!(read_storage_targets(project.path()).unwrap().is_empty());
+    }
+
+    #[test]
+    fn an_accepted_local_target_is_written_so_the_refusal_is_a_rule_and_not_a_blanket_no() {
+        let project = tempfile::TempDir::new().unwrap();
+        save_target_config(
+            project.path(),
+            local_config("on-this-machine", "uploads/2026"),
+            None,
+        )
+        .unwrap();
+
+        let list = read_storage_targets(project.path()).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].id.as_str(), "on-this-machine");
+        assert_eq!(list[0].kind, veloct_attach::StorageKind::Local);
+        assert_eq!(list[0].key_prefix.as_deref(), Some("uploads/2026"));
+    }
+
+    #[test]
+    fn a_host_less_sftp_target_still_saves_and_the_list_reports_it_as_a_gap() {
+        // The DECISION this exemption implements: `validate` is called only for a kind this build IMPLEMENTS.
+        // A half-filled SFTP target is one of the ways §13.10's gap becomes visible in the target list, so it
+        // must still save — which is why the arm that would refuse it is deliberately not consulted.
+        let project = tempfile::TempDir::new().unwrap();
+        let config =
+            veloct_attach::StorageConfig::new("server", "my server", veloct_attach::StorageKind::Sftp);
+        assert!(!veloct_attach::is_implemented(config.kind), "the exemption's premise");
+
+        // The arm is still there and still refuses: it states the shape the adapter will need, so it is kept
+        // rather than softened, and this asserts that keeping it is not the same as obeying it.
+        let problem = config
+            .validate()
+            .expect_err("the SFTP arm still demands a host and a username");
+        assert!(problem.contains("host"), "{problem}");
+
+        // And the save path ACCEPTS it, because this build has no SFTP adapter.
+        save_target_config(project.path(), config, None).unwrap();
+
+        let saved = read_storage_targets(project.path()).unwrap();
+        assert_eq!(saved.len(), 1, "an unimplemented kind is not refused");
+        let view = StorageTargetView::of(&saved[0], saved[0].has_credential());
+        assert_eq!(view.kind, "sftp");
+        assert!(
+            !view.implemented,
+            "the target list still reports the gap, which is what the exemption preserves"
+        );
+        assert!(
+            !view.unimplemented_reason.unwrap_or_default().trim().is_empty(),
+            "and it reports WHY"
+        );
+    }
+
+    #[test]
+    fn an_implemented_kind_is_still_validated_where_an_unimplemented_one_is_exempt() {
+        // The other half of the exemption, so it cannot be read as "nothing is validated any more": S3 IS
+        // implemented, so its rule (a bucket) is enforced on the save path.
+        let project = tempfile::TempDir::new().unwrap();
+        let mut config =
+            veloct_attach::StorageConfig::new("assets", "S3 附件", veloct_attach::StorageKind::S3);
+        let error = save_target_config(project.path(), config.clone(), None)
+            .expect_err("S3 needs a bucket");
+        assert!(error.to_string().contains("bucket"), "{error}");
+        assert!(!project.path().join(STORAGE_TARGETS_FILE).exists());
+
+        config.bucket = Some("veloct-assets".to_string());
+        save_target_config(project.path(), config, None).unwrap();
+        assert_eq!(read_storage_targets(project.path()).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn deleting_a_target_forgets_its_stored_credential_and_an_unknown_id_changes_nothing() {
+        let project = tempfile::TempDir::new().unwrap();
+        let id = "t9-credential-target";
+        let handle = crate::credentials::handle_for(&format!("storage:{id}"));
+
+        let mut config =
+            veloct_attach::StorageConfig::new(id, "S3 附件", veloct_attach::StorageKind::S3);
+        config.bucket = Some("veloct-assets".to_string());
+        config.credential_ref = Some(handle.clone());
+        // The value goes to the OS store, not to the file (§12.2).
+        save_target_config(project.path(), config.clone(), Some("s3-secret".to_string())).unwrap();
+        assert_eq!(read_storage_targets(project.path()).unwrap().len(), 1);
+
+        // The credential really is in the store — otherwise "it was removed" would be vacuous. A machine
+        // whose credential store refuses to keep a value cannot make that claim, and the test says so instead
+        // of passing quietly; the removal path itself is asserted below whatever happens.
+        let stored = crate::credentials::set(&handle, "s3-secret");
+        assert!(
+            stored.is_ok(),
+            "this test needs a working credential store: {stored:?}"
+        );
+        assert!(crate::credentials::exists(&handle), "a value is stored under the handle");
+
+        delete_target_config(project.path(), id).unwrap();
+
+        assert!(
+            read_storage_targets(project.path()).unwrap().is_empty(),
+            "the target is gone from the list"
+        );
+        assert!(
+            !crate::credentials::exists(&handle),
+            "and its stored credential no longer resolves: the OS store is where §12.2 keeps it"
+        );
+
+        // Removing an id that does not exist is an EXPLICIT error, and the list is left exactly as it was.
+        save_target_config(project.path(), config, None).unwrap();
+        // A credential for the SURVIVING target, so the refusal can be shown not to touch it: a typo must not
+        // be able to forget a real target's secret.
+        crate::credentials::set(&handle, "kept").unwrap();
+        assert!(crate::credentials::exists(&handle));
+
+        let error = delete_target_config(project.path(), "not-a-target")
+            .expect_err("an unknown id is an error rather than a silent no-op");
+        assert!(error.to_string().contains("no storage target"), "{error}");
+        let list = read_storage_targets(project.path()).unwrap();
+        assert_eq!(list.len(), 1, "the list is unchanged by the refusal");
+        assert_eq!(list[0].id.as_str(), id);
+        assert!(
+            crate::credentials::exists(&handle),
+            "a refused delete must not forget the credential of the target it did not delete"
+        );
+        let _ = crate::credentials::remove(&handle);
     }
 }

@@ -1626,4 +1626,52 @@ mod tests {
         assert_eq!(service.objects().len(), 1, "exactly one object again");
         assert_eq!(service.get(&view.id).unwrap().remote_url.as_deref(), Some(second.remote_url.as_str()));
     }
+
+    #[test]
+    fn a_remote_cleanup_of_an_attachment_with_no_recorded_object_removes_nothing() {
+        // §13.8's cleanup is about a REMOTE object, so an attachment that was added and never uploaded has
+        // nothing to remove. "Nothing was removed" is only meaningful against something that could have been,
+        // so an unrelated object on the same target is asserted BYTE for byte afterwards.
+        let dir = project();
+        let kept_source = write_file(dir.path(), "kept.png", b"KEPT");
+        let mut service = AttachmentService::open(dir.path()).unwrap();
+        let target = project_local_target(dir.path(), "local");
+
+        let (kept, _) = service
+            .add_file(&kept_source, "local", "default", NOW, &[1, 2, 3, 4, 5, 6])
+            .unwrap();
+        let uploaded = service.upload(&kept.id, &target, NOW).unwrap();
+        let object_on_target =
+            veloct_attach::local_root(dir.path(), "local").join(&uploaded.remote_key);
+        assert_eq!(std::fs::read(&object_on_target).unwrap(), b"KEPT");
+
+        // A second attachment for the same target, never uploaded: no object record and no remote key.
+        let never_source = write_file(dir.path(), "never.png", b"NEVER");
+        let (never, _) = service
+            .add_file(&never_source, "local", "default", NOW, &[7, 8, 9, 1, 2, 3])
+            .unwrap();
+        assert!(never.remote_key.is_none(), "the fixture must have nothing recorded");
+        assert!(never.remote_url.is_none());
+
+        let error = service.delete_remote_object(&never.id, &target).unwrap_err();
+        assert!(
+            error.to_string().contains("no recorded remote object"),
+            "the refusal must name why: {error}"
+        );
+        assert!(
+            error.to_string().contains(&never.id),
+            "and which attachment: {error}"
+        );
+
+        // The unrelated object on that target is still there, byte for byte...
+        assert_eq!(std::fs::read(&object_on_target).unwrap(), b"KEPT");
+        // ...the record that names it survives...
+        assert_eq!(service.objects().len(), 1);
+        assert_eq!(service.objects()[0].url, uploaded.remote_url);
+        // ...and the attachment that was refused is untouched: still not remote, still uploadable.
+        let after = service.get(&never.id).unwrap();
+        assert!(after.remote_url.is_none());
+        assert!(after.remote_key.is_none());
+        assert!(service.upload_eligibility(&never.id).unwrap().can_upload);
+    }
 }

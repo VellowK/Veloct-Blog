@@ -235,6 +235,13 @@ impl StorageConfig {
 
     /// Validate before the target is used, so a configuration mistake is reported as one rather than
     /// as a confusing network error.
+    ///
+    /// The production caller is the SAVE path: `save_storage_target` runs this (through `save_target_config`)
+    /// before it writes the target list, so the rules below are enforced where the user meets them rather than
+    /// at the first upload. It is called for a kind this build IMPLEMENTS only — `is_implemented` is the check —
+    /// because this method's arms for an unimplemented kind (SFTP's host and username, Lsky's instance) ask for
+    /// protocol fields nothing in this build can use yet, and a half-filled target of one of those kinds is one
+    /// of the ways §13.10/§13.12's gap stays visible in the target list.
     pub fn validate(&self) -> std::result::Result<(), String> {
         if self.id.as_str().trim().is_empty() {
             return Err("a storage target needs an id".into());
