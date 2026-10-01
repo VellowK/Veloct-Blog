@@ -15,8 +15,11 @@
 //! * **SFTP (§13.10) is NOT implemented.** The workspace deliberately has no `ssh` feature because it pulls
 //!   OpenSSL onto Windows/MSVC (see the root `Cargo.toml`), so SFTP needs a dependency decision that is not a
 //!   storage adapter's to make. [`UnsupportedStore`] reports that in the user's terms.
-//! * **Lsky Pro (§13.12) is NOT implemented**: it needs its own upload-token protocol, and it is reported
-//!   rather than attempted.
+//! * **Lsky Pro (§13.12) IS implemented**, over the contract read from the vendor's own shipped API page and
+//!   from the routes and handlers behind it — `crate::lsky` records that reading, the three obligations it
+//!   puts on a caller, and the two limits it leaves. It is the one target whose KEY and PUBLIC URL are the
+//!   SERVER's, which is why `derives_public_url` is false for it and why `head` reports that the free line
+//!   cannot answer an existence question at all.
 //! * **A local directory IS supported**, as its own [`StorageKind::Local`] — NOT as SFTP. It needs no
 //!   credential and no network, so it is both genuinely useful (§13.10's "server storage" where the server is
 //!   this machine) and the target an upload can be tested END TO END against. It used to be reached only by
@@ -25,6 +28,7 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::lsky::LskyStore;
 use crate::storage::{
     object_key, public_url, LocalFileStore, PutOutcome, RemoteObject, StorageAdapter,
     StorageCapabilities, StorageConfig, StorageKind, StorageTarget,
@@ -282,13 +286,26 @@ pub fn target_from_config(
                 std::sync::Arc::new(veloct_core::SystemClock),
             )?)
         }
-        // §13.10's SFTP needs SSH and §13.12's Lsky needs its own protocol. Both report rather than
-        // guess, and ADR-0010 forbids replacing that with a plausible-looking request. An SFTP target
+        StorageKind::LskyPro => {
+            // §13.12's "独立 Token": the credential is the instance's API token, resolved by handle. An
+            // absent one is refused HERE rather than sent, because Lsky treats a request with no
+            // `Authorization` header as an anonymous GUEST upload — a silent fallback that would put a
+            // user's file on a stranger's quota and report it as a normal success.
+            let token = credential.ok_or_else(|| VeloctError::NotConfigured {
+                what: format!("the Lsky Pro target {}", config.name),
+                hint: Some(
+                    "an Lsky Pro target needs its API token stored as the target's credential; the \
+                     instance's own 接口 page shows the value as \"Authorization\": \"Bearer 1|...\""
+                        .to_string(),
+                ),
+            })?;
+            Box::new(LskyStore::new(config.clone(), token, client)?)
+        }
+        // §13.10's SFTP needs SSH, which this workspace deliberately does not depend on. It reports rather
+        // than guessing, and ADR-0010 forbids replacing that with a plausible-looking request. An SFTP target
         // with no host and no credential lands HERE and says so, rather than being quietly rewritten
         // into a local directory.
-        StorageKind::Sftp | StorageKind::LskyPro => {
-            Box::new(UnsupportedStore::new(config.clone()))
-        }
+        StorageKind::Sftp => Box::new(UnsupportedStore::new(config.clone())),
         StorageKind::Local => {
             // §13.10's "server storage" where the server is this machine. No credential and no network,
             // so it is also the target the whole upload-and-delete path is proven against.
@@ -347,12 +364,9 @@ pub fn is_implemented(kind: StorageKind) -> bool {
 /// implemented/unimplemented split is written down; [`is_implemented`] reads it rather than repeating it.
 pub fn unimplemented_reason(kind: StorageKind) -> Option<&'static str> {
     match kind {
-        StorageKind::GitHub | StorageKind::S3 | StorageKind::Local => None,
+        StorageKind::GitHub | StorageKind::S3 | StorageKind::Local | StorageKind::LskyPro => None,
         StorageKind::Sftp => Some(
-            "SFTP 需要 SSH 实现,本构建出于依赖原因没有引入;请改用 GitHub、S3 或服务器目录目标。",
-        ),
-        StorageKind::LskyPro => Some(
-            "Lsky Pro 需要其专用上传令牌协议,本构建尚未实现;请先使用 GitHub、S3 或服务器目录目标。",
+            "SFTP 需要 SSH 实现,本构建出于依赖原因没有引入;请改用 GitHub、S3、兰空图床或服务器目录目标。",
         ),
     }
 }
@@ -605,31 +619,31 @@ mod tests {
     }
 
     #[test]
-    fn sftp_and_lsky_report_that_they_have_no_adapter_instead_of_failing_obscurely() {
+    fn sftp_reports_that_it_has_no_adapter_instead_of_failing_obscurely() {
         // A guessed protocol would fail for a reason nobody can read, and a silent no-op would look like a
-        // successful upload. S3 USED to be in this list and is no longer: §13.11's adapter landed with the
-        // SigV4 client, so the loop now covers the two kinds that genuinely have none.
-        for kind in [StorageKind::Sftp, StorageKind::LskyPro] {
-            assert!(!is_implemented(kind), "{kind:?} is not implemented");
-            let reason = unimplemented_reason(kind).expect("a reason");
-            assert!(!reason.is_empty(), "{kind:?}");
+        // successful upload. S3 USED to be in this list, and Lsky Pro left it when §5.4's protocol was read
+        // from the vendor's own artifacts, so this now covers the one kind that genuinely has none.
+        let kind = StorageKind::Sftp;
+        assert!(!is_implemented(kind), "{kind:?} is not implemented");
+        let reason = unimplemented_reason(kind).expect("a reason");
+        assert!(!reason.is_empty(), "{kind:?}");
 
-            let config = StorageConfig {
-                kind,
-                name: "t".to_string(),
-                ..StorageConfig::new("t", "t", StorageKind::GitHub)
-            };
-            let client = std::sync::Arc::new(FakeHttpClient::new()) as std::sync::Arc<dyn HttpClient>;
-            let target =
-                target_from_config(config, None, std::sync::Arc::clone(&client), None).unwrap();
-            let error = target.store("a.png", b"x").unwrap_err();
-            assert!(
-                matches!(error, VeloctError::NotConfigured { .. }),
-                "{kind:?}: {error}"
-            );
-            // And the capabilities say so, so a caller can tell before trying.
-            assert!(!target.capabilities().verified, "{kind:?}");
-        }
+        let config = StorageConfig {
+            kind,
+            name: "t".to_string(),
+            ..StorageConfig::new("t", "t", StorageKind::GitHub)
+        };
+        let client = std::sync::Arc::new(FakeHttpClient::new()) as std::sync::Arc<dyn HttpClient>;
+        let target =
+            target_from_config(config, None, std::sync::Arc::clone(&client), None).unwrap();
+        let error = target.store("a.png", b"x").unwrap_err();
+        assert!(
+            matches!(error, VeloctError::NotConfigured { .. }),
+            "{kind:?}: {error}"
+        );
+        // And the capabilities say so, so a caller can tell before trying.
+        assert!(!target.capabilities().verified, "{kind:?}");
+
         assert!(is_implemented(StorageKind::GitHub));
         assert!(unimplemented_reason(StorageKind::GitHub).is_none());
         assert!(is_implemented(StorageKind::S3));
@@ -637,6 +651,49 @@ mod tests {
         // The local directory is implemented TOO, and by its own kind rather than by degrading SFTP.
         assert!(is_implemented(StorageKind::Local));
         assert!(unimplemented_reason(StorageKind::Local).is_none());
+        // §13.12's Lsky Pro is the newest member of the implemented set, and its reason is GONE because the
+        // contract was read from the vendor's own shipped API page and source — see `crate::lsky`.
+        assert!(is_implemented(StorageKind::LskyPro));
+        assert!(unimplemented_reason(StorageKind::LskyPro).is_none());
+    }
+
+    #[test]
+    fn a_lsky_target_is_built_from_its_instance_and_its_token() {
+        // §13.12's "独立 Token": the credential is the instance's API token, and it is REQUIRED here because
+        // Lsky treats a request with no `Authorization` header as an anonymous GUEST upload — so an absent
+        // token has to stop at this boundary rather than become somebody else's upload.
+        let mut config = StorageConfig::new("lsky", "my lsky", StorageKind::LskyPro);
+        config.instance = Some("https://img.example.com".to_string());
+        let client = std::sync::Arc::new(FakeHttpClient::new()) as std::sync::Arc<dyn HttpClient>;
+
+        // No `unwrap_err()`: a `StorageTarget` is deliberately not `Debug`, so the error is matched out.
+        let error = match target_from_config(config.clone(), None, std::sync::Arc::clone(&client), None)
+        {
+            Ok(_) => panic!("a Lsky Pro target with no token must be refused"),
+            Err(error) => error,
+        };
+        assert_eq!(error.code(), "NOT_CONFIGURED");
+        assert!(error.to_string().contains("Lsky Pro"), "{error}");
+        assert!(
+            error.hint().unwrap_or_default().contains("Bearer 1|"),
+            "{:?}",
+            error.hint()
+        );
+
+        let target =
+            target_from_config(config, Some("1|token".to_string()), client, None).unwrap();
+        let capabilities = target.capabilities();
+        assert!(capabilities.verified, "the free line's contract was read");
+        assert!(capabilities.can_delete_remotely);
+        assert!(capabilities.can_test_connection);
+        // Nothing can be derived before an upload, because the server returns the URL.
+        assert!(!capabilities.derives_public_url);
+
+        // And it is the REAL adapter rather than the reporting stand-in: an unqueued fake answers 404, and
+        // that status can only be reached by having built and sent the request.
+        let error = target.store("a.png", b"x").unwrap_err();
+        assert!(!matches!(error, VeloctError::NotConfigured { .. }), "{error}");
+        assert!(error.to_string().contains("HTTP 404"), "{error}");
     }
 
     #[test]

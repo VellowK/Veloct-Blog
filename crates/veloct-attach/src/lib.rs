@@ -18,6 +18,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod lsky;
 pub mod naming;
 pub mod network;
 pub mod pool;
@@ -57,6 +58,7 @@ pub use reference::{ReferenceIndex, ReferenceSet, ReferenceTarget};
 pub use state::{
     is_safe_orphan, AttachmentState, CacheStatus, ReferenceStatus, StorageTargetId, UploadStatus,
 };
+pub use lsky::{api_base as lsky_api_base, LskyStore};
 pub use s3::{s3_config, S3Store};
 pub use targets::{
     base64_encode, is_implemented, key_for, local_root, local_target, target_from_config,

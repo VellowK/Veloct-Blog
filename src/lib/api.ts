@@ -542,6 +542,13 @@ export interface StorageTargetView {
   bucket: string | null;
   /** S3: the access key ID, which is an identifier and not a secret. */
   access_key: string | null;
+  /**
+   * Lsky Pro: the instance address (section 13.12).
+   *
+   * Present for the same reason the S3 fields above are: a form that cannot see what it saved would submit
+   * nothing for this field on the next save and silently break a working target.
+   */
+  instance: string | null;
   /** The HANDLE, never a value (section 12). */
   credential_ref: string | null;
   has_credential: boolean;
@@ -1157,9 +1164,9 @@ export const api = {
    * Every storage kind this build knows, with its adapter status (sections 13.10-13.13).
    *
    * Reads no project state deliberately: whether a KIND has an adapter is a fact about the build, so this
-   * answers before a target of that kind exists — which is where PROCESSING.md §5.3/§5.4's gap has to be
+   * answers before a target of that kind exists — which is where PROCESSING.md §5.3's gap has to be
    * visible. `storageTargets` can only report a saved target, and a kind with no adapter is exactly the kind a
-   * user cannot usefully save (an SFTP target needs a host, Lsky needs an instance).
+   * user cannot usefully save (an SFTP target needs a host).
    */
   storageKinds: () => invoke<StorageKindView[]>('storage_kinds'),
 
@@ -1177,6 +1184,8 @@ export const api = {
     bucket?: string | undefined;
     /** S3: the access key ID, which is an identifier rather than a secret. */
     accessKey?: string | undefined;
+    /** Lsky Pro: the instance address — its host, or the full API address (section 13.12). */
+    instance?: string | undefined;
     /** Written to the OS store; omitted or empty leaves the stored one alone. */
     credential?: string | undefined;
   }) =>
@@ -1193,6 +1202,7 @@ export const api = {
         region: options.region ?? null,
         bucket: options.bucket ?? null,
         access_key: options.accessKey ?? null,
+        instance: options.instance ?? null,
         credential: options.credential ?? null,
       },
     }),

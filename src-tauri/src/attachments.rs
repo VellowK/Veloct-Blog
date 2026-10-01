@@ -222,6 +222,13 @@ pub struct StorageTargetView {
     pub bucket: Option<String>,
     /// S3: the access key ID, which is an identifier rather than a secret (§13.11 names both keys).
     pub access_key: Option<String>,
+    /// Lsky Pro: the instance address (§13.12's "实例地址 / API 地址").
+    ///
+    /// It is here for the reason the S3 fields above are: without it the form could not show what a saved
+    /// Lsky Pro target was saved WITH, so the next save would submit no instance, `save_storage_target` would
+    /// store `None`, and editing a working target would silently break it — the exact defect PROCESSING.md
+    /// §5.5 records for `endpoint`/`region`/`bucket`.
+    pub instance: Option<String>,
     /// The HANDLE, never a value (§12).
     pub credential_ref: Option<String>,
     pub has_credential: bool,
@@ -244,6 +251,7 @@ impl StorageTargetView {
             region: config.region.clone(),
             bucket: config.bucket.clone(),
             access_key: config.access_key.clone(),
+            instance: config.instance.clone(),
             credential_ref: config.credential_ref.clone(),
             has_credential,
         }
@@ -274,6 +282,9 @@ pub struct SaveStorageTargetRequest {
     pub bucket: Option<String>,
     #[serde(default)]
     pub access_key: Option<String>,
+    /// Lsky Pro: the instance address (§13.12). The API TOKEN is `credential`, stored by handle.
+    #[serde(default)]
+    pub instance: Option<String>,
     /// The credential VALUE, written to the OS store. Never persisted here (§12.2).
     #[serde(default)]
     pub credential: Option<String>,
@@ -317,9 +328,9 @@ pub struct StorageKindView {
 ///
 /// Deliberately takes NO project state. Whether a KIND has an adapter is a fact about this build rather than
 /// about the project, so this answers on a project with zero targets — which is exactly when the window needs
-/// it, because a kind with no adapter cannot usefully be saved (an SFTP target needs a host, Lsky needs an
-/// instance), so `storage_targets` can never report §5.3/§5.4's gap for a user who has not already configured
-/// the very thing that does not work.
+/// it, because a kind with no adapter cannot usefully be saved (an SFTP target needs a host, and nothing can
+/// use the target until it has one), so `storage_targets` can never report §5.3's gap for a user who has not
+/// already configured the very thing that does not work.
 ///
 /// The kinds come from `StorageKind::ALL` and both answers come from the crate's own `is_implemented` /
 /// `unimplemented_reason`: a list or an answer restated here would be a second source of truth for
@@ -344,32 +355,16 @@ pub fn save_storage_target(
 ) -> Result<(), CommandError> {
     let project = state.project()?;
     let kind = parse_storage_kind(&request.kind)?;
+    let config = config_from_request(&request, kind);
 
     // A local directory target reads no credential, so a value submitted for one is NOT written to the OS
     // store: storing a secret that nothing references is worse than ignoring an input the kind cannot use.
     // Every other kind keeps the handle, whether or not a value arrives with this save (an omitted value
     // means "leave the stored one alone").
-    let needs_credential = kind != veloct_attach::StorageKind::Local;
-    let handle = crate::credentials::handle_for(&format!("storage:{}", request.id));
-
-    let mut config = veloct_attach::StorageConfig::new(&request.id, &request.name, kind);
-    config.key_prefix = request.path_prefix.filter(|value| !value.trim().is_empty());
-    config.public_url_prefix = request.public_url_prefix.unwrap_or_default();
-    config.repository = request.repository.filter(|value| !value.trim().is_empty());
-    config.branch = request.branch.filter(|value| !value.trim().is_empty());
-    // §13.11's S3 fields. The access key ID is configuration; the SECRET key is `request.credential`, which
-    // the save path writes to the OS store and which never reaches this file.
-    config.endpoint = request.endpoint.filter(|value| !value.trim().is_empty());
-    config.region = request.region.filter(|value| !value.trim().is_empty());
-    config.bucket = request.bucket.filter(|value| !value.trim().is_empty());
-    config.access_key = request.access_key.filter(|value| !value.trim().is_empty());
-    // A kind that needs a credential gets the handle; the local directory kind does not, because a handle to
-    // nothing would make the window report a missing credential for a target that needs none.
-    config.credential_ref = if needs_credential { Some(handle) } else { None };
-
+    //
     // The credential VALUE only, when one arrived for a kind that uses one. It is handed to the save path
     // rather than written here, so the order below (validate, then credential, then the list) holds.
-    let credential = if needs_credential {
+    let credential = if kind != veloct_attach::StorageKind::Local {
         request.credential.filter(|value| !value.trim().is_empty())
     } else {
         None
@@ -384,6 +379,48 @@ pub fn save_storage_target(
             .with_field("implemented", veloct_attach::is_implemented(kind).to_string()),
     );
     Ok(())
+}
+
+/// The configuration a save request describes, with blank values DROPPED.
+///
+/// Extracted from the command for the same reason [`save_target_config`] was (PROCESSING.md §5.10.2): the
+/// MAPPING is where a field can be lost silently — a form that cannot see an instance submits none, and
+/// `Some("")` must never become a configuration value — and a function that takes no `AppState` is one a test
+/// can drive. The image round's commands are the model this follows.
+fn config_from_request(
+    request: &SaveStorageTargetRequest,
+    kind: veloct_attach::StorageKind,
+) -> veloct_attach::StorageConfig {
+    fn non_blank(value: &Option<String>) -> Option<String> {
+        value.clone().filter(|value| !value.trim().is_empty())
+    }
+
+    let mut config = veloct_attach::StorageConfig::new(&request.id, &request.name, kind);
+    config.key_prefix = non_blank(&request.path_prefix);
+    config.public_url_prefix = request.public_url_prefix.clone().unwrap_or_default();
+    config.repository = non_blank(&request.repository);
+    config.branch = non_blank(&request.branch);
+    // §13.11's S3 fields. The access key ID is configuration; the SECRET key is `request.credential`, which the
+    // save path writes to the OS store and which never reaches this file.
+    config.endpoint = non_blank(&request.endpoint);
+    config.region = non_blank(&request.region);
+    config.bucket = non_blank(&request.bucket);
+    config.access_key = non_blank(&request.access_key);
+    // §13.12's instance address. `StorageConfig::validate` requires it for the Lsky Pro kind, and that rule is
+    // enforced on this path now that the kind has an adapter — so a mistake is refused at the save rather than
+    // discovered at the first upload.
+    config.instance = non_blank(&request.instance);
+    // A kind that needs a credential gets the handle; the local directory kind does not, because a handle to
+    // nothing would make the window report a missing credential for a target that needs none.
+    config.credential_ref = if kind == veloct_attach::StorageKind::Local {
+        None
+    } else {
+        Some(crate::credentials::handle_for(&format!(
+            "storage:{}",
+            request.id
+        )))
+    };
+    config
 }
 
 /// The save path's own sequence for one target: validate, write the credential, write the list.
@@ -407,12 +444,15 @@ fn save_target_config(
 ) -> Result<(), CommandError> {
     // Only a kind this build IMPLEMENTS is validated.
     //
-    // An unimplemented kind is EXEMPT on purpose. `validate`'s SFTP arm demands a host and a username and its
-    // Lsky arm an instance address, and a half-filled target of one of those kinds is currently one of the
-    // ways §13.10/§13.12's gap becomes visible in the target list (the window can record "I have no adapter
-    // for this" before the protocol fields exist). Refusing the save would delete that path. The arms
-    // themselves are deliberately KEPT: they state the shape the adapters will need, so they stay a unit
-    // test's subject and must not be softened into accepting anything.
+    // An unimplemented kind is EXEMPT on purpose. `validate`'s SFTP arm demands a host and a username, and a
+    // half-filled SFTP target is one of the ways §13.10's gap becomes visible in the target list (the window
+    // can record "I have no adapter for this" before the protocol fields exist). Refusing the save would
+    // delete that path. The arm is deliberately KEPT: it states the shape the adapter will need, so it stays
+    // a unit test's subject and must not be softened into accepting anything.
+    //
+    // SFTP is the ONLY exempt kind now. Lsky Pro's arm — an instance address — stopped being exempt when
+    // §5.4's protocol was verified and the kind gained an adapter, so that rule is enforced on the save path;
+    // D142 in the matrix said exactly this would happen.
     if veloct_attach::is_implemented(config.kind) {
         config.validate().map_err(command_invalid)?;
     }
@@ -881,6 +921,7 @@ mod tests {
                 "has_credential",
                 "id",
                 "implemented",
+                "instance",
                 "kind",
                 "name",
                 "path_prefix",
@@ -893,6 +934,70 @@ mod tests {
         );
         assert_eq!(json["credential_ref"], "keychain:storage/s3-main");
         assert_eq!(json["has_credential"], true);
+    }
+
+    #[test]
+    fn a_lsky_targets_view_carries_its_instance_so_an_edit_cannot_lose_it() {
+        // The §5.5 defect, for §13.12: without this field the form could not see the instance it saved, would
+        // submit none on the next save, and a working target would silently stop working.
+        let mut config =
+            veloct_attach::StorageConfig::new("img", "兰空图床", veloct_attach::StorageKind::LskyPro);
+        config.instance = Some("https://img.example.com".to_string());
+        let view = StorageTargetView::of(&config, true);
+
+        assert_eq!(view.kind, "lsky");
+        assert_eq!(view.instance.as_deref(), Some("https://img.example.com"));
+        // §5.4's protocol was read from the vendor's own artifacts and an adapter exists, so the view no longer
+        // reports a gap for this kind.
+        assert!(view.implemented);
+        assert!(view.unimplemented_reason.is_none());
+    }
+
+    #[test]
+    fn a_blank_field_never_becomes_configuration_and_the_instance_survives_the_mapping() {
+        // The mapping is DRIVEN rather than inspected, which is why it is a function that takes no `AppState`.
+        let request = SaveStorageTargetRequest {
+            id: "img".to_string(),
+            name: "兰空图床".to_string(),
+            kind: "lsky".to_string(),
+            path_prefix: Some("   ".to_string()),
+            public_url_prefix: None,
+            repository: None,
+            branch: None,
+            endpoint: None,
+            region: None,
+            bucket: None,
+            access_key: None,
+            instance: Some("https://img.example.com".to_string()),
+            credential: Some("1|a-secret-token".to_string()),
+        };
+        let config = config_from_request(&request, veloct_attach::StorageKind::LskyPro);
+
+        assert_eq!(config.instance.as_deref(), Some("https://img.example.com"));
+        assert!(
+            config.key_prefix.is_none(),
+            "a blank must be dropped rather than stored as an empty prefix"
+        );
+        // The kind's own rule now accepts what the form sent, because the arm is enforced on this path.
+        assert!(config.validate().is_ok(), "{:?}", config.validate());
+
+        // §12.2: the view carries a HANDLE, and the credential VALUE is nowhere in the configuration.
+        let handle = config
+            .credential_ref
+            .as_deref()
+            .expect("a kind that needs a credential gets a handle");
+        assert!(!handle.contains("1|a-secret-token"), "{handle}");
+
+        // And the rule is real: the same request without an instance is refused by the crate.
+        let mut without = request;
+        without.instance = None;
+        let missing = config_from_request(&without, veloct_attach::StorageKind::LskyPro);
+        assert!(missing.instance.is_none());
+        assert!(
+            missing.validate().unwrap_err().contains("instance"),
+            "{:?}",
+            missing.validate()
+        );
     }
 
     #[test]
@@ -986,23 +1091,27 @@ mod tests {
     }
 
     #[test]
-    fn storage_kinds_reports_sftp_and_lsky_as_gaps_and_the_rest_as_working() {
-        // PROCESSING.md §5.3/§5.4 keep both as reported gaps; §5.5's window has to be able to say so BEFORE a
+    fn storage_kinds_reports_sftp_as_the_gap_and_every_other_kind_as_working() {
+        // PROCESSING.md §5.3 keeps SFTP as a reported gap; §5.5's window has to be able to say so BEFORE a
         // target of that kind is saved, which is the case a target list alone cannot answer.
+        //
+        // Lsky Pro was in this gap loop until §5.4's protocol was read from the vendor's own artifacts and
+        // `lsky::LskyStore` implemented it, so it moved to the working loop. The command's own answer is what
+        // is asserted here, not a restatement of the crate's.
         let views = storage_kinds();
-        for spelling in ["sftp", "lsky"] {
-            let view = views
-                .iter()
-                .find(|view| view.kind == spelling)
-                .unwrap_or_else(|| panic!("{spelling} must be reported"));
-            assert!(!view.implemented, "{spelling} has no adapter in this build");
-            let reason = view
-                .unimplemented_reason
-                .as_deref()
-                .unwrap_or_else(|| panic!("{spelling} must report its gap"));
-            assert!(!reason.trim().is_empty(), "{spelling}");
-        }
-        for spelling in ["local", "s3", "github"] {
+        let spelling = "sftp";
+        let view = views
+            .iter()
+            .find(|view| view.kind == spelling)
+            .unwrap_or_else(|| panic!("{spelling} must be reported"));
+        assert!(!view.implemented, "{spelling} has no adapter in this build");
+        let reason = view
+            .unimplemented_reason
+            .as_deref()
+            .unwrap_or_else(|| panic!("{spelling} must report its gap"));
+        assert!(!reason.trim().is_empty(), "{spelling}");
+
+        for spelling in ["local", "s3", "github", "lsky"] {
             let view = views
                 .iter()
                 .find(|view| view.kind == spelling)

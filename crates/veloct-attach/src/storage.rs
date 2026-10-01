@@ -90,8 +90,11 @@ impl StorageKind {
             Self::GitHub => true,
             // A directory on this machine speaks no protocol, so there is nothing to verify.
             Self::Local => true,
-            // Lsky Pro has no single authoritative API document across versions.
-            Self::LskyPro => false,
+            // Lsky Pro's FREE line was read from the vendor's own artifacts — the API page the product
+            // itself renders at `{instance}/api`, and the routes and handlers behind it — and the reading
+            // is recorded in `lsky.rs`. The PAID line ("Lsky Pro+", 2.x/enterprise 1.x) is deliberately
+            // NOT claimed: from 2.3.0 the vendor encrypts that backend and publishes no API reference.
+            Self::LskyPro => true,
             // SFTP needs a live server to verify against, and there is none in this environment.
             Self::Sftp => false,
         }
@@ -239,9 +242,11 @@ impl StorageConfig {
     /// The production caller is the SAVE path: `save_storage_target` runs this (through `save_target_config`)
     /// before it writes the target list, so the rules below are enforced where the user meets them rather than
     /// at the first upload. It is called for a kind this build IMPLEMENTS only — `is_implemented` is the check —
-    /// because this method's arms for an unimplemented kind (SFTP's host and username, Lsky's instance) ask for
-    /// protocol fields nothing in this build can use yet, and a half-filled target of one of those kinds is one
-    /// of the ways §13.10/§13.12's gap stays visible in the target list.
+    /// because SFTP's arm (host and username) asks for protocol fields nothing in this build can use yet, and a
+    /// half-filled target of that kind is one of the ways §13.10's gap stays visible in the target list.
+    ///
+    /// Every OTHER kind's arm is live, and Lsky Pro's became live when §5.4's protocol was verified against the
+    /// vendor's own artifacts: its `instance` is now required where the user saves it, not at the first upload.
     pub fn validate(&self) -> std::result::Result<(), String> {
         if self.id.as_str().trim().is_empty() {
             return Err("a storage target needs an id".into());
@@ -888,20 +893,32 @@ mod tests {
     }
 
     #[test]
-    fn sftp_and_lsky_are_reported_as_gaps_in_the_canonical_list() {
-        // PROCESSING.md §5.3/§5.4 keep both as REPORTED gaps, so the kind-level answer has to say so before
-        // any target of that kind exists. What is asserted here is the answer, not a restatement of it: the
-        // reason comes from the crate function the command calls.
-        for kind in [StorageKind::Sftp, StorageKind::LskyPro] {
-            assert!(StorageKind::ALL.contains(&kind), "{kind:?} must be offered");
-            assert!(!crate::targets::is_implemented(kind), "{kind:?} has no adapter");
-            let reason = crate::targets::unimplemented_reason(kind).expect("a reported gap");
-            assert!(!reason.trim().is_empty(), "{kind:?} must say why not");
-        }
+    fn sftp_is_the_last_kind_reported_as_a_gap_in_the_canonical_list() {
+        // PROCESSING.md §5.3 keeps SFTP as a REPORTED gap, so the kind-level answer has to say so before any
+        // target of that kind exists. What is asserted here is the answer, not a restatement of it: the reason
+        // comes from the crate function the command calls.
+        //
+        // Lsky Pro USED to be checked in this pair and no longer is: §5.4's protocol was read from the
+        // vendor's own artifacts on 2026-10-02 and `lsky::LskyStore` implements it, so the crate now reports
+        // it as working — and this test is what would catch the report and the adapter disagreeing.
+        let kind = StorageKind::Sftp;
+        assert!(StorageKind::ALL.contains(&kind), "{kind:?} must be offered");
+        assert!(!crate::targets::is_implemented(kind), "{kind:?} has no adapter");
+        let reason = crate::targets::unimplemented_reason(kind).expect("a reported gap");
+        assert!(!reason.trim().is_empty(), "{kind:?} must say why not");
+
         // And the kinds that DO have an adapter carry no gap, so "no reason" stays meaningful.
-        for kind in [StorageKind::Local, StorageKind::S3, StorageKind::GitHub] {
+        for kind in [
+            StorageKind::Local,
+            StorageKind::S3,
+            StorageKind::GitHub,
+            StorageKind::LskyPro,
+        ] {
             assert!(crate::targets::is_implemented(kind), "{kind:?} has an adapter");
-            assert!(crate::targets::unimplemented_reason(kind).is_none(), "{kind:?}");
+            assert!(
+                crate::targets::unimplemented_reason(kind).is_none(),
+                "{kind:?}"
+            );
         }
     }
 
@@ -912,11 +929,16 @@ mod tests {
         assert!(StorageKind::GitHub.is_verified());
         // A directory on this machine speaks no protocol, so there is nothing unverified about it.
         assert!(StorageKind::Local.is_verified());
-        assert!(!StorageKind::LskyPro.is_verified());
+        // §5.4's protocol was read from the vendor's own artifacts for the FREE line, so the kind reports
+        // verified now; the paid line is a stated limit in `lsky.rs` rather than a claim made here.
+        assert!(StorageKind::LskyPro.is_verified());
         assert!(!StorageKind::Sftp.is_verified());
 
-        let store = MemoryStore::new(StorageConfig::new("l", "L", StorageKind::LskyPro));
+        let store = MemoryStore::new(StorageConfig::new("s", "S", StorageKind::Sftp));
         assert!(!store.capabilities().verified);
+
+        let store = MemoryStore::new(StorageConfig::new("l", "L", StorageKind::LskyPro));
+        assert!(store.capabilities().verified);
 
         let store = MemoryStore::new(s3());
         assert!(store.capabilities().verified);

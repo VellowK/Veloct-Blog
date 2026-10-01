@@ -54,6 +54,7 @@ function view(overrides: Partial<StorageTargetView>): StorageTargetView {
     region: null,
     bucket: null,
     access_key: null,
+    instance: null,
     credential_ref: null,
     has_credential: false,
     ...overrides,
@@ -162,9 +163,25 @@ describe('which fields a kind shows', () => {
     expect(fieldKeysForKind('local')).not.toContain('credential');
   });
 
-  it('asks SFTP and Lsky Pro for no field, because this build has no adapter for them', () => {
+  it('asks SFTP for no field, because this build has no adapter for it', () => {
+    // SFTP is the LAST kind in that state. Lsky Pro left it when §5.4's protocol was read from the vendor's own
+    // artifacts and an adapter landed, and asking for fields the command surface cannot use would produce
+    // exactly the half-configured target the gap report exists to avoid.
     expect(fieldKeysForKind('sftp')).toEqual([]);
-    expect(fieldKeysForKind('lsky')).toEqual([]);
+  });
+
+  it('shows Lsky Pro its instance address and its API token, and no path prefix', () => {
+    // §13.12 names 实例地址 / API 地址 and an independent Token, which is the credential.
+    expect(fieldKeysForKind('lsky')).toEqual(['instance', 'credential']);
+    const secret = fieldsForKind('lsky').find((field) => field.key === 'credential');
+    expect(secret?.secret).toBe(true);
+    expect(secret?.label).toContain('Token');
+    const instance = fieldsForKind('lsky').find((field) => field.key === 'instance');
+    expect(instance?.secret).toBe(false);
+    expect(instance?.label).toContain('实例地址');
+    // The object's KEY and public URL belong to the instance, so a path prefix here is a field nothing reads.
+    expect(fieldKeysForKind('lsky')).not.toContain('pathPrefix');
+    expect(fieldKeysForKind('lskypro')).toEqual(['instance', 'credential']);
   });
 
   it('recognises the kind spellings the command surface also accepts', () => {
@@ -537,12 +554,25 @@ describe('why a draft cannot be saved', () => {
     // switch kept blocking the save for a kind whose form does not even render the field, and the user
     // could not clear it without switching back. Over-refusing rather than under-refusing, and this is
     // the fix.
+    // Each kind that does NOT submit the prefix is given the fields it DOES require, so the only reason that
+    // could come back is the leftover prefix. For Lsky Pro that means an instance address, because §13.12's arm
+    // stopped being exempt when the kind gained an adapter.
+    const carried: Record<string, Partial<StorageTargetDraft>> = {
+      sftp: {},
+      lsky: { instance: 'https://img.example.com' },
+    };
     for (const kind of ['sftp', 'lsky']) {
-      const carried = { ...emptyDraft(kind), id: 'x', name: 'X', pathPrefix: '../outside' };
+      const draft = {
+        ...emptyDraft(kind),
+        id: 'x',
+        name: 'X',
+        ...carried[kind],
+        pathPrefix: '../outside',
+      };
       expect(fieldKeysForKind(kind)).not.toContain('pathPrefix');
-      expect(validateDraft(carried), `${kind} still checks a field it does not submit`).toBeNull();
+      expect(validateDraft(draft), `${kind} still checks a field it does not submit`).toBeNull();
       // And the request really does drop it, which is what makes the rule above the right one.
-      expect(buildSaveRequest(carried).pathPrefix).toBeUndefined();
+      expect(buildSaveRequest(draft).pathPrefix).toBeUndefined();
     }
 
     // The kinds that DO submit it are still checked, so the fix cannot be read as "this rule is gone".
@@ -813,5 +843,64 @@ describe('deleting a target', () => {
     expect(warning).toContain('assets');
     expect(warning).toContain('远程文件不会被删除');
     expect(warning).toContain('13.8');
+  });
+});
+
+describe('the Lsky Pro target (§13.12)', () => {
+  it('submits the instance and the token, and nothing else', () => {
+    const draft: StorageTargetDraft = {
+      ...emptyDraft('lsky'),
+      id: 'img',
+      name: '兰空图床',
+      instance: 'https://img.example.com',
+      credential: '1|secret',
+    };
+    const request = buildSaveRequest(draft);
+    expect(request.instance).toBe('https://img.example.com');
+    expect(request.credential).toBe('1|secret');
+    // A leftover value from another kind must not ride along on a Lsky Pro target (§13.5).
+    expect(request.bucket).toBeUndefined();
+    expect(request.repository).toBeUndefined();
+    expect(request.pathPrefix).toBeUndefined();
+  });
+
+  it('keeps a saved target’s instance when it is edited, because the view carries it', () => {
+    // The §5.5 defect this guards: a form that cannot SEE the instance submits nothing for it, the command
+    // stores `None`, and saving an edit silently breaks a target that was working.
+    const saved = view({
+      id: 'img',
+      name: '兰空图床',
+      kind: 'lsky',
+      implemented: true,
+      instance: 'https://img.example.com',
+    });
+    const draft = draftFromTarget(saved);
+    expect(draft.instance).toBe('https://img.example.com');
+
+    const request = buildSaveRequest(draft);
+    expect(request.instance).toBe('https://img.example.com');
+    // The credential is never read back, so an untouched field must mean "keep the stored one".
+    expect(request.credential).toBeUndefined();
+  });
+
+  it('refuses a draft with no instance, in the field the user typed', () => {
+    const draft = { ...emptyDraft('lsky'), id: 'img', name: '兰空图床' };
+    expect(validateDraft(draft)).toContain('实例地址');
+  });
+
+  it('refuses an instance that is not an absolute http(s) URL, mirroring the crate', () => {
+    const draft = {
+      ...emptyDraft('lsky'),
+      id: 'img',
+      name: '兰空图床',
+      instance: 'img.example.com',
+    };
+    // The crate refuses this on the save path because the endpoint is built by appending /api/v1, so the form
+    // says so before the backend has to.
+    expect(validateDraft(draft)).toContain('http://');
+    expect(validateDraft({ ...draft, instance: 'ftp://img.example.com' })).toContain('http://');
+    expect(validateDraft({ ...draft, instance: 'https://img.example.com' })).toBeNull();
+    // §13.12's "API 地址" spelling is accepted too.
+    expect(validateDraft({ ...draft, instance: 'https://img.example.com/api/v1' })).toBeNull();
   });
 });

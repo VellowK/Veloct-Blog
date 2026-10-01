@@ -1361,29 +1361,31 @@ mod tests {
 
     #[test]
     fn an_upload_through_a_target_with_no_adapter_reports_what_to_do() {
-        // Lsky Pro has no adapter in this build. The failure is a `NOT_CONFIGURED` carrying the reason, not
-        // a mysterious protocol error.
+        // SFTP is the LAST kind in this state. S3, GitHub and now §13.12's Lsky Pro have each left it as
+        // their protocol was implemented, and Lsky Pro left it when §5.4's contract was read from the
+        // vendor's own shipped API page and source. The failure is a `NOT_CONFIGURED` carrying the reason,
+        // not a mysterious protocol error.
         //
-        // This test used S3 as its example until §13.11's adapter landed. S3 now behaves like GitHub: a
-        // target that cannot be BUILT (no credential) returns an error from `target_from_config` rather
-        // than a target whose store reports at upload time, and `an_s3_target_without_its_secret_...` in
-        // `veloct-attach` asserts that. Lsky Pro is the kind that genuinely has no adapter.
+        // A target that cannot be BUILT (no credential) errors from `target_from_config` instead of from a
+        // store at upload time — `an_s3_target_without_its_secret_...` and the Lsky Pro equivalent in
+        // `veloct-attach` assert that shape, which is why this test uses the kind that has no adapter at all.
         let dir = project();
         let source = write_file(dir.path(), "photo.png", b"BYTES");
         let mut service = AttachmentService::open(dir.path()).unwrap();
         let (view, _) = service
-            .add_file(&source, "lsky", "default", NOW, &[1, 2, 3, 4, 5, 6])
+            .add_file(&source, "sftp", "default", NOW, &[1, 2, 3, 4, 5, 6])
             .unwrap();
 
         let client = std::sync::Arc::new(veloct_core::http::FakeHttpClient::new())
             as std::sync::Arc<dyn veloct_core::http::HttpClient>;
-        let config = veloct_attach::StorageConfig::new("lsky", "my album", veloct_attach::StorageKind::LskyPro);
+        let config =
+            veloct_attach::StorageConfig::new("sftp", "my server", veloct_attach::StorageKind::Sftp);
         let target = veloct_attach::target_from_config(config, None, client, None).unwrap();
 
         let error = service.upload(&view.id, &target, NOW).unwrap_err();
         assert_eq!(error.code(), "NOT_CONFIGURED");
         assert!(
-            error.hint().unwrap_or_default().contains("Lsky"),
+            error.hint().unwrap_or_default().contains("SSH"),
             "{error} / {:?}",
             error.hint()
         );

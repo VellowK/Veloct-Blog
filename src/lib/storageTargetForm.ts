@@ -45,6 +45,7 @@ export type StorageFieldKey =
   | 'region'
   | 'bucket'
   | 'accessKey'
+  | 'instance'
   | 'credential';
 
 export interface StorageField {
@@ -115,6 +116,13 @@ const FIELDS: Record<StorageFieldKey, StorageField> = {
     secret: false,
     placeholder: 'AKIAEXAMPLE',
   },
+  instance: {
+    key: 'instance',
+    label: '实例地址 / API 地址',
+    hint: '兰空图床的站点地址(§13.12),例如 https://img.example.com;上传地址是它加上 /api/v1。也可以直接粘贴完整的 API 地址。',
+    secret: false,
+    placeholder: 'https://img.example.com',
+  },
   credential: {
     key: 'credential',
     label: '凭据',
@@ -133,10 +141,13 @@ const KIND_FIELDS: Record<string, StorageFieldKey[]> = {
   // §13.10's "server directory": the directory comes from the project and the target id, so only the prefix
   // and the public URL are configuration.
   local: ['pathPrefix', 'publicUrlPrefix'],
-  // SFTP and Lsky Pro have no adapter in this build (§5.3, §5.4) and no fields the command surface accepts, so
-  // they are offerable and reported rather than half-configured.
+  // §13.12 names "实例地址 / API 地址" and an independent Token, which is the credential; there is no path
+  // prefix, because the KEY and the public URL are the INSTANCE's rather than ours.
+  lsky: ['instance', 'credential'],
+  // SFTP has no adapter in this build (§5.3) and no field the command surface can use, so it stays offerable
+  // and reported rather than half-configured. Lsky Pro used to be here and left when §5.4's protocol was
+  // verified against the vendor's own artifacts.
   sftp: [],
-  lsky: [],
 };
 
 /**
@@ -193,7 +204,13 @@ export function fieldsForKind(kind: string): StorageField[] {
   return fieldKeysForKind(normalised).map((key) => {
     if (key !== 'credential') return FIELDS[key];
     const label =
-      normalised === 's3' ? 'Secret Access Key' : normalised === 'github' ? 'GitHub Token' : '凭据';
+      normalised === 's3'
+        ? 'Secret Access Key'
+        : normalised === 'github'
+          ? 'GitHub Token'
+          : normalised === 'lsky'
+            ? 'Lsky Pro API Token'
+            : '凭据';
     return { ...FIELDS[key], label };
   });
 }
@@ -332,6 +349,8 @@ export interface StorageTargetDraft {
   region: string;
   bucket: string;
   accessKey: string;
+  /** Lsky Pro: the instance address (§13.12). Its API token is the credential. */
+  instance: string;
   /** The credential VALUE while it is being typed. Never read back from a view, never shown again. */
   credential: string;
 }
@@ -349,6 +368,7 @@ export interface StorageTargetSaveRequest {
   region?: string | undefined;
   bucket?: string | undefined;
   accessKey?: string | undefined;
+  instance?: string | undefined;
   credential?: string | undefined;
 }
 
@@ -366,6 +386,7 @@ export function emptyDraft(kind = 'local'): StorageTargetDraft {
     region: '',
     bucket: '',
     accessKey: '',
+    instance: '',
     credential: '',
   };
 }
@@ -390,6 +411,7 @@ export function draftFromTarget(view: StorageTargetView): StorageTargetDraft {
     region: view.region ?? '',
     bucket: view.bucket ?? '',
     accessKey: view.access_key ?? '',
+    instance: view.instance ?? '',
     credential: '',
   };
 }
@@ -425,9 +447,10 @@ export function buildSaveRequest(draft: StorageTargetDraft): StorageTargetSaveRe
  * is reported as one here, in the field that was typed, instead of as a confusing failure at the first upload.
  *
  * Deliberately NOT a copy of the whole ruleset: the crate's SFTP arm demands a host and a username, while this
- * form asks SFTP for no field at all. That divergence stays open because an unimplemented kind is exempt from
- * `validate()` on the save path, so demanding those fields here would block configuring a target this build
- * cannot upload to anyway.
+ * form asks SFTP for no field at all. That divergence stays open because SFTP is the one kind still exempt from
+ * `validate()` on the save path — it is the only kind with no adapter — so demanding those fields here would
+ * block configuring a target this build cannot upload to anyway. EVERY other arm is mirrored, Lsky Pro's
+ * included: that kind has an adapter now, so the crate refuses a target with no instance at the save.
  */
 export function validateDraft(draft: StorageTargetDraft): string | null {
   const kind = normaliseKind(draft.kind);
@@ -444,6 +467,15 @@ export function validateDraft(draft: StorageTargetDraft): string | null {
   }
   if (kind === 'github' && draft.repository.trim() === '') {
     return 'GitHub 目标必须填写仓库,写成 owner/repo(§13.13)。';
+  }
+  if (kind === 'lsky') {
+    const instance = draft.instance.trim();
+    if (instance === '') {
+      return 'Lsky Pro 目标必须填写实例地址(§13.12),例如 https://img.example.com;API 令牌填在凭据里。';
+    }
+    if (!/^https?:\/\//i.test(instance)) {
+      return `实例地址 ${instance} 必须以 http:// 或 https:// 开头:上传地址是在它后面拼 /api/v1 得到的。`;
+    }
   }
 
   const prefix = draft.pathPrefix.trim();

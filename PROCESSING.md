@@ -49,26 +49,26 @@ has tests.
 
 | Fact | Value |
 |---|---|
-| Last commit these numbers describe | **`8ba4219`** "Bring PROCESSING.md up to date for handover, and record the Pexels decision" — which is **`585de01`** "Verify Unsplash against the LIVE service, the first real remote call in this repository" plus a documentation-only change to this file. All six of §3.1's checks were run on a CLEAN tree at `585de01` and reproduced (§1.2), and **run again on `8ba4219` for this handover, reproducing every number exactly** (§J) |
-| Working tree | **CLEAN at the moment of this handover's re-run** (`git status --short` was EMPTY). **The CODE is byte-identical to `585de01`** — `git diff --stat 585de01 HEAD` is `PROCESSING.md` only, which is the difference between "the code did not move" and the earlier claim that the whole tree did not. **The commit that carries THIS correction changes DOCUMENTATION ONLY** (`PROCESSING.md`, `README.md`, `docs/spec/02-test-matrix.md`, `docs/spec/03-upstream-facts.md`), so it moves no line of code the numbers below describe and does not invalidate them; §J's last row names the run they come from and says the same thing. Both the works and network-image rounds were FIRST measured on unclean trees, which §1.2 records rather than hides; both were then re-run on their commits, and the network-image re-run exposed two real test races (§2.13, §2.14) |
-| Rust tests | **1395 passed, 0 failed, 7 ignored** (+39 over `5edff10`'s 1356; **the workspace is 17 members — 16 crates plus `src-tauri`** — and its 17 per-crate rows in §J sum to 1394, the 1395th being the one `live_providers` test that runs with no key and no network). The 7 ignored are the 3 real-process integration tests, 1 each in `publish_integration` and `end_to_end_release`, and **2 in `crates/veloct-attach/tests/live_providers.rs` — the live provider checks, which are `#[ignore]`d because the ordinary suite must never depend on a vendor's uptime** |
-| Frontend tests | **152 passed** (vitest: 24 `frontmatter` + 57 `storageTargetForm` + 36 `workForm` + 35 **`networkImageForm`**) |
+| Last commit these numbers describe | **`8ba4219` plus THIS round's change set**, which carries §13.12's Lsky Pro adapter (D166–D167) and is recorded in §J. `8ba4219` itself is **`585de01`** "Verify Unsplash against the LIVE service, the first real remote call in this repository" plus a documentation-only change, and all six of §3.1's checks were reproduced on it before this round began (§1.2) |
+| Working tree | **`git status --short` was EMPTY at `8ba4219`**, where the previous handover's numbers were reproduced; **this round's change set was NOT committed when its own run was taken**, so the numbers below are reproducible from the change set the commit carries rather than from a sha — §1.2 records why that distinction is written down rather than glossed. `git diff --stat 585de01 HEAD` was `PROCESSING.md` ONLY until this round; **§13.12's adapter is the first CODE change since `585de01`**, and it moves that line. Both the works and network-image rounds were FIRST measured on unclean trees, which §1.2 records rather than hides; both were then re-run on their commits, and the network-image re-run exposed two real test races (§2.13, §2.14) |
+| Rust tests | **1417 passed, 0 failed, 7 ignored** (+22 over `8ba4219`'s 1395: `veloct-attach` +20 and `veloct-desktop` +2; **the workspace is 17 members — 16 crates plus `src-tauri`** — and its 17 per-crate rows in §J sum to 1416, the 1417th being the one `live_providers` test that runs with no key and no network). The 7 ignored are unchanged: the 3 real-process integration tests, 1 each in `publish_integration` and `end_to_end_release`, and **2 in `crates/veloct-attach/tests/live_providers.rs` — the live provider checks, which are `#[ignore]`d because the ordinary suite must never depend on a vendor's uptime** |
+| Frontend tests | **157 passed** (vitest: 24 `frontmatter` + **62** `storageTargetForm` + 36 `workForm` + 35 `networkImageForm`; the five new ones are §13.12's field, request, edit round-trip and refusal rules) |
 | `clippy --workspace --all-targets` | **0 warnings** |
-| Site build verifier | **52/52 checks** — unchanged this round: `site/` is untouched by §13.14, and §J names the command behind every number |
-| Test matrix | **234 rows at `I`, 0 at `P`** (224 + 9 for §13.14, the two races it exposed and the live verification, + 1 for §5.12's re-verified Pexels pause), out of **254** rows across tables A–G |
-| Shell commands registered | **87** (82 + the five network-image commands) |
-| Installer | **`target/release/bundle/nsis/Veloct_0.1.0_x64-setup.exe`, 27.90 MiB** — built, installed, probed and uninstalled (§2.10, §2.11); NOT rebuilt this round, because §13.14 touches neither the bundle inputs nor the sidecar. **The sidecar LAUNCHER was rebuilt** (§2.2), because that crate was touched even though the edit was test-only |
+| Site build verifier | **52/52 checks** — `site/` is untouched by §13.12, and the build was re-run rather than assumed; §J names the command behind every number |
+| Test matrix | **236 rows at `I`, 0 at `P`** (224 + 9 for §13.14, the two races it exposed and the live verification, + 1 for §5.12's re-verified Pexels pause, + 2 for §13.12: D166–D167), out of **256** rows across tables A–G |
+| Shell commands registered | **87** (unchanged: §13.12 needed no new command, because the storage commands are generic over the kind) |
+| Installer | **`target/release/bundle/nsis/Veloct_0.1.0_x64-setup.exe`, 27.90 MiB** — built, installed, probed and uninstalled (§2.10, §2.11); **NOT rebuilt this round**, because §13.12 touches neither the bundle inputs nor the sidecar launcher |
 
 Every command above exits **0** on success. That matters and is itself a recent fix — see §2.
 
-**Every number in the table above was measured on the CLEAN committed tree `585de01`**, after the two
-test races §2.13 and §2.14 describe had been fixed. §1.2 tells that story in full, including the part
-that is uncomfortable: the first measurements of both recent rounds were taken on UNCLEAN trees, and
-re-running them on their commits is what found the races. **They were then re-run on `8ba4219` — the tree
-this handover actually describes — and reproduced exactly: 1395 passed / 0 failed / 7 ignored, 152
-frontend tests, 52/52 site checks, 0 clippy warnings, exit 0 on every command (§J).** **If §3.1 does not
-reproduce 1395 / 152 / 52-of-52 / exit-0-clippy from a checkout, something outside this repository changed
-and that is the first thing to find out.**
+**Every number in the table above was measured on the change set §13.12's commit carries**, on top of a tree
+that had already reproduced the previous handover's totals at `8ba4219`. §1.2 tells the older story in full,
+including the part that is uncomfortable: the first measurements of the works and network-image rounds were
+taken on UNCLEAN trees, and re-running them on their commits is what found two real test races. **This round's
+run was taken the same way it recorded that lesson: with `git status --short` NOT empty, so §J says so rather
+than implying a commit that did not exist yet — and with every one of the 22 new tests named rather than
+counted.** **If §3.1 does not reproduce 1417 / 157 / 52-of-52 / exit-0-clippy from this change set, something
+outside this repository changed and that is the first thing to find out.**
 
 ### 1.1 What these rounds changed
 
@@ -195,6 +195,15 @@ tests/storageTargetForm.test.ts                                        NEW  thos
     "no live service has ever been contacted" is now closed for this one source and stands for every
     other. A missing key **fails** the test rather than skipping it, because a live test that passed
     without running would be evidence of nothing.
+
+13. **§13.12's Lsky Pro adapter is IMPLEMENTED, and its contract came from a source §5.4 did not know
+    existed.** The vendor publishes NO API reference — but the reference ships INSIDE the product, as the page
+    `Common\ApiController` renders at `{instance}/api`, which is what the Halo note "具体接口定义在 Lsky Pro
+    后台可以看到" means literally. `crates/veloct-attach/src/lsky.rs` (NEW, 17 tests) implements upload,
+    delete, the credential test and an honest refusal where the API cannot answer, over the contract recorded
+    in `docs/spec/03-upstream-facts.md` §5. **+22 Rust tests (1395 → 1417) and +5 frontend tests (152 → 157)**,
+    clippy clean, sidecar check green, 52/52 site checks. §5.4 is the gap this closed; **the PAID line is a
+    stated limit rather than a claim**, and D166–D167 are the recorded evidence.
 
 The paths THIS round changed:
 
@@ -418,11 +427,12 @@ nothing that is newly refused — this closes the gap for anything else that rea
 
 **What is deliberately NOT refused:** a kind this build does not implement. `save_target_config` calls
 `validate()` only `if is_implemented(config.kind)`, because `validate`'s SFTP arm demands a host and a
-username and its Lsky arm an instance address, and a half-filled target of one of those kinds is
-currently one of the ways §13.10/§13.12's gap stays visible in the target list. The arms themselves are
-KEPT rather than softened (a test asserts the SFTP arm still refuses while the save path accepts), so
-they remain the shape a future adapter will have to satisfy. **A reader who finds this exemption and
-"fixes" it by validating everything would delete the only way to record an unimplemented target — do not.**
+username, and a half-filled SFTP target is currently one of the ways §13.10's gap stays visible in the target
+list. The arm itself is KEPT rather than softened (a test asserts the SFTP arm still refuses while the save
+path accepts), so it remains the shape a future adapter will have to satisfy. **A reader who finds this
+exemption and "fixes" it by validating everything would delete the only way to record an unimplemented
+target — do not.** **SFTP is now the ONLY exempt kind:** §13.12's Lsky arm became an ENFORCED rule when that
+kind gained an adapter, which is exactly what this section said would happen.
 
 ### 2.10 A Tauri bundle RENAMES an `externalBin`, so `externalBin` is not the whole story
 
@@ -632,6 +642,13 @@ found by re-running a suite that had already been recorded green.
   fetch script.
 - **`git show <blob>` mangles binary output** through line-ending conversion and reports a wrong
   size. Use `git cat-file -s` / `git hash-object` to compare a committed binary with disk.
+- **`github.com` RESOLVES TO `127.0.0.1` on this machine** (a hosts-file accelerator / fake-IP DNS), so the
+  read/search bridges REFUSE it as a private target and `raw.githubusercontent.com` fails the same way. The
+  machine's own proxy — the one `scripts/cargo.ps1` already reads out of the registry, `127.0.0.1:10818` —
+  reaches both: `Invoke-WebRequest -Proxy http://127.0.0.1:10818 <url>`, including
+  `https://api.github.com/repos/<owner>/<repo>/git/trees/<branch>?recursive=1` for a tree listing. **This is
+  how §13.12's Lsky contract was read** (PROCESSING.md §5.4), and it is the way to read a vendor's source when
+  the vendor publishes no reference. Costs nothing and needs no credential for a public repository.
 - **Never use PowerShell text replacement on source files.** `Set-Content -NoNewline` corrupted a
   file with cp1252 once, and it happened AGAIN this session: `(Get-Content) -replace ... | Set-Content
   -Encoding UTF8` wrote a BOM and turned `§13.11` into `搂13.11` in `crates/veloct-attach/src/s3.rs`.
@@ -707,7 +724,7 @@ by clause, and each row names the evidence it requires.
 | `veloct-sidecar` | The Astro launcher: resolves the bundled Node from the sidecar path, NEVER `PATH` (ADR-0005), **under BOTH names a bundle can give it** (§2.10) |
 | `veloct-deploy` | Three logical targets × main/works sub-targets, Cloudflare adapter, manual exports, roll-up (`partial` vs `failed`), re-send, **SEO push lifecycle** |
 | `veloct-ai` | Providers, per-feature model mapping, CANCELLED-safe fallback, context, apply plans, **the page creator**, **model discovery + a connection test whose failure message is redacted at the source** (§2.8) |
-| `veloct-attach` | Three independent state axes, reference sets, dedup, cache pool, upload transaction, **GitHub, S3 and the local-directory attachment targets (`StorageKind::Local`, §13.10 where the server is this machine)**, **§13.8's explicit `delete_remote_object` — the only path that removes a remote object**, the canonical MIME map, **and §13.14's two network image providers (`network::providers`): Unsplash's and Pexels's search contracts, their OPPOSITE auth headers, the credit line each one requires, and Unsplash's mandatory download report — with Pixabay listed and refused in its own words** |
+| `veloct-attach` | Three independent state axes, reference sets, dedup, cache pool, upload transaction, **GitHub, S3, the local-directory attachment targets (`StorageKind::Local`, §13.10 where the server is this machine) and §13.12's Lsky Pro target (`LskyStore`, over the contract read from the vendor's own shipped API page and source — D166)**, **§13.8's explicit `delete_remote_object` — the only path that removes a remote object**, the canonical MIME map, **and §13.14's two network image providers (`network::providers`): Unsplash's and Pexels's search contracts, their OPPOSITE auth headers, the credit line each one requires, and Unsplash's mandatory download report — with Pixabay listed and refused in its own words** |
 | `veloct-github` | The GitHub Contents API, ONCE: `Repository`, `GitHubContents` (put/get/list/delete/repository_info), `base64_encode`, the 100 MB ceiling. No policy — that stays with the dependent (ADR-0015) |
 | `veloct-s3` | S3 / S3-compatible, ONCE: SigV4 (`CanonicalRequest`, `uri_encode`, the signing-key chain), and `S3Client` (streamed put, HEAD, paginated LIST, DELETE, a signed connection test). No policy either (ADR-0016) |
 | `veloct-backup` | Selection rules, gzip archive + manifest, secret scan, staging restore, retention, target orchestration, **the GitHub and S3 cloud backup targets — §17.2 verified against the repository, and S3's streamed upload plus the bucket's own timestamps** |
@@ -752,7 +769,7 @@ believing any summary, including this one. Judged against the evidence that exis
 | H12 | One build per publish, all targets share it | **done** |
 | H13 | Failed target re-publish by original Release | **done** — `resendable_sub_targets` |
 | H14 | 1Panel manual upload of current `dist` | **done** as a manual export |
-| H15 | Attachments: cache pool, **sftp, s3, lsky**, github, remote image | **PARTIAL, and §13.14 is now DONE: the remote image browser is implemented against Unsplash and Pexels** — the two sources whose terms require or permit §13.14's flow — with keys in the OS credential store, the credit line enforced by the crate where the provider demands it, Unsplash's mandatory download report, and Pixabay refused in its own words. **Unsplash is verified against the LIVE service (D164)**; **Pexels is implemented and tested but currently unusable, because it has paused new API key issuance — the fact is recorded in `docs/spec/03-upstream-facts.md` §4.2 and matrix row **D165**, and §5.12 records it as a known and deliberate state rather than fixing it.** What is done besides: the pool, the three axes, dedup, multi-reference, §13.8's no-auto-delete rule and explicit cleanup, the local kind, the kind report, the save-path validation, GitHub and S3, and the target form (B1–B14, D16, D91–D93, D116–D123, D130–D145, D155–D164). What is STILL PARTIAL and exactly why: **(1) `sftp` has NO adapter** — configurable, and it reports the gap instead of guessing a protocol (§5.3, a dependency decision, and the reason a host-less SFTP target stays SAVEABLE, §2.9); **(2) `lsky` has NO adapter** — its upload-token protocol is still unverified (§5.4), and it is now **the last attachment kind with no adapter**; **(3) everything EXCEPT Unsplash has never contacted a live service** (§5.8) — and Pexels cannot be contacted by a new user at all (D165, §5.12) |
+| H15 | Attachments: cache pool, **sftp, s3, lsky**, github, remote image | **PARTIAL, and §13.14 is now DONE: the remote image browser is implemented against Unsplash and Pexels** — the two sources whose terms require or permit §13.14's flow — with keys in the OS credential store, the credit line enforced by the crate where the provider demands it, Unsplash's mandatory download report, and Pixabay refused in its own words. **Unsplash is verified against the LIVE service (D164)**; **Pexels is implemented and tested but currently unusable, because it has paused new API key issuance — the fact is recorded in `docs/spec/03-upstream-facts.md` §4.2 and matrix row **D165**, and §5.12 records it as a known and deliberate state rather than fixing it.** What is done besides: the pool, the three axes, dedup, multi-reference, §13.8's no-auto-delete rule and explicit cleanup, the local kind, the kind report, the save-path validation, GitHub and S3, and the target form (B1–B14, D16, D91–D93, D116–D123, D130–D145, D155–D164). What is STILL PARTIAL and exactly why: **(1) `sftp` has NO adapter** — configurable, and it reports the gap instead of guessing a protocol (§5.3, a dependency decision, and the reason a host-less SFTP target stays SAVEABLE, §2.9); **(2) `lsky` is now DONE** — §5.4's protocol was read from the vendor's own artifacts (the API page the product renders, plus the routes and handlers behind it) and `veloct-attach/src/lsky.rs` implements it, D166–D167, so **SFTP is the only remaining adapterless attachment kind**; **(3) everything EXCEPT Unsplash has never contacted a live service** (§5.8) — and Pexels cannot be contacted by a new user at all (D165, §5.12) |
 | H16 | Dedup safe, multi-reference safe, no auto remote delete | **done** |
 | H17 | Auto backup, manual backup, local export, full restore, content-only restore | **PARTIAL — all five work, and BOTH of §17.4's cloud targets are now real: GitHub (§17.2 verified against the repository on every upload) and S3 (§13.11's client, a streamed upload, the bucket's own timestamps). Targets live in SQLite's `backup_targets`, each run is recorded per target in `backups` (§22.7), and §17.3's finding blocks the upload while the local archive survives. What is still missing is NOT the target model — see §5.8: no live service has ever been contacted** |
 | H18 | No secret in config/log/backup; scan before backup | **done** — scan runs BEFORE the archive is written; and see §2.8, where wiring a feature found a leak on a path review had missed |
@@ -831,10 +848,28 @@ Declared unimplemented and reported. Needs an SSH implementation; no `ssh` featu
 **on purpose** (see above). Either accept a dependency that brings OpenSSL and verify it builds on
 MSVC, or keep reporting the gap. **Do not add a guessed protocol.**
 
-### 5.4 Lsky Pro storage target (§13.12)
+### 5.4 CLOSED: Lsky Pro storage target (§13.12) — and where its protocol turned out to live
 
-Declared unimplemented and reported. Needs Lsky's own upload-token protocol, which is not verified
-in `docs/spec/03-upstream-facts.md`. Same rule: verify the protocol or keep reporting.
+Kept here rather than deleted, because this section used to say the protocol "is not verified" and the
+conclusion drawn from that was wrong in an instructive way. **The vendor publishes no API reference** — the
+documentation site covers installation, storage drivers and upgrades — but **the contract ships INSIDE the
+product**, as the page `Common\ApiController` renders at `{instance}/api`. Read from that page and from the
+routes and handlers behind it (`lsky-org/lsky-pro`, free line), the whole contract is now recorded in
+`docs/spec/03-upstream-facts.md` §5, `crates/veloct-attach/src/lsky.rs` implements it, and matrix rows
+**D166–D167** carry the evidence. What the reading changed is in §1.1 item 13.
+
+**What stays open, stated rather than hidden:**
+
+- **The PAID line is not claimed.** "Lsky Pro+" 2.x and enterprise 1.x are the same architecture by the
+  vendor's own documentation, but **from 2.3.0 the vendor ENCRYPTS the backend source** and still publishes no
+  reference, so the adapter is verified against the free line and says so in its own module docs.
+- **`head` cannot be answered.** The free line's only lookup is `GET /images`, whose documented `keyword`
+  filter the vendor applies to `origin_name`/`alias_name` and **never to `key`**. The adapter reports that it
+  cannot answer rather than claiming an object is absent, and nothing needs it: §13.4's reuse is decided by
+  the recorded object.
+- **The vendor's own delete can report success without removing the file.** Its `deleting` hook removes the
+  physical object only when no other row on the same strategy shares the `md5`+`sha1`, and it **catches a
+  failure and merely logs it** — so "删除成功" is not proof, and the module says so.
 
 ### 5.5 CLOSED: the attachment panel's target FORM, and §13.8's explicit remote cleanup
 
@@ -864,7 +899,8 @@ What closed it, and where to look:
 - **§13.8's cleanup at both layers**: `AttachmentTransaction::delete_remote_object` →→
   `AttachmentService::delete_remote_object` →→ the registered Tauri command `delete_remote_object` →→
   `api.deleteRemoteObject` →→ 仅删除远程对象. It refuses, removing NOTHING, on a target whose
-  `capabilities().can_delete_remotely` is false (SFTP and Lsky report their own §13.10/§13.12 gap), on a
+  `capabilities().can_delete_remotely` is false (SFTP reports its own §13.10 gap; Lsky Pro HAS an adapter and
+  can delete remotely now, D166), on a
   target other than the one the object's RECORD names, and on an attachment with no recorded object. On
   success the remote object and its record go, `remote_url`/`remote_key` are cleared, the upload axis
   returns to `PENDING`, and **the cached bytes and the reference records are untouched** — §13.8 removes
@@ -883,9 +919,11 @@ What closed it, and where to look:
   written (§2.9, D141/D142). That is a behaviour change, and it is the reason a configuration mistake
   can no longer be discovered only at the first upload.
 
-**What is still not here, stated rather than papered over:** SFTP and Lsky Pro remain adapterless
-(§5.3, §5.4) — the window now SAYS so before a target of either kind is saved, which is all a command
-can do about a missing protocol; and the smaller limits this round left are §5.10.
+**What is still not here, stated rather than papered over:** SFTP remains adapterless (§5.3) — the window now
+SAYS so before a target of that kind is saved, which is all a command can do about a missing protocol.
+**Lsky Pro is no longer in that sentence**: §5.4 is CLOSED, its contract was read from the vendor's own
+artifacts and `veloct-attach/src/lsky.rs` implements it (D166–D167). The smaller limits this round left are
+§5.10.
 `docs/spec/02-test-matrix.md` rows `D130`–`D145` are the recorded evidence, each naming the test AND
 the crate. The storage-kind report itself (`D139`–`D140`) is part of commit `2496604` and its run:
 
@@ -1049,6 +1087,11 @@ What REMAINS, each still a **stated limit** in the matrix row that covers it:
    by choice. **The works round ADDED ten more of these** (`src-tauri/src/works.rs`): four need an
    `AppState`, and six do not and are driven (`describe_work_source`, `work_screenshot_limit`, and the
    import-source decisions behind them). That is the same shape and the same stated limit, not a new one.
+   **The §13.12 round moved this limit in the right direction rather than restating it**: the
+   request→configuration MAPPING was extracted out of `save_storage_target` into `config_from_request`, which
+   takes no `AppState`, and `attachments::a_blank_field_never_becomes_configuration_and_the_instance_survives_the_mapping`
+   drives it — so §13.12's instance field is COVERED rather than reviewed (D167). The four wrapper commands
+   themselves are still not driven, which is why this item stays.
 3. **§13.8's cleanup can leave an article pointing at a URL that no longer resolves.** The confirmation
    says the Markdown is not touched, and §13.8 does not ask for a rewrite — but a user who cleans up an
    object a published article cites gets a broken image and no automatic repair. Worth a decision if it
@@ -1106,7 +1149,7 @@ requirements change:
 3. **A failed download report is stated, not silent, and does not lose the image** (§2.12).
 4. `ImageSource::Pixabay` remains a variant, in `ImageSource::ALL`, with
    `providers::unimplemented_reason` returning the quote above. **It is refused rather than deleted**, so
-   the window can explain the absence — the same shape as `StorageKind`'s SFTP and Lsky reasons. A future
+   the window can explain the absence — the same shape as `StorageKind`'s SFTP reason. A future
    implementer must not "just wire it up": that would publish pages violating the provider's terms.
 
 **What is NOT in doubt, and what remains:** nothing about the searcher needed a guessed protocol, which is
@@ -1241,11 +1284,14 @@ test races (§2.13, §2.14) that had been passing by luck.
    repository, bucket or account. Pexels has a test ready but no obtainable key (§5.12).
    **A live test that skips silently is worth nothing, which is why a missing key FAILS
    `tests/live_providers.rs`.**
-4. **§13.14 is COMPLETE on the implementation side**, so the remaining source work is the two adapters:
-   **Lsky Pro (§5.4) is the LAST attachment kind with no adapter**, so it is the one that would move §28's
-   H15, provided its upload-token protocol can be verified from a real source. SFTP (§5.3) is the other and
-   stays a dependency decision: no `ssh` feature exists on purpose. Never guess a protocol. If you implement
-   one, D142's exemption stops applying to it and its `validate` arm becomes a rule the save path enforces.
+4. **The §13.12 adapter ROUND IS DONE** — Lsky Pro is implemented against a contract read from the vendor's
+   own artifacts (§5.4, D166–D167), so the remaining source work is **SFTP (§5.3) alone**: the last
+   attachment kind with no adapter, and a DEPENDENCY decision rather than a coding one (no `ssh` feature
+   exists on purpose, because it pulls OpenSSL onto Windows/MSVC). **The Lsky round is also the worked
+   example of what to do when a vendor publishes no reference: the contract was INSIDE the product, and
+   finding it took one reading.** Never guess a protocol; and note what happened here — when the kind gained
+   an adapter, D142's exemption stopped applying to it and its `validate` arm became a rule the save path
+   enforces.
 5. **§5.9's one remaining limit is a dependency decision, not a coding one:** §10.3 wants a poster and
    this build has no headless browser, so the poster is the file the user chooses. If a capture is wanted,
    decide the mechanism (a headless-Chromium-class crate, or a WebView2 capture path) as a deliberate

@@ -236,3 +236,50 @@ records the decision and matrix rows D155/D156 carry the evidence.
 "the locked clause is what is wrong", which is far cheaper to discover before the code exists than
 after it has tests. The same habit had already produced §5.3's and §5.4's gaps; this round it produced
 a design change instead.
+
+## 5. Lsky Pro (§13.12) — read from the PRODUCT, because the vendor publishes no API reference
+
+Read on **2026-10-02**. The first thing verification established is WHERE this contract actually lives, and it
+is not a documentation site.
+
+**There is no public API reference.** The documentation site (`docs.lsky.pro`, migrated to
+`docs.huohuastudio.com/lsky-pro`) documents installation, storage drivers, upgrades and the paid tiers, and
+publishes no endpoint list. The Halo app-store page's note — that the definitions are visible in the Lsky
+backend — is literally true: **the contract ships inside the product**, as the page `Common\ApiController`
+renders at `{instance}/api`.
+
+**So the authority is the vendor's own artifacts**, read at `lsky-org/lsky-pro` on `master` — the FREE line,
+whose releases run to **2.1** (2022-08-17) and whose Laravel 9 / PHP 8 code is what `master` carries:
+
+| Fact | Value, from the vendor's own shipped page and code |
+|---|---|
+| Base | `{instance}/api/v1` — `resources/views/common/api.blade.php`: 接口URL `{scheme}://{host}/api/v1` |
+| Auth | `Authorization: Bearer <token>`, a Sanctum plain-text token (the page's own example is `1\|1bJb…`). **A request with no such header is treated as 游客上传 (guest upload)**, which the page states outright |
+| Upload | `POST /api/v1/upload`, `multipart/form-data`, part `file` (required, File), optional `strategy_id` (Integer) — `routes/api.php`; `ImageService::store` reads `$request->file('file')` and `$request->input('strategy_id')` |
+| Envelope | `{status: Boolean, message: String, data: Object}` — `app/Http/Result.php`. **HTTP is 200 even when `status` is false**, and `data` is `{}` when empty |
+| Upload data | `key`, `name`, `pathname`, `origin_name`, `size` (**kilobytes**, a float), `mimetype`, `extension`, `md5`, `sha1`, `links{url, html, bbcode, markdown, markdown_with_link, thumbnail_url}` — `Api/V1/ImageController::upload`, `Image::links`/`url`/`pathname` |
+| Disabled API | `CheckIsEnableApi` answers JSON **403** with `{"status":false,"message":"管理员未启用 API"}`, and a 404 for a request that does not ask for JSON |
+| Token | `POST /api/v1/tokens` with `email`+`password` → `data.token`, throttled `3,1` (three per minute); `DELETE /api/v1/tokens` clears them — `Api/V1/TokenController` |
+| Connection | `GET /api/v1/profile`, behind `auth:sanctum`, answers with the account — which is what makes it a credential test rather than a ping |
+| Delete | `DELETE /api/v1/images/{key}` behind `auth:sanctum` → `删除成功`. `Image` declares **no `SoftDeletes`**, so the row goes; the physical file is removed only when no OTHER row on the same strategy shares its `md5`+`sha1`, and **a failure to remove it is caught and merely logged** |
+| Image list | `GET /api/v1/images`, query `page`, `order`, `permission`, `album_id`, `keyword` — and `keyword` filters `origin_name`/`alias_name`, **never `key`** (`Image::scopeFilter`), so there is NO lookup by key |
+
+**Three obligations this puts on any caller, each of which Veloct's adapter encodes:**
+
+1. **`Accept: application/json` on every request.** `CheckIsEnableApi` chooses between the JSON 403 and an HTML
+   404 on `expectsJson()`, and Laravel answers an unauthenticated `auth:sanctum` request with a REDIRECT rather
+   than a 401 unless the client asks for JSON — so a rejected token would look like a login page.
+2. **`is_success()` is not the success signal.** A refusal arrives as HTTP 200 carrying `status:false`, so a
+   client that trusts the status reports every failure as a success.
+3. **Never send an upload without the token.** The instance ACCEPTS an anonymous upload when its admin allows
+   guest uploads, so a missing credential must be refused locally instead of falling back to one.
+
+**What is verified, and what is NOT.** The table is the **free line** (2.0–2.1 / `master`). The PAID line
+("Lsky Pro+", 2.x, and enterprise 1.x) is the same architecture *by the vendor's own documentation*, but **from
+version 2.3.0 the vendor encrypts the backend source** and no public API reference exists, so Veloct does not
+claim it: `crates/veloct-attach/src/lsky.rs` states that limit, and `StorageKind::is_verified` covers the free
+line only.
+
+**The generalisable rule, and it is the mirror of §4.4's:** a vendor publishing no reference is not the same as
+a protocol that cannot be verified — sometimes the reference is INSIDE the product, in the page the vendor tells
+its own users to read. Look for that artifact before recording a gap as permanent.
