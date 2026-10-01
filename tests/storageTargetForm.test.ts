@@ -820,6 +820,11 @@ describe('the remote cleanup (§13.8)', () => {
     expect(cleanup.wording).toContain('Markdown 引用');
     expect(cleanup.wording).toContain('缓存文件');
     expect(cleanup.wording).toContain('13.8');
+    // PROCESSING.md §5.10.3's decision, taken rather than left open: §13.8 removes the remote object and does
+    // NOT rewrite the article, so the confirmation has to say what that means for the page — a broken image
+    // where the article still points — instead of only saying what it leaves untouched.
+    expect(cleanup.wording).toContain('断链');
+    expect(cleanup.wording).toContain('不会替你改写文章');
   });
 
   it('is disabled with the view reason when the target has no adapter', () => {

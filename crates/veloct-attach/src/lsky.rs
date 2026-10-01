@@ -34,12 +34,17 @@
 //!   stores, which is what makes a later `DELETE /images/{key}` name the right object, so
 //!   `derives_public_url` is `false` — there is nothing to derive before an upload happens.
 //!
-//! Two limits are stated rather than hidden. **(1)** The paid line ("Lsky Pro+", 2.x and enterprise 1.x) is
+//! Three limits are stated rather than hidden. **(1)** The paid line ("Lsky Pro+", 2.x and enterprise 1.x) is
 //! the same architecture by the vendor's own documentation, but from 2.3.0 its backend source is ENCRYPTED
 //! and no public API reference exists, so this adapter is verified against the FREE line and does not claim
 //! the paid one. **(2)** The vendor's delete removes the physical file only when no other record on the same
 //! strategy shares its `md5`+`sha1`, and it CATCHES a failure to remove it and only logs it — so a
 //! `status:true` "删除成功" does not prove the object is gone, and no Veloct message may say that it does.
+//! **(3)** A write is ALWAYS reported as a create, because the instance cannot be asked whether it already
+//! holds these bytes (`head` below): §13.4's reuse is decided by the RECORDED object, which is per project. So
+//! two Veloct projects pointed at one instance upload two objects with the same content, where S3's `HEAD`
+//! and GitHub's status would have let the second reuse the first. That is invisible from either project, which
+//! is why it is written down.
 
 use std::sync::Arc;
 

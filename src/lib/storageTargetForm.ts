@@ -609,12 +609,12 @@ export interface RemoteCleanup {
   storageTargetId: string | null;
   disabled: boolean;
   disabledReason: string | null;
-  /** What the action does and, more importantly, what it does NOT touch. */
+  /** What the action does, what it does NOT touch, and the consequence the user lives with. */
   wording: string;
 }
 
 const REMOTE_CLEANUP_WORDING =
-  '只删除远程对象:不改动文章里的 Markdown 引用,不删除这条附件记录,也不删除缓存文件;删除后该附件可以重新上传(§13.8)。';
+  '只删除远程对象:不改动文章里的 Markdown 引用,不删除这条附件记录,也不删除缓存文件;删除后该附件可以重新上传(§13.8)。注意:文章里仍然指向这个地址,远程对象删掉后那里会变成断链——Veloct 不会替你改写文章(§13.8 不做自动重写)。';
 
 /**
  * The remote cleanup for one attachment.

@@ -523,29 +523,18 @@ pub fn upload_attachment(
     let now = state.now();
 
     let list = read_storage_targets(project.root.as_path())?;
-    let config = list
-        .iter()
-        .find(|config| config.id.as_str() == storage_target_id)
-        .cloned()
-        .ok_or_else(|| {
-            command_invalid(format!(
-                "there is no storage target {storage_target_id}; configure one first"
-            ))
-        })?;
-
-    // The credential comes from the OS store by handle, and a kind that needs none passes `None`.
-    let credential = config
-        .credential_ref
-        .as_deref()
-        .and_then(crate::credentials::get_or_none);
-
-    // A LOCAL target writes into the project's own `.veloct/uploads/<target id>`, which is §13.10's server
-    // storage for a user whose server is this machine.
+    // The credential comes from the OS store by HANDLE, and a kind that needs none passes `None`.
     //
-    // An SFTP target is NOT routed to a local directory, whatever it is configured with. Doing that used to
-    // make an unconfigured `sftp` target upload to the machine it was running on and report a URL no server
-    // serves; an SFTP target now reaches `UnsupportedStore`, which reports the §13.10 gap (PROCESSING.md §5.3).
-    let target = storage_target_for(&config, credential, project.root.as_path())?;
+    // A LOCAL target writes into the project's own `.veloct/uploads/<target id>`, which is §13.10's server
+    // storage for a user whose server is this machine. An SFTP target is NOT routed to a local directory
+    // whatever it is configured with: an unconfigured one reaches `UnsupportedStore`, which reports the
+    // §13.10 gap (PROCESSING.md §5.3). Both facts live in the two functions this call composes.
+    let target = resolve_stored_target(
+        &list,
+        &storage_target_id,
+        project.root.as_path(),
+        crate::credentials::get_or_none,
+    )?;
 
     let upload = project
         .attachments()
@@ -593,24 +582,14 @@ pub fn delete_remote_object(
     let project = state.project()?;
 
     let list = read_storage_targets(project.root.as_path())?;
-    let config = list
-        .iter()
-        .find(|config| config.id.as_str() == storage_target_id)
-        .cloned()
-        .ok_or_else(|| {
-            command_invalid(format!(
-                "there is no storage target {storage_target_id}; configure one first"
-            ))
-        })?;
-
-    let credential = config
-        .credential_ref
-        .as_deref()
-        .and_then(crate::credentials::get_or_none);
-
     // Built the same way an upload builds it, so the target a delete talks to is the target an upload
     // wrote to.
-    let target = storage_target_for(&config, credential, project.root.as_path())?;
+    let target = resolve_stored_target(
+        &list,
+        &storage_target_id,
+        project.root.as_path(),
+        crate::credentials::get_or_none,
+    )?;
 
     let deleted = {
         let mut attachments = project.attachments();
@@ -689,6 +668,35 @@ fn require_id(id: &str) -> Result<(), CommandError> {
         return Err(command_invalid("an attachment id is required"));
     }
     Ok(())
+}
+
+/// The STORED target a command was asked for, by id, with its credential resolved by handle.
+///
+/// Extracted from `upload_attachment` and `delete_remote_object` for the reason [`storage_target_for`] and
+/// [`config_from_request`] were (PROCESSING.md §5.10.2): the DECISIONS here are the ones a test can drive
+/// without an `AppState` — an id that names no target is an error NAMING that id, and the credential comes
+/// from the OS store by HANDLE rather than from the configuration. `credentials` is a parameter rather than a
+/// call to the real store so a test can supply its own and prove which one was consulted.
+fn resolve_stored_target(
+    list: &[veloct_attach::StorageConfig],
+    storage_target_id: &str,
+    project_root: &std::path::Path,
+    credentials: impl Fn(&str) -> Option<String>,
+) -> Result<veloct_attach::StorageTarget, CommandError> {
+    let config = list
+        .iter()
+        .find(|config| config.id.as_str() == storage_target_id)
+        .cloned()
+        .ok_or_else(|| {
+            command_invalid(format!(
+                "there is no storage target {storage_target_id}; configure one first"
+            ))
+        })?;
+    let credential = config
+        .credential_ref
+        .as_deref()
+        .and_then(credentials);
+    storage_target_for(&config, credential, project_root)
 }
 
 /// The storage target an upload or a remote cleanup talks to, built from a stored configuration.
@@ -1306,5 +1314,118 @@ mod tests {
             "a refused delete must not forget the credential of the target it did not delete"
         );
         let _ = crate::credentials::remove(&handle);
+    }
+
+    /// Unwrap a REFUSAL, because a `StorageTarget` is deliberately not `Debug` (so `expect_err` cannot be used).
+    fn refusal(result: Result<veloct_attach::StorageTarget, CommandError>) -> CommandError {
+        match result {
+            Ok(_) => panic!("this target must be refused"),
+            Err(error) => error,
+        }
+    }
+
+    #[test]
+    fn a_refused_configuration_stores_neither_the_target_nor_its_credential() {
+        // PROCESSING.md §5.10.2 named this exact hole: every refused-save test passed `None` as the credential,
+        // so code that stored the credential BEFORE validating would still have passed every test. This one
+        // passes a credential with a configuration the crate refuses and asserts nothing at all was written —
+        // the ORDER is the contract (§2.9: validate, then credential, then the list).
+        let _store = crate::credentials::store_guard();
+        let project = tempfile::TempDir::new().unwrap();
+        let id = "t10-refused-order";
+        let handle = crate::credentials::handle_for(&format!("storage:{id}"));
+        const SECRET: &str = "a-secret-that-must-not-be-stored";
+
+        // S3 is an implemented kind, so its rule (a bucket) is enforced on this path, and the configuration
+        // below is refused for exactly that reason.
+        let mut config =
+            veloct_attach::StorageConfig::new(id, "S3 附件", veloct_attach::StorageKind::S3);
+        config.credential_ref = Some(handle.clone());
+
+        let error = save_target_config(project.path(), config.clone(), Some(SECRET.to_string()))
+            .expect_err("a target with no bucket is refused");
+        assert!(error.to_string().contains("bucket"), "{error}");
+
+        // 1. No row, and the file was never created — not merely "the list is empty after an edit".
+        assert!(
+            !project.path().join(STORAGE_TARGETS_FILE).exists(),
+            "a refused save must not write the target list at all"
+        );
+        // 2. And no credential. This is the half that had no test at all: it is what catches a reorder of the
+        //    validate and credential steps, because the secret would be sitting in the store.
+        assert!(
+            !crate::credentials::exists(&handle),
+            "a refused save must not store the credential either"
+        );
+
+        // The ACCEPTED configuration proves the assertion above was not vacuous: the same call with a valid
+        // configuration does write both, so `exists` really can be true at this handle.
+        config.bucket = Some("veloct-assets".to_string());
+        save_target_config(project.path(), config, Some(SECRET.to_string())).unwrap();
+        assert!(crate::credentials::exists(&handle));
+        assert_eq!(
+            crate::credentials::get_or_none(&handle).as_deref(),
+            Some(SECRET)
+        );
+        let _ = crate::credentials::remove(&handle);
+    }
+
+    #[test]
+    fn a_stored_target_is_resolved_by_id_and_its_credential_is_read_by_handle() {
+        // The same §5.10.2 pattern applied to the lookup the upload and the remote cleanup share. The
+        // credential resolver is a PARAMETER, which is what lets this test prove WHICH source was consulted.
+        let project = tempfile::TempDir::new().unwrap();
+        let root = project.path();
+
+        let mut config =
+            veloct_attach::StorageConfig::new("img", "兰空图床", veloct_attach::StorageKind::LskyPro);
+        config.instance = Some("https://img.example.com".to_string());
+        config.credential_ref = Some("keychain:storage:img".to_string());
+        let list = vec![config];
+
+        // An id that names no stored target is an error NAMING that id, rather than a silent default.
+        let error = refusal(resolve_stored_target(&list, "nope", root, |_| None));
+        assert!(error.to_string().contains("no storage target nope"), "{error}");
+
+        // The credential comes from the resolver and NOT from the configuration: with a token the adapter
+        // builds and reports itself verified, and with none the build is REFUSED with the token's own hint.
+        let with = resolve_stored_target(&list, "img", root, |handle| {
+            if handle == "keychain:storage:img" {
+                Some("1|token".to_string())
+            } else {
+                None
+            }
+        })
+        .expect("the token resolves");
+        assert!(with.capabilities().verified);
+        assert!(
+            !with.capabilities().derives_public_url,
+            "the server returns the URL"
+        );
+
+        let without = refusal(resolve_stored_target(&list, "img", root, |_| None));
+        // `CommandError` carries public FIELDS rather than `VeloctError`'s methods, so both halves are read
+        // directly — and the hint is where the instance's own header shape is documented.
+        assert_eq!(without.code, "NOT_CONFIGURED");
+        assert!(
+            without
+                .hint
+                .as_deref()
+                .unwrap_or_default()
+                .contains("Bearer 1|"),
+            "{:?}",
+            without.hint
+        );
+
+        // And the routing is the SHARED one: an SFTP target with no host reaches the store that REPORTS the
+        // §13.10 gap rather than degrading into a local directory.
+        let sftp = vec![veloct_attach::StorageConfig::new(
+            "server",
+            "my server",
+            veloct_attach::StorageKind::Sftp,
+        )];
+        let reporting = resolve_stored_target(&sftp, "server", root, |_| None).expect("it builds");
+        assert!(!reporting.capabilities().verified);
+        assert!(!reporting.capabilities().can_delete_remotely);
     }
 }

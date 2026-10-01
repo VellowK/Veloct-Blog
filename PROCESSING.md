@@ -51,13 +51,13 @@ has tests.
 |---|---|
 | Last commit these numbers describe | **`8ba4219` plus THIS round's change set**, which carries §13.12's Lsky Pro adapter (D166–D167) and is recorded in §J. `8ba4219` itself is **`585de01`** "Verify Unsplash against the LIVE service, the first real remote call in this repository" plus a documentation-only change, and all six of §3.1's checks were reproduced on it before this round began (§1.2) |
 | Working tree | **`git status --short` was EMPTY at `8ba4219`**, where the previous handover's numbers were reproduced; **this round's change set was NOT committed when its own run was taken**, so the numbers below are reproducible from the change set the commit carries rather than from a sha — §1.2 records why that distinction is written down rather than glossed. `git diff --stat 585de01 HEAD` was `PROCESSING.md` ONLY until this round; **§13.12's adapter is the first CODE change since `585de01`**, and it moves that line. Both the works and network-image rounds were FIRST measured on unclean trees, which §1.2 records rather than hides; both were then re-run on their commits, and the network-image re-run exposed two real test races (§2.13, §2.14) |
-| Rust tests | **1417 passed, 0 failed, 7 ignored** (+22 over `8ba4219`'s 1395: `veloct-attach` +20 and `veloct-desktop` +2; **the workspace is 17 members — 16 crates plus `src-tauri`** — and its 17 per-crate rows in §J sum to 1416, the 1417th being the one `live_providers` test that runs with no key and no network). The 7 ignored are unchanged: the 3 real-process integration tests, 1 each in `publish_integration` and `end_to_end_release`, and **2 in `crates/veloct-attach/tests/live_providers.rs` — the live provider checks, which are `#[ignore]`d because the ordinary suite must never depend on a vendor's uptime** |
+| Rust tests | **1419 passed, 0 failed, 7 ignored** (+24 over `8ba4219`'s 1395: `veloct-attach` +20 and `veloct-desktop` +4; **the workspace is 17 members — 16 crates plus `src-tauri`** — and its 17 per-crate rows in §J sum to 1418, the 1419th being the one `live_providers` test that runs with no key and no network). The 7 ignored are unchanged: the 3 real-process integration tests, 1 each in `publish_integration` and `end_to_end_release`, and **2 in `crates/veloct-attach/tests/live_providers.rs` — the live provider checks, which are `#[ignore]`d because the ordinary suite must never depend on a vendor's uptime** |
 | Frontend tests | **157 passed** (vitest: 24 `frontmatter` + **62** `storageTargetForm` + 36 `workForm` + 35 `networkImageForm`; the five new ones are §13.12's field, request, edit round-trip and refusal rules) |
 | `clippy --workspace --all-targets` | **0 warnings** |
 | Site build verifier | **52/52 checks** — `site/` is untouched by §13.12, and the build was re-run rather than assumed; §J names the command behind every number |
-| Test matrix | **236 rows at `I`, 0 at `P`** (224 + 9 for §13.14, the two races it exposed and the live verification, + 1 for §5.12's re-verified Pexels pause, + 2 for §13.12: D166–D167), out of **256** rows across tables A–G |
+| Test matrix | **237 rows at `I`, 0 at `P`** (224 + 9 for §13.14, the two races it exposed and the live verification, + 1 for §5.12's re-verified Pexels pause, + 3 for §13.12 and the §5.10 members it closed: D166–D168), out of **257** rows across tables A–G |
 | Shell commands registered | **87** (unchanged: §13.12 needed no new command, because the storage commands are generic over the kind) |
-| Installer | **`target/release/bundle/nsis/Veloct_0.1.0_x64-setup.exe`, 27.90 MiB** — built, installed, probed and uninstalled (§2.10, §2.11); **NOT rebuilt this round**, because §13.12 touches neither the bundle inputs nor the sidecar launcher |
+| Installer | **`target/release/bundle/nsis/Veloct_0.1.0_x64-setup.exe`, 27.93 MiB (29,286,835 bytes)** — **REBUILT this round** so the package carries §13.12, then silently installed to a temp directory, listed, probed and uninstalled (§2.10). It contains `veloct-desktop.exe` (16.2 MB), `veloct-astro-sidecar.exe` (2.8 MB), `veloct-node.exe` (93.6 MB) and `uninstall.exe`; the INSTALLED launcher started the real Astro dev server (`astro v7.3.5 ready in 3400 ms`) and `GET http://localhost:4399/` returned **200** (58,873 bytes) from a `veloct-node` listener on `::1`. **Still unsigned** (§5.10.4) |
 
 Every command above exits **0** on success. That matters and is itself a recent fix — see §2.
 
@@ -171,7 +171,7 @@ tests/storageTargetForm.test.ts                                        NEW  thos
 
 10. **The installer EXISTS, and building it exposed two defects that made a packaged app unusable** —
     §5.7's gap. `scripts/build-installer.ps1` (NEW) wraps the Tauri CLI with the environment fixes
-    `scripts/cargo.ps1` documents; the package is **27.90 MiB** and installs `veloct-desktop.exe`,
+    `scripts/cargo.ps1` documents; the package WAS **27.90 MiB** at that point and installs `veloct-desktop.exe`,
     `veloct-astro-sidecar.exe` and `veloct-node.exe`. See §2.10 and §2.11 — neither defect could be
     seen from a `cargo build`, and both would have shipped.
 
@@ -204,6 +204,17 @@ tests/storageTargetForm.test.ts                                        NEW  thos
     in `docs/spec/03-upstream-facts.md` §5. **+22 Rust tests (1395 → 1417) and +5 frontend tests (152 → 157)**,
     clippy clean, sidecar check green, 52/52 site checks. §5.4 is the gap this closed; **the PAID line is a
     stated limit rather than a claim**, and D166–D167 are the recorded evidence.
+14. **§5.10's three remaining members were closed, and the installer was rebuilt so it carries §13.12.**
+    **(a)** §5.10.2's ORDER half — the one PROCESSING.md itself called "a one-line test... would close it" —
+    is closed by a test that passes a credential WITH a configuration the crate refuses and asserts that the
+    target-list file was never created and that the credential is not in the OS store, with a positive control
+    (D168). **(b)** The shared target lookup was extracted out of `upload_attachment` and
+    `delete_remote_object` into `resolve_stored_target`, which takes no `AppState`, and is driven with an
+    injected credential resolver (D168). **(c)** §5.10.1's third two-language member is closed by moving
+    §13.12's "absolute http(s)" rule INTO `StorageConfig::validate`, so the crate is the authority and the
+    window's copy is a transcription (D168). **(d)** §5.10.3 is a DECISION now rather than an open item: the
+    cleanup wording states that the article keeps pointing at the address and goes dead. **+2 Rust tests
+    (1417 → 1419)**, and the installer (27.93 MiB) was built, installed, probed and uninstalled.
 
 The paths THIS round changed:
 
@@ -444,7 +455,7 @@ see, and both of which would have shipped in §5.7's installer:
    resolve a BUNDLED Node runtime (ADR-0005: "Node.js is a bundled sidecar, never a user prerequisite").
    The first NSIS package was **5.49 MiB** and installed `veloct-desktop.exe` and
    `veloct-astro-sidecar.exe` — **no Node at all**. Adding `binaries/veloct-node` took it to
-   **27.90 MiB** and the install directory gained `veloct-node.exe`. **A packaged application could
+   **27.90 MiB at that point** and the install directory gained `veloct-node.exe`. **A packaged application could
    never have started a preview**, and the error a user would have seen named a file the package simply
    did not contain.
 
@@ -642,6 +653,14 @@ found by re-running a suite that had already been recorded green.
   fetch script.
 - **`git show <blob>` mangles binary output** through line-ending conversion and reports a wrong
   size. Use `git cat-file -s` / `git hash-object` to compare a committed binary with disk.
+- **The dev server binds `::1`, so a probe must use `localhost`.** `veloct-astro-sidecar.exe dev --port P`
+  with NO `--host` leaves Astro listening on **`::1` only** (verified: the listener's owner is a
+  `veloct-node` process on `::1`), so `GET http://localhost:P/` returns **200** while
+  `GET http://127.0.0.1:P/` returns NOTHING. D64's earlier probe passed `--host 127.0.0.1` explicitly, which
+  is why this was never seen. **And a port check must filter `State`**: `Get-NetTCPConnection -LocalPort P`
+  without `-State Listen` also reports TIME_WAIT entries, which reads as "the port is still held after
+  `taskkill /T`" when nothing is listening — the filtered check (`State -eq 'Listen'`) is the honest one, and
+  with it a launcher started by the same shell does release the port.
 - **`github.com` RESOLVES TO `127.0.0.1` on this machine** (a hosts-file accelerator / fake-IP DNS), so the
   read/search bridges REFUSE it as a private target and `raw.githubusercontent.com` fails the same way. The
   machine's own proxy — the one `scripts/cargo.ps1` already reads out of the registry, `127.0.0.1:10818` —
@@ -736,11 +755,15 @@ by clause, and each row names the evidence it requires.
 
 - A real desktop binary builds and launches (`target/debug/veloct-desktop.exe`, ~37 MB).
 - The sidecar starts the real Astro dev server through the real bundled Node: `GET /` → HTTP 200,
-  an article route → 200, and `taskkill /T` frees the port.
+  an article route → 200, and `taskkill /T` frees the port. **Without `--host` the server binds `::1` only**,
+  so a `localhost` probe answers and a `127.0.0.1` one does not — see §3, and D64's probe passed
+  `--host 127.0.0.1` explicitly, which is why that stayed invisible.
 - **A real NSIS package was built, silently INSTALLED, listed, probed and uninstalled** (§2.10):
-  `Veloct_0.1.0_x64-setup.exe` is 27.90 MiB and installs `veloct-desktop.exe`,
-  `veloct-astro-sidecar.exe` and `veloct-node.exe`; the INSTALLED launcher launches the real Astro dev
-  server. This is the one §5.7 claim that a `cargo build` could not have made.
+  `Veloct_0.1.0_x64-setup.exe` is **27.93 MiB** and installs `veloct-desktop.exe`,
+  `veloct-astro-sidecar.exe`, `veloct-node.exe` and `uninstall.exe`; the INSTALLED launcher launches the
+  real Astro dev server, and `GET http://localhost:<port>/` returns **200** from a `veloct-node` listener.
+  This is the one §5.7 claim that a `cargo build` could not have made. **Rebuilt on 2026-10-02 so the
+  package carries §13.12**, and the whole sequence was re-run rather than assumed.
 - **A real Astro build emits the works poster**: `dist/site/work-previews/demo-counter/screenshot.webp`
   was compared BYTE FOR BYTE with the work's own `preview/screenshot.webp` (52/52 verifier checks).
 - `publish` runs a real Astro build, emits `dist/site` + `dist/works`, writes `release.json`,
@@ -870,6 +893,10 @@ routes and handlers behind it (`lsky-org/lsky-pro`, free line), the whole contra
 - **The vendor's own delete can report success without removing the file.** Its `deleting` hook removes the
   physical object only when no other row on the same strategy shares the `md5`+`sha1`, and it **catches a
   failure and merely logs it** — so "删除成功" is not proof, and the module says so.
+- **A second project pointed at the same instance re-uploads.** `put` always reports a CREATE, because the
+  instance cannot be asked whether it already holds these bytes (`head` above), and §13.4's reuse is decided by
+  the RECORDED object — which is per project. S3 (`HEAD` first) and GitHub (the status) can reuse; Lsky Pro
+  cannot. Invisible from either project, so it is recorded rather than discovered.
 
 ### 5.5 CLOSED: the attachment panel's target FORM, and §13.8's explicit remote cleanup
 
@@ -964,8 +991,12 @@ Kept here rather than deleted, because the old text called this one of the four 
 unmet and a reader looking for that sentence must find out what happened to it. **It is no longer a
 gap.** `tauri build` has run and a package exists:
 
-- **`target/release/bundle/nsis/Veloct_0.1.0_x64-setup.exe`, 27.90 MiB**, built by
-  `scripts/build-installer.ps1` (NEW) in 5m53s.
+- **`target/release/bundle/nsis/Veloct_0.1.0_x64-setup.exe`**, built by
+  `scripts/build-installer.ps1` (NEW). **Its size is a moving fact, so §1's table is the current number**:
+  27.89 MiB when this section was written (a first run), **27.93 MiB on 2026-10-02 after §13.12 was
+  implemented and the package was rebuilt**. The 2026-10-02 run re-did the WHOLE sequence — build, silent
+  install to a temp directory, list, probe the installed launcher, uninstall — rather than assuming it,
+  and `GET http://localhost:<port>/` returned 200 through the installed `veloct-node`.
 - The Tauri CLI is a **devDependency** (`@tauri-apps/cli` 2.12.1), so the build is reproducible from a
   checkout instead of depending on a global install. `scripts/build-installer.ps1` exists because a
   bare `tauri build` fails here with `failed to run 'cargo metadata' command ... program not found`:
@@ -1062,7 +1093,12 @@ What REMAINS, each still a **stated limit** in the matrix row that covers it:
    **the `pathPrefix` over-refusal this list recorded LAST round, now gated by kind (D152)**: the leading
    `/` and `..` checks ran for every kind while `buildSaveRequest` submits that field only for
    `s3`/`github`/`local`, so a leftover value blocked a save for a kind whose form does not render the
-   field — the user could not clear it without switching back. What still guards the pair is a
+   field — the user could not clear it without switching back. **A THIRD member was closed by the §13.12
+   round**: the Lsky Pro rule (an instance address, and it must be an absolute http(s) URL) existed in the
+   WINDOW and in the adapter's `api_base` but NOT in `validate`, which made the window stricter than the
+   authority it is supposed to transcribe. It is a `validate` rule now (`lsky::api_base` still refuses it too,
+   for a target built without the save path — D168), so the window's copy is a transcription rather than an
+   invention. What still guards the pair is a
    TRANSCRIPTION: nine shapes in `CRATE_RULE` whose verdicts are copied from the crate and compared
    against the window's, so a one-sided change is a failing test rather than an oversight. **The remaining
    known divergence is deliberate**: the crate's SFTP arm demands a host and a username while the form asks
@@ -1079,26 +1115,39 @@ What REMAINS, each still a **stated limit** in the matrix row that covers it:
    directly. What remains are the four commands whose bodies need a live `AppState`:
    `save_storage_target`, `delete_storage_target`, `upload_attachment` and `delete_remote_object` are one
    or two lines each, and they are asserted by registration (`include_str!("lib.rs")`) and by the helper
-   they call, not by a call. **And the ordering** (validate → credential → list, §2.9) is driven for its
-   LIST half only: every refused-save test passes `None` as the credential, so code that stored the
-   credential before validating would still pass every test. That half is right in the source and is
-   reviewed, but it is not covered — a one-line test passing a credential with a rejected configuration
-   would close it. A WebView or `AppState` test would close the first half; this repository has neither
-   by choice. **The works round ADDED ten more of these** (`src-tauri/src/works.rs`): four need an
-   `AppState`, and six do not and are driven (`describe_work_source`, `work_screenshot_limit`, and the
-   import-source decisions behind them). That is the same shape and the same stated limit, not a new one.
-   **The §13.12 round moved this limit in the right direction rather than restating it**: the
-   request→configuration MAPPING was extracted out of `save_storage_target` into `config_from_request`, which
-   takes no `AppState`, and `attachments::a_blank_field_never_becomes_configuration_and_the_instance_survives_the_mapping`
-   drives it — so §13.12's instance field is COVERED rather than reviewed (D167). The four wrapper commands
-   themselves are still not driven, which is why this item stays.
-3. **§13.8's cleanup can leave an article pointing at a URL that no longer resolves.** The confirmation
-   says the Markdown is not touched, and §13.8 does not ask for a rewrite — but a user who cleans up an
-   object a published article cites gets a broken image and no automatic repair. Worth a decision if it
-   ever bites.
+   they call, not by a call. **The ORDER half is now CLOSED**: `f29dcda`'s hole was that every refused-save
+   test passed `None` as the credential, so code that stored the credential BEFORE validating would have
+   passed every test. `attachments::a_refused_configuration_stores_neither_the_target_nor_its_credential`
+   (D168) passes a credential WITH a configuration the crate refuses and asserts that the target-list file
+   was never created and that the credential is absent from the OS store — with a positive control, so the
+   assertion cannot pass vacuously. **A WebView or `AppState` test would close the wrapper half; this
+   repository has neither by choice.** **The works round ADDED ten more of these**
+   (`src-tauri/src/works.rs`): four need an `AppState`, and six do not and are driven
+   (`describe_work_source`, `work_screenshot_limit`, and the import-source decisions behind them). That is the
+   same shape and the same stated limit, not a new one.
+   **Two §13.12 rounds moved the wrapper half in the right direction rather than restating it**: the
+   request→configuration MAPPING was extracted out of `save_storage_target` into `config_from_request`, and the
+   shared TARGET LOOKUP out of `upload_attachment`/`delete_remote_object` into `resolve_stored_target` — both
+   take no `AppState`, and both are driven by tests
+   (`attachments::a_blank_field_never_becomes_configuration_and_the_instance_survives_the_mapping` and
+   `attachments::a_stored_target_is_resolved_by_id_and_its_credential_is_read_by_handle`, D167–D168). What is
+   left in the four commands is glue: `State` → project root → the helper → a log line. That residual is why
+   this item stays, but it is now small and named rather than broad.
+3. ~~§13.8's cleanup can leave an article pointing at a URL that no longer resolves~~ — **DECIDED, and the
+   wording now says so.** §13.8 removes the remote object and deliberately does NOT rewrite the article, so the
+   decision is to keep that behaviour and make the CONSEQUENCE explicit where the user meets it: the
+   confirmation now says "文章里仍然指向这个地址,远程对象删掉后那里会变成断链——Veloct 不会替你改写文章
+   (§13.8 不做自动重写)" (`REMOTE_CLEANUP_WORDING`, asserted by the §13.8 test in
+   `tests/storageTargetForm.test.ts`). **What is deliberately NOT done:** no refusal when the attachment is
+   still referenced, and no automatic Markdown rewrite — a user who asks for a cleanup is asking for it, and
+   §13.8's split between the remote object and the user's record stands. If this ever bites in practice, the
+   available middle step is to REPORT the reference count before the cleanup rather than to block it.
 4. **The installer is unsigned, and that is a packaging gap rather than a code one.** §5.7 is closed in
-   the sense that a package exists, installs and runs; a user who runs it meets SmartScreen. `bundleVCRuntime`
-   is also `false`. Neither is hidden in the UI, and neither is worth fixing without a certificate.
+   the sense that a package exists, installs and runs — **rebuilt and re-probed on 2026-10-02 (27.93 MiB)**, so
+   the current package really does carry §13.12; a user who runs it still meets SmartScreen. `bundleVCRuntime`
+   is also `false`. Neither is hidden in the UI, and neither is worth fixing without a certificate. **The
+   supporting facts are §3's `::1` probe note and `docs/research/tauri2-windows-report.md`'s `dumpbin`
+   suggestion for deciding `bundleVCRuntime` empirically** rather than by preference.
 
 ### 5.11 DECIDED and IMPLEMENTED: §13.14 uses the two sources whose terms describe it, and refuses the third
 

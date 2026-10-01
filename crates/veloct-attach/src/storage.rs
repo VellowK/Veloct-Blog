@@ -274,8 +274,20 @@ impl StorageConfig {
                 }
             }
             StorageKind::LskyPro => {
-                if self.instance.as_deref().unwrap_or("").trim().is_empty() {
+                let instance = self.instance.as_deref().unwrap_or("").trim();
+                if instance.is_empty() {
                     return Err("Lsky Pro needs an instance address".into());
+                }
+                // §13.12's "实例地址 / API 地址": the endpoint is built by appending `/api/v1` to this value, so
+                // a relative one produces something no client can resolve. It is refused HERE because the crate
+                // is the AUTHORITY for the rule and the window's copy is a transcription of it
+                // (PROCESSING.md §5.10.1) — `lsky::api_base` still refuses it too, for a target that predates
+                // this rule or is built without the save path.
+                if !instance.starts_with("http://") && !instance.starts_with("https://") {
+                    return Err(format!(
+                        "the Lsky Pro instance {instance:?} must be an absolute http(s) URL, because the \
+                         endpoint is built by appending /api/v1 to it"
+                    ));
                 }
             }
             StorageKind::Local => {
@@ -1033,7 +1045,17 @@ mod tests {
 
         let mut config = StorageConfig::new("l", "L", StorageKind::LskyPro);
         assert!(config.validate().unwrap_err().contains("instance"));
+        // A RELATIVE address is refused by the crate, not only by the window: the endpoint is this value plus
+        // `/api/v1`, so a relative one cannot resolve. Both spellings §13.12 allows are accepted.
+        config.instance = Some("lsky.example.com".to_string());
+        assert!(
+            config.validate().unwrap_err().contains("absolute http(s) URL"),
+            "{:?}",
+            config.validate()
+        );
         config.instance = Some("https://lsky.example.com".to_string());
+        assert!(config.validate().is_ok());
+        config.instance = Some("http://lsky.example.com/api/v1".to_string());
         assert!(config.validate().is_ok());
 
         // A local directory target has no protocol field to get wrong, so a bare one is already valid.
