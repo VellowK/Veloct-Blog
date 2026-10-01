@@ -39,11 +39,11 @@ has tests.
 |---|---|
 | Last commit these numbers describe | **`d844f7a`** "Fix the second shared-resource test race, and rebuild the launcher" — where all six of §3.1's checks were re-run on a CLEAN tree and reproduced (§1.2) |
 | Working tree | **CLEAN at `d844f7a`**, where the six checks were confirmed. The first measurements of both the works and network-image rounds were taken on unclean trees, which §1.2 records rather than hides |
-| Rust tests | **1394 passed, 0 failed, 5 ignored** (+38 over `5edff10`'s 1356; 17 workspace crates + `src-tauri`) |
+| Rust tests | **1395 passed, 0 failed, 7 ignored** (+39 over `5edff10`'s 1356; 17 workspace crates + `src-tauri`). The 7 ignored are the 3 real-process integration tests, 1 each in `publish_integration` and `end_to_end_release`, and **2 in `crates/veloct-attach/tests/live_providers.rs` — the live provider checks, which are `#[ignore]`d because the ordinary suite must never depend on a vendor's uptime** |
 | Frontend tests | **152 passed** (vitest: 24 `frontmatter` + 57 `storageTargetForm` + 36 `workForm` + 35 **`networkImageForm`**) |
 | `clippy --workspace --all-targets` | **0 warnings** |
 | Site build verifier | **52/52 checks** — unchanged this round: `site/` is untouched by §13.14, and §J names the command behind every number |
-| Test matrix | **232 rows at `I`, 0 at `P`** (224 + 8 for §13.14 and the two races it exposed), out of **252** rows across tables A–G |
+| Test matrix | **233 rows at `I`, 0 at `P`** (224 + 9 for §13.14, the two races it exposed and the live verification), out of **253** rows across tables A–G |
 | Shell commands registered | **87** (82 + the five network-image commands) |
 | Installer | **`target/release/bundle/nsis/Veloct_0.1.0_x64-setup.exe`, 27.90 MiB** — built, installed, probed and uninstalled (§2.10, §2.11); NOT rebuilt this round, because §13.14 touches neither the bundle inputs nor the sidecar. **The sidecar LAUNCHER was rebuilt** (§2.2), because that crate was touched even though the edit was test-only |
 
@@ -170,6 +170,17 @@ tests/storageTargetForm.test.ts                                        NEW  thos
     Unsplash's credit line **cannot be switched off**, and choosing one of its images **sends the
     download report** their guidelines demand. **+21 `veloct-attach`, +17 `veloct-desktop` and +35
     frontend tests.** See §5.11 for the decision and §2.12 for what the vendors' documents actually say.
+
+12. **Unsplash was VERIFIED AGAINST THE LIVE SERVICE, which is the first time anything in this repository
+    has been.** `crates/veloct-attach/tests/live_providers.rs` (NEW) is an `#[ignore]`d integration test —
+    the ordinary suite must never depend on a vendor's uptime — that makes a real search through the
+    crate's own request builder and parser and then the download report Unsplash's guidelines require.
+    Run on 2026-10-01 it returned **10 results**, kept the `ixid` parameter, used the 1080 px rendition,
+    named the photographer with a profile link, rendered an attribution carrying
+    `utm_source=veloct&utm_medium=referral`, and **the download endpoint accepted the report**. §5.8's
+    "no live service has ever been contacted" is now closed for this one source and stands for every
+    other. A missing key **fails** the test rather than skipping it, because a live test that passed
+    without running would be evidence of nothing.
 
 The paths THIS round changed:
 
@@ -913,11 +924,20 @@ installer path). Neither is a correctness problem and neither is claimed away.
 
 ### 5.8 Smaller, stated gaps
 
-- **A real remote operation has never run.** Every GitHub upload, S3 request, deploy and cloud push is
-  asserted against `FakeHttpClient`. No live token has been used, and nothing has been sent to
-  Cloudflare, EdgeOne, github.com or any S3 endpoint. Nothing in the matrix claims otherwise — and this
-  now includes the whole cloud-backup path. **ADR-0016's SigV4 tests are AWS's published vectors rather
-  than a live call, which is the strongest claim this environment can support and is labelled as such.**
+- **A real remote operation has never run — except now, for ONE source.** Every GitHub upload, S3
+  request, deploy and cloud push is still asserted against `FakeHttpClient`; no live token has been used
+  for any of them, and nothing has been sent to Cloudflare, EdgeOne, github.com or any S3 endpoint.
+  **Unsplash is the exception and the first live vendor call this repository has made**: on 2026-10-01 a
+  real `GET https://api.unsplash.com/search/photos?query=coffee` through the crate's own request builder
+  and parser returned **10 results**, with the `ixid` parameter intact, the 1080 px `regular` rendition,
+  the photographer named with a profile link, an attribution line carrying
+  `utm_source=veloct&utm_medium=referral`, **and the required download report accepted by the live
+  endpoint** (`download report answered: true`). The evidence is matrix row **D164** and
+  `crates/veloct-attach/tests/live_providers.rs`, which any holder of a key can re-run.
+  **Pexels has NOT been contacted** — its contract was read from its documentation and its protocol is
+  asserted against `FakeHttpClient`, so it needs a key to join Unsplash in being verified live.
+  **ADR-0016's SigV4 tests remain AWS's published vectors rather than a live call**, which is the
+  strongest claim this environment can support and is labelled as such.
 - **One DeployPanel distinction is incomplete:** a target's `kind` is filled from configuration
   after a run, and the crate's own `needs_attention` is recomputed in the view rather than read
   from `LogicalTargetRun`.
@@ -1121,15 +1141,18 @@ the checkout the commit produced and record the answer either way. The works rou
 
 1. **Read `handoff.md` §28 again** and diff it against §4 above and the H table in the matrix.
    `handoff.md` wins over this file, and over any summary of it, including this one.
-2. **A live smoke test of ONE remote operation is now the single biggest honesty gap** (§5.8), and §13.14
-   made it cheaper than it used to be. Every GitHub, S3, deploy and cloud path is asserted against
-   `FakeHttpClient`, ADR-0016's SigV4 evidence is AWS's published vectors, and the two image providers
-   were read from their own documents but never called. **A free Unsplash or Pexels API key is enough to
-   close it for the image browser** — search once from the window and record it — because both providers
-   issue keys instantly with no approval. That is the highest-value next step and it needs only the user.
-3. **Lsky Pro (§5.4) is now the LAST attachment kind with no adapter**, so it is the one that would move
-   §28's H15, provided its upload-token protocol can be verified from a real source. SFTP (§5.3) is the
-   other, and stays a dependency decision: no `ssh` feature exists on purpose. Never guess a protocol.
+2. **A live smoke test of ONE remote operation is still the single biggest honesty gap** (§5.8) — and
+   §13.14 narrowed it and showed how cheap closing it is. **Unsplash is now verified live** (D164): a real
+   search, a real attribution and a real download report, all through the crate's own code. **Pexels needs
+   a key to join it** — its contract was read from its documentation but never called — and
+   `crates/veloct-attach/tests/live_providers.rs` is already the harness: put the key in
+   `VELOCT_PEXELS_API_KEY` and run that one test. GitHub, S3, Cloudflare and EdgeOne are still asserted
+   against `FakeHttpClient` only, and each would need a throwaway private repository, bucket or account.
+   **A live test that skips silently is worth nothing, which is why a missing key FAILS this file.**
+3. **§13.14 is now COMPLETE on the implementation side**, so the remaining source work is the two
+   adapters: **Lsky Pro (§5.4) is the LAST attachment kind with no adapter**, so it is the one that would
+   move §28's H15, provided its upload-token protocol can be verified from a real source. SFTP (§5.3) is
+   the other and stays a dependency decision: no `ssh` feature exists on purpose. Never guess a protocol.
    If you implement one, D142's exemption stops applying to it and its `validate` arm becomes a rule the
    save path enforces.
 4. **§5.9's one remaining limit is a dependency decision, not a coding one:** §10.3 wants a poster and
