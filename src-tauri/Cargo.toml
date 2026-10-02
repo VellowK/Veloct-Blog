@@ -42,6 +42,12 @@ tauri-plugin-opener = { workspace = true }
 tauri-plugin-dialog = { workspace = true }
 
 [dev-dependencies]
+# `tauri/test` is enabled HERE and not in `[dependencies]` so that no release artifact links it: with
+# resolver v2 a dev-dependency's features are unified only for a build that includes dev-dependencies, so
+# `cargo build --release` still compiles tauri exactly as before. It is what lets a test build a real
+# `App` on the mock runtime and hand `app.state::<AppState>()` to a command that takes `tauri::State`
+# (PROCESSING.md §5.10.2 item 2).
+tauri = { workspace = true, features = ["test"] }
 tempfile = { workspace = true }
 veloct-core = { workspace = true }
 veloct-app = { workspace = true }
