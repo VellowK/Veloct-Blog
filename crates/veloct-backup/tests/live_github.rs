@@ -19,7 +19,14 @@
 //!
 //! **The repository MUST be private, and that is asserted rather than assumed.** §17.2 requires it because the
 //! archive is not encrypted, and the adapter re-checks GitHub's own `private` flag on every upload — so a
-//! public repository makes this test FAIL with the adapter's refusal instead of publishing a project.
+//! public repository makes this test FAIL with the adapter's refusal instead of publishing a project. **That is
+//! not hypothetical: the first run of this file was against a PUBLIC repository and was refused, which is
+//! recorded as the verification of the rule itself (matrix row D171).** The repository was made private
+//! afterwards, and the round trip below then ran (D172).
+//!
+//! **A note for whoever changes a repository's visibility to run this:** the GitHub API's `permissions.admin`
+//! field describes YOU, not the TOKEN. A fine-grained PAT needs its own **Administration: read and write**
+//! permission, and without it `PATCH /repos/...` answers **403** — which is how the first attempt here failed.
 //!
 //! **The token is read from the environment and is never printed.** An environment variable is the test's home
 //! for a credential because §12.2 gives the APPLICATION the OS store: a test that wrote to the real keyring

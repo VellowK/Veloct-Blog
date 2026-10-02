@@ -55,7 +55,7 @@ has tests.
 | Frontend tests | **157 passed** (vitest: 24 `frontmatter` + **62** `storageTargetForm` + 36 `workForm` + 35 `networkImageForm`; the five new ones are §13.12's field, request, edit round-trip and refusal rules) |
 | `clippy --workspace --all-targets` | **0 warnings** |
 | Site build verifier | **52/52 checks** — `site/` is untouched by §13.12, and the build was re-run rather than assumed; §J names the command behind every number |
-| Test matrix | **240 rows at `I`, 0 at `P`** (224 + 9 for §13.14, the two races it exposed and the live verification, + 1 for §5.12's re-verified Pexels pause, + 3 for §13.12 and the §5.10 members it closed: D166–D168, + 1 for §13.10's SSH/SFTP REMOVAL: D169, + 2 for the LIVE GitHub verification: D170–D171), out of **260** rows across tables A–G |
+| Test matrix | **241 rows at `I`, 0 at `P`** (224 + 9 for §13.14, the two races it exposed and the live verification, + 1 for §5.12's re-verified Pexels pause, + 3 for §13.12 and the §5.10 members it closed: D166–D168, + 1 for §13.10's SSH/SFTP REMOVAL: D169, + 3 for the LIVE GitHub verification: D170–D172), out of **261** rows across tables A–G |
 | Shell commands registered | **87** (unchanged: §13.12 needed no new command, because the storage commands are generic over the kind) |
 | Installer | **`target/release/bundle/nsis/Veloct_0.1.0_x64-setup.exe`, 27.93 MiB (29,286,835 bytes)** — **rebuilt TWICE on 2026-10-02**: once so the package carries §13.12, and again after §13.10's SSH/SFTP target was REMOVED, because an artefact that still offers a kind the contract no longer contains would contradict the product. Each build was followed by the WHOLE §2.10 sequence: silently installed to a temp directory, listed (`veloct-desktop.exe` 16.2 MB, `veloct-astro-sidecar.exe` 2.8 MB, `veloct-node.exe` 93.6 MB, `uninstall.exe`), **the INSTALLED launcher started the real Astro dev server and `GET http://localhost:4399/` returned 200**, then tree-killed (port free, checked with `State -eq 'Listen'`) and uninstalled with the directory removed. **Still unsigned** (§5.10.4) |
 
@@ -242,7 +242,13 @@ tests/storageTargetForm.test.ts                                        NEW  thos
     the token supplied has Contents write but NOT Administration, so Veloct could not (and did not) change the
     repository's visibility; S3, Cloudflare and EdgeOne remain fake-client-only. **The token was read from the
     environment, never printed, and never written to any file inside this repository** — `git grep` for it
-    returns nothing.
+    returns nothing. **And it then ran the OTHER direction too:** once the repository was made private (the
+    owner granted the token Administration after a `PATCH` had answered **403** — a repository's
+    `permissions.admin` describes the user, not the token), the §17.4 BACKUP target's own `upload` → `list` →
+    `remove` round trip passed on the same day: `connection: … is reachable and private (default branch main)`,
+    `uploaded: … (158 bytes)`, `listed: … size=158 created_at=2026-10-02T00:00:00Z`. So GitHub's protocol, its
+    §17.2 privacy rule AND its backup path are each verified against the vendor (D170–D172) — the first live
+    cloud verification in this repository's history, and the first time it has written to a third party.
 
 The paths THIS round changed:
 
@@ -741,6 +747,30 @@ when you touch the areas they cover:
 .\scripts\cargo.ps1 test -p veloct-desktop  --test backup_integration   -- --ignored   # real backup/restore
 ```
 
+**Three more are `#[ignore]`d because they reach a VENDOR**, and they FAIL rather than skip when their
+credential is absent. Run them when you touch those protocols, with your own keys in the environment:
+
+```powershell
+# the two image providers (§13.14) — one key is enough if you filter by name
+$env:VELOCT_UNSPLASH_ACCESS_KEY = "<access key>"
+.\scripts\cargo.ps1 test -p veloct-attach --test live_providers -- --ignored unsplash --nocapture
+
+# the GitHub Contents API through §13.13's attachment target (D170) — a public throwaway repo is fine
+$env:VELOCT_GITHUB_ATTACHMENT_TOKEN = "<fine-grained PAT, Contents: read and write>"
+$env:VELOCT_GITHUB_ATTACHMENT_REPO  = "owner/throwaway-repo"
+.\scripts\cargo.ps1 test -p veloct-attach --test live_github -- --ignored --nocapture
+
+# §17.4's backup target (D172) and §17.2's privacy rule (D171) — the repository MUST be private
+$env:VELOCT_GITHUB_BACKUP_TOKEN = "<fine-grained PAT, Contents: read and write>"
+$env:VELOCT_GITHUB_BACKUP_REPO  = "owner/throwaway-PRIVATE-repo"
+.\scripts\cargo.ps1 test -p veloct-backup --test live_github -- --ignored --nocapture
+```
+
+Two things learned by running them, so nobody re-learns them: **a repository's `permissions.admin` describes
+the USER, not the TOKEN** — making a repository private needs the PAT's own **Administration: read and write**,
+or `PATCH /repos/…` answers **403** — and a **millisecond** timestamp does not produce an archive name that
+`archive_created_at` can read back, so a live backup test must use the shape `remote_name` itself generates.
+
 ---
 
 ## 4. What IS implemented
@@ -794,10 +824,12 @@ by clause, and each row names the evidence it requires.
   This is the one §5.7 claim that a `cargo build` could not have made. **Rebuilt and re-probed twice on
   2026-10-02** (so the package carries §13.12, and then so it no longer offers a kind the contract has
   removed), with the whole sequence re-run rather than assumed each time.
-- **A real vendor was WATCHED answering on 2026-10-02, twice in opposite directions**: a live `put`/`head`/
-  `delete` round trip through §13.13's attachment target against `api.github.com` (D170), and §17.2's
-  privacy refusal against a real PUBLIC repository (D171). Both are `#[ignore]`d live tests; neither prints
-  the token. This is the first time this repository has WRITTEN to a third party.
+- **A real vendor was WATCHED answering on 2026-10-02, in all three directions**: a live `put`/`head`/`delete`
+  round trip through §13.13's attachment target against `api.github.com` (D170), §17.2's privacy refusal
+  against a real PUBLIC repository (D171), and — once that repository was made private — the §17.4 BACKUP
+  target's own `upload`/`list`/`remove` round trip (D172). All three are `#[ignore]`d live tests that fail
+  without a credential rather than skipping, none prints the token, and together they are the first time this
+  repository has WRITTEN to a third party.
 - **A real Astro build emits the works poster**: `dist/site/work-previews/demo-counter/screenshot.webp`
   was compared BYTE FOR BYTE with the work's own `preview/screenshot.webp` (52/52 verifier checks).
 - `publish` runs a real Astro build, emits `dist/site` + `dist/works`, writes `release.json`,
@@ -826,9 +858,9 @@ believing any summary, including this one. Judged against the evidence that exis
 | H12 | One build per publish, all targets share it | **done** |
 | H13 | Failed target re-publish by original Release | **done** — `resendable_sub_targets` |
 | H14 | 1Panel manual upload of current `dist` | **done** as a manual export |
-| H15 | Attachments: cache pool, **sftp, s3, lsky**, github, remote image | **PARTIAL, and §13.14 is now DONE: the remote image browser is implemented against Unsplash and Pexels** — the two sources whose terms require or permit §13.14's flow — with keys in the OS credential store, the credit line enforced by the crate where the provider demands it, Unsplash's mandatory download report, and Pixabay refused in its own words. **Unsplash is verified against the LIVE service (D164)**; **Pexels is implemented and tested but currently unusable, because it has paused new API key issuance — the fact is recorded in `docs/spec/03-upstream-facts.md` §4.2 and matrix row **D165**, and §5.12 records it as a known and deliberate state rather than fixing it.** What is done besides: the pool, the three axes, dedup, multi-reference, §13.8's no-auto-delete rule and explicit cleanup, the local kind, the kind report, the save-path validation, GitHub and S3, and the target form (B1–B14, D16, D91–D93, D116–D123, D130–D145, D155–D164). What is STILL PARTIAL and exactly why: **(1) ~~`sftp` has NO adapter~~ — CLOSED BY REMOVAL (ADR-0017, D169): the OWNER removed §13.10's SSH/SFTP target from the contract, so it is a RETIRED kind rather than an unadapted one, §13.10 is now the local / server directory target, and a project that saved an SFTP target still loads it and is told it was removed; **(2) `lsky` is now DONE** — §5.4's protocol was read from the vendor's own artifacts (the API page the product renders, plus the routes and handlers behind it) and `veloct-attach/src/lsky.rs` implements it, D166–D167; **(3) GitHub HAS now contacted a live service** — a real `put`/`head`/`delete` round trip through §13.13's attachment target (D170) and §17.2's privacy refusal against a real PUBLIC repository (D171) — **while S3, Cloudflare, EdgeOne, and GitHub's own BACKUP round trip remain fake-client-only** (§5.8: that one needs a private repository), and Pexels cannot be contacted by a new user at all (D165, §5.12) |
+| H15 | Attachments: cache pool, **sftp, s3, lsky**, github, remote image | **PARTIAL, and §13.14 is now DONE: the remote image browser is implemented against Unsplash and Pexels** — the two sources whose terms require or permit §13.14's flow — with keys in the OS credential store, the credit line enforced by the crate where the provider demands it, Unsplash's mandatory download report, and Pixabay refused in its own words. **Unsplash is verified against the LIVE service (D164)**; **Pexels is implemented and tested but currently unusable, because it has paused new API key issuance — the fact is recorded in `docs/spec/03-upstream-facts.md` §4.2 and matrix row **D165**, and §5.12 records it as a known and deliberate state rather than fixing it.** What is done besides: the pool, the three axes, dedup, multi-reference, §13.8's no-auto-delete rule and explicit cleanup, the local kind, the kind report, the save-path validation, GitHub and S3, and the target form (B1–B14, D16, D91–D93, D116–D123, D130–D145, D155–D164). What is STILL PARTIAL and exactly why: **(1) ~~`sftp` has NO adapter~~ — CLOSED BY REMOVAL (ADR-0017, D169): the OWNER removed §13.10's SSH/SFTP target from the contract, so it is a RETIRED kind rather than an unadapted one, §13.10 is now the local / server directory target, and a project that saved an SFTP target still loads it and is told it was removed; **(2) `lsky` is now DONE** — §5.4's protocol was read from the vendor's own artifacts (the API page the product renders, plus the routes and handlers behind it) and `veloct-attach/src/lsky.rs` implements it, D166–D167; **(3) GitHub has now contacted the live service in all THREE directions** — a real `put`/`head`/`delete` round trip through §13.13's attachment target (D170), §17.2's privacy refusal against a real PUBLIC repository (D171), and §17.4's BACKUP `upload`/`list`/`remove` round trip on a private repository (D172) — **while S3, Cloudflare and EdgeOne remain fake-client-only** (§5.8), and Pexels cannot be contacted by a new user at all (D165, §5.12) |
 | H16 | Dedup safe, multi-reference safe, no auto remote delete | **done** |
-| H17 | Auto backup, manual backup, local export, full restore, content-only restore | **PARTIAL — all five work, and BOTH of §17.4's cloud targets are now real: GitHub (§17.2 verified against the repository on every upload) and S3 (§13.11's client, a streamed upload, the bucket's own timestamps). Targets live in SQLite's `backup_targets`, each run is recorded per target in `backups` (§22.7), and §17.3's finding blocks the upload while the local archive survives. What is still missing is NOT the target model — see §5.8: **GitHub's protocol and §17.2's privacy rule are now verified LIVE (D170–D171), while GitHub's own BACKUP round trip still needs a private repository and S3 has never been contacted** |
+| H17 | Auto backup, manual backup, local export, full restore, content-only restore | **PARTIAL — all five work, and BOTH of §17.4's cloud targets are now real: GitHub (§17.2 verified against the repository on every upload) and S3 (§13.11's client, a streamed upload, the bucket's own timestamps). Targets live in SQLite's `backup_targets`, each run is recorded per target in `backups` (§22.7), and §17.3's finding blocks the upload while the local archive survives. What is still missing is NOT the target model — see §5.8: **GitHub is now verified LIVE in all three directions (D170–D172), including the backup target's own upload/list/remove round trip on a private repository, while S3 has never been contacted** |
 | H18 | No secret in config/log/backup; scan before backup | **done** — scan runs BEFORE the archive is written; and see §2.8, where wiring a feature found a leak on a path review had missed |
 | H19 | SEO, comments, logging operational | **done** — SEO push lifecycle, giscus comments (off by default), log page |
 | H20 | Key failure paths explicit, never silent | **done** — `hint()`, `anchor_error`, `unimplemented_reason()`, `capabilities().verified` |
@@ -1069,15 +1101,18 @@ installer path). Neither is a correctness problem and neither is claimed away.
 
 ### 5.8 Smaller, stated gaps
 
-- **Two services have now been contacted, and GitHub was the first CLOUD TARGET this repository has ever
-  written to.** On 2026-10-02 GitHub was verified LIVE in both directions: a real `put` → `head` → `delete` →
-  `head` round trip through §13.13's attachment target against `api.github.com` (D170,
-  `crates/veloct-attach/tests/live_github.rs`), and **§17.2's privacy rule REFUSING a backup against a real
-  PUBLIC repository, in the adapter's own words** (D171, `crates/veloct-backup/tests/live_github.rs`) — that
-  refusal is the rule working, verified against GitHub's own flag rather than a fake. **What is still
-  fake-client-only, each for a stated reason:** GitHub's own BACKUP round trip needs a PRIVATE repository, and
-  the token supplied has Contents write but NOT Administration, so Veloct could not make one private and did
-  not try; S3 needs a bucket; Cloudflare and EdgeOne need accounts. Nothing has been sent to any of them.
+- **Two services have been contacted, and GitHub was the first CLOUD TARGET this repository has ever written
+  to — in all THREE directions, on the same day.** On 2026-10-02 GitHub was verified LIVE: a `put` → `head` →
+  `delete` → `head` round trip through §13.13's attachment target (D170); **§17.2's privacy rule REFUSING a
+  backup against a real PUBLIC repository**, in the adapter's own words (D171); and then, once the repository
+  was private, **the §17.4 backup target's own `upload` → `list` → `remove` round trip**, whose listing carried
+  the size GitHub itself stored and whose name parsing recovered the instant §17.6's retention sorts by (D172).
+  **Two lessons are recorded rather than remembered:** a repository's `permissions.admin` describes the USER and
+  not the TOKEN (a fine-grained PAT needs its own **Administration** permission or `PATCH /repos/…` answers
+  **403** — which is exactly how the first attempt at making the repository private failed), and a millisecond
+  timestamp does not produce a name `archive_created_at` can read back. **What is still fake-client-only, each
+  for a stated reason:** S3 needs a bucket; Cloudflare and EdgeOne need accounts. Nothing has been sent to any
+  of them.
   **Unsplash is the exception and the first live vendor call this repository has made**: on 2026-10-01 a
   real `GET https://api.unsplash.com/search/photos?query=coffee` through the crate's own request builder
   and parser returned **10 results**, with the `ixid` parameter intact, the 1080 px `regular` rendition,
@@ -1393,8 +1428,10 @@ test races (§2.13, §2.14) that had been passing by luck.
    against a real PUBLIC repository** (D171) — the second one is a rule being verified by watching it say NO,
    which is worth copying. **What is left:** GitHub's own BACKUP round trip needs a PRIVATE repository (the
    token supplied has Contents write but not Administration, so Veloct could not make one private and did not
-   try — the honest next step is a repository the user makes private, or a token with Administration); S3 needs
-   a bucket; Cloudflare and EdgeOne need accounts. Pexels has a test ready but no obtainable key (§5.12).
+   try — the honest next step is a repository the user makes private, or a token with Administration)** — and
+   that step was then taken, so **GitHub is now verified in all THREE directions (D170–D172)**, including the
+   backup target's own round trip. **What is genuinely left:** S3 needs a bucket; Cloudflare and EdgeOne need
+   accounts. Pexels has a test ready but no obtainable key (§5.12).
    **A live test that skips silently is worth nothing, which is why a missing key FAILS
    `tests/live_providers.rs` and both `live_github.rs` files.**
 4. **The §13.12 round is DONE and the §13.10 SSH/SFTP target is GONE** — Lsky Pro is implemented against a

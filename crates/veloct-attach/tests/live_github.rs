@@ -18,10 +18,12 @@
 //!     -p veloct-attach --test live_github -- --ignored --nocapture
 //! ```
 //!
-//! **A PUBLIC repository is expected here, and that is the point of the contrast.** §17.2 requires a PRIVATE
+//! **A PUBLIC repository is the natural home for this one, and that is the contrast.** §17.2 requires a PRIVATE
 //! repository for a BACKUP, because an unencrypted archive must not be published; §13.13's attachment target is
 //! the opposite by design — it exists so a file can be served OUT of the repository — so this target has no
-//! privacy check and works on a public one. `crates/veloct-backup/tests/live_github.rs` asserts the other rule.
+//! privacy check and works on either. `crates/veloct-backup/tests/live_github.rs` asserts the other rule, and
+//! refuses a public repository outright. (The throwaway repository this was first run against has since been
+//! made private for that other test; this one passes either way, because it never asks about privacy.)
 //!
 //! **The token is read from the environment and is never printed**, and nothing here writes it anywhere. The
 //! evidence printed below is object names, sizes and statuses only.
