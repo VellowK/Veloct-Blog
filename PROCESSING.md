@@ -51,11 +51,11 @@ has tests.
 |---|---|
 | Last commit these numbers describe | **`8ba4219` plus THIS round's change set**, which carries §13.12's Lsky Pro adapter (D166–D167) and is recorded in §J. `8ba4219` itself is **`585de01`** "Verify Unsplash against the LIVE service, the first real remote call in this repository" plus a documentation-only change, and all six of §3.1's checks were reproduced on it before this round began (§1.2) |
 | Working tree | **`git status --short` was EMPTY at `8ba4219`**, where the previous handover's numbers were reproduced; **this round's change set was NOT committed when its own run was taken**, so the numbers below are reproducible from the change set the commit carries rather than from a sha — §1.2 records why that distinction is written down rather than glossed. `git diff --stat 585de01 HEAD` was `PROCESSING.md` ONLY until this round; **§13.12's adapter is the first CODE change since `585de01`**, and it moves that line. Both the works and network-image rounds were FIRST measured on unclean trees, which §1.2 records rather than hides; both were then re-run on their commits, and the network-image re-run exposed two real test races (§2.13, §2.14) |
-| Rust tests | **1423 passed, 0 failed, 11 ignored** (+28 over `8ba4219`'s 1395: `veloct-attach` +20, `veloct-desktop` +4, **`veloct-core` +1 and `veloct-s3` +3 from the live S3 round**; **the workspace is 17 members — 16 crates plus `src-tauri`** — and its per-crate rows in §J sum to 1422, the 1423rd being the one `live_providers` test that runs with no key and no network). The 11 ignored are the 4 real-process tests and the 7 live-vendor ones: the 3 real-process integration tests, 1 each in `publish_integration` and `end_to_end_release`, **2 in `crates/veloct-attach/tests/live_providers.rs`**, **2 in `crates/veloct-attach/tests/live_github.rs`** (attachment round trip, §17.2's refusal), **2 in `crates/veloct-backup/tests/live_github.rs`** (the backup round trip and the same privacy rule), and **2 added by the live S3 round: `crates/veloct-attach/tests/live_s3.rs` and `crates/veloct-backup/tests/live_s3.rs`** — a vendor's uptime must never gate `cargo test` |
-| Frontend tests | **157 passed** (vitest: 24 `frontmatter` + **62** `storageTargetForm` + 36 `workForm` + 35 `networkImageForm`; the five new ones are §13.12's field, request, edit round-trip and refusal rules) |
+| Rust tests | **1425 passed, 0 failed, 11 ignored** (+30 over `8ba4219`'s 1395: `veloct-attach` +21, `veloct-desktop` +4, **`veloct-core` +1 and `veloct-s3` +4 from the live S3 round and the save-path half of the `{bucket}` rule**; **the workspace is 17 members — 16 crates plus `src-tauri`** — and its per-crate rows in §J sum to 1424, the 1425th being the one `live_providers` test that runs with no key and no network). The 11 ignored are the 4 real-process tests and the 7 live-vendor ones: the 3 real-process integration tests, 1 each in `publish_integration` and `end_to_end_release`, **2 in `crates/veloct-attach/tests/live_providers.rs`**, **2 in `crates/veloct-attach/tests/live_github.rs`** (attachment round trip, §17.2's refusal), **2 in `crates/veloct-backup/tests/live_github.rs`** (the backup round trip and the same privacy rule), and **2 in the S3 pair: `crates/veloct-attach/tests/live_s3.rs` and `crates/veloct-backup/tests/live_s3.rs`** — a vendor's uptime must never gate `cargo test` |
+| Frontend tests | **160 passed** (vitest: 24 `frontmatter` + **65** `storageTargetForm` + 36 `workForm` + 35 `networkImageForm`; the three new ones are the `{bucket}` transcription block, which compares the window's verdicts against the crate's for nine endpoint shapes and asserts the refusal names both the placeholder and where it belongs) |
 | `clippy --workspace --all-targets` | **0 warnings** |
 | Site build verifier | **52/52 checks** — `site/` is untouched by §13.12, and the build was re-run rather than assumed; §J names the command behind every number |
-| Test matrix | **245 rows at `I`, 0 at `P`** (224 + 9 for §13.14, the two races it exposed and the live verification, + 1 for §5.12's re-verified Pexels pause, + 3 for §13.12 and the §5.10 members it closed: D166–D168, + 1 for §13.10's SSH/SFTP REMOVAL: D169, + 7 for the live GitHub verifications, the OSS addressing rule, the `x-amz-date` defect a live call found, and the two live S3 round trips: D170–D176), out of **265** rows across tables A–G |
+| Test matrix | **246 rows at `I`, 0 at `P`** (224 + 9 for §13.14, the two races it exposed and the live verification, + 1 for §5.12's re-verified Pexels pause, + 3 for §13.12 and the §5.10 members it closed: D166–D168, + 1 for §13.10's SSH/SFTP REMOVAL: D169, + 8 for the live GitHub verifications, the OSS addressing rule and its save-path half, the `x-amz-date` defect a live call found, and the two live S3 round trips: D170–D177), out of **266** rows across tables A–G |
 | Shell commands registered | **87** (unchanged: §13.12 needed no new command, because the storage commands are generic over the kind) |
 | Installer | **`target/release/bundle/nsis/Veloct_0.1.0_x64-setup.exe`, 27.94 MiB** — **rebuilt THREE times on 2026-10-02**: once so the package carries §13.12, again after §13.10's SSH/SFTP target was REMOVED, and a third time after the live-S3 fix moved `veloct-core` and therefore the committed sidecar LAUNCHER (so the packaged launcher is byte-identical to the committed one — verified by hash, §2.2). Each build was followed by the WHOLE §2.10 sequence: silently installed to a temp directory, listed (`veloct-desktop.exe` 16.2 MB, `veloct-astro-sidecar.exe` 2.8 MB, `veloct-node.exe` 93.6 MB, `uninstall.exe`), **the INSTALLED launcher started the real Astro dev server and `GET http://localhost:4399/` returned 200**, then tree-killed (port free, checked with `State -eq 'Listen'`) and uninstalled with the directory removed. **Still unsigned** (§5.10.4) |
 
@@ -1260,7 +1260,16 @@ What REMAINS, each still a **stated limit** in the matrix row that covers it:
    implementation** — adding a rule to
    one side must add it to `CRATE_RULE` too, and `tests/workForm.test.ts` is now the SECOND transcription
    of the same kind (`WorkMetadata::validate`'s ten shapes), which is the pattern to copy rather than to
-   start a third variant of.
+   start a third variant of. **A FOURTH member was closed by the live-S3 round**: ADR-0018's `{bucket}`
+   rule is ONE function in the client (`veroct_s3::bucket_placeholder_problem`), asked by the client while
+   it builds a request AND by `StorageConfig::validate` on the save path, so the window's copy in
+   `validateDraft` transcribes an authority that actually exists — and its nine endpoint shapes are
+   compared against that authority in `tests/storageTargetForm.test.ts` (D177). **Note the shape rather
+   than the count:** the prefix rules share one `CRATE_RULE` table, while a rule about a DIFFERENT field
+   gets its own, because the two fields have nothing to do with each other — and the request path is
+   deliberately STRICTER than the helper (it refuses any placeholder left after the usable one was
+   stripped), which is what catches the second copy in `https://{bucket}.{bucket}.example.com`. The first
+   version of that change got it wrong, and an existing test caught it.
 2. **A command WRAPPER that needs an `AppState` is still not driven by a test, and the credential half
    of the save path's ORDER has no test that would catch a reorder.** `f29dcda` extracted the save and
    delete sequences (`save_target_config`, `delete_target_config`) precisely so the behaviour is
@@ -1285,7 +1294,15 @@ What REMAINS, each still a **stated limit** in the matrix row that covers it:
    (`attachments::a_blank_field_never_becomes_configuration_and_the_instance_survives_the_mapping` and
    `attachments::a_stored_target_is_resolved_by_id_and_its_credential_is_read_by_handle`, D167–D168). What is
    left in the four commands is glue: `State` → project root → the helper → a log line. That residual is why
-   this item stays, but it is now small and named rather than broad.
+   this item stays, but it is now small and named rather than broad. **Evaluated again on 2026-10-02 and
+   deliberately NOT closed, with the cost named:** `AppState` does have a `Default`
+   (`src-tauri/src/state.rs`), so the missing piece is not the state — it is that all four commands take
+   `tauri::State<'_, AppState>`, which a unit test cannot construct. Driving them needs Tauri's `test` feature
+   (`mock_app`/`mock_context`), a dependency feature enabled for tests, and what it would then exercise is
+   `State` unwrapping and a log line, because every DECISION in those bodies was already extracted into a helper
+   that IS driven. **A green test of plumbing is not worth a feature flag**, so the limit stands as written
+   rather than being closed for the appearance of coverage — and this paragraph exists so the next reader does
+   not spend a round rediscovering that.
 3. ~~§13.8's cleanup can leave an article pointing at a URL that no longer resolves~~ — **DECIDED, and the
    wording now says so.** §13.8 removes the remote object and deliberately does NOT rewrite the article, so the
    decision is to keep that behaviour and make the CONSEQUENCE explicit where the user meets it: the
@@ -1414,6 +1431,13 @@ a deliberate choice, not an oversight, and it is a decision about the BEHAVIOUR:
 though the code does not. It is the option that keeps `is_implemented` honest — today that single
 predicate conflates "the protocol exists" with "a user can use it", which is exactly the confusion that
 makes this situation hard to explain. Nothing else in the repository depends on the distinction.
+
+**A later session re-proposed Option B as free work and then SKIPPED it after reading this section (2026-10-02),
+and that is recorded here so it is not re-proposed a third time.** The reasoning at the time was "the panel offers
+a source whose key cannot be obtained and says nothing about it", which sounds like a small fix in isolation and
+is in fact a re-run of a change the owner already reverted. **The standing decision is the owner's words:
+「先留着假接口不管他」** — leave it, do not tidy it. The fact is recorded (Option A), the behaviour is
+deliberately unchanged, and a reader who wants Option B must hear the owner ask for it in those terms.
 
 **What is NOT affected:** Unsplash is fully usable and live-verified. §13.14's clause, its flow, its
 attribution enforcement and its download report are all correct and tested; only the SECOND source's

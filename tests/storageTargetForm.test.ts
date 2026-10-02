@@ -728,6 +728,53 @@ describe('the window and the crate say the same thing about a public URL prefix'
   });
 });
 
+describe('the window and the crate say the same thing about the {bucket} placeholder', () => {
+  // The crate's verdicts are asserted in `veroct-s3`
+  // (`a_bucket_placeholder_switches_a_user_endpoint_to_virtual_hosted_addressing` and
+  // `a_placeholder_anywhere_but_the_start_of_the_host_is_refused_by_name`) and on the SAVE path in
+  // `veroct-attach`; this is the window's transcription of the same rule, so a one-sided change is a failing
+  // test rather than an oversight (PROCESSING.md §5.10.1). The rule exists because a misplaced placeholder
+  // that only fails at the first upload is a late and confusing failure — D173 is the measurement, ADR-0018
+  // the decision.
+  const CRATE_RULE: ReadonlyArray<{ shape: string; endpoint: string; crateAccepts: boolean }> = [
+    { shape: 'empty, meaning the AWS endpoint', endpoint: '', crateAccepts: true },
+    { shape: 'no placeholder (path style, a MinIO)', endpoint: 'http://127.0.0.1:9000', crateAccepts: true },
+    {
+      shape: 'placeholder at the start of the host',
+      endpoint: 'https://{bucket}.oss-cn-chengdu.aliyuncs.com',
+      crateAccepts: true,
+    },
+    { shape: 'placeholder with a base path', endpoint: 'https://{bucket}.gw.example.com/s3', crateAccepts: true },
+    {
+      shape: 'inside the host but not at its start',
+      endpoint: 'https://oss-{bucket}.example.com',
+      crateAccepts: false,
+    },
+    { shape: 'in the path', endpoint: 'https://gw.example.com/s3/{bucket}', crateAccepts: false },
+    { shape: 'twice', endpoint: 'https://{bucket}.{bucket}.example.com', crateAccepts: false },
+    { shape: 'with no host after it', endpoint: 'https://{bucket}', crateAccepts: false },
+    { shape: 'with nothing after the dot', endpoint: 'https://{bucket}.', crateAccepts: false },
+  ];
+
+  it('matches the crate rule for every shape the form can send', () => {
+    for (const { shape, endpoint, crateAccepts } of CRATE_RULE) {
+      const reason = validateDraft({ ...s3Draft(), endpoint });
+      expect(reason === null, `${shape}: ${JSON.stringify(endpoint)}`).toBe(crateAccepts);
+    }
+  });
+
+  it('covers both verdicts, so the loop cannot agree by accepting everything', () => {
+    expect(CRATE_RULE.some((entry) => entry.crateAccepts)).toBe(true);
+    expect(CRATE_RULE.some((entry) => !entry.crateAccepts)).toBe(true);
+  });
+
+  it('names the placeholder AND where it belongs, so the message can teach the rule', () => {
+    const reason = validateDraft({ ...s3Draft(), endpoint: 'https://oss-{bucket}.example.com' });
+    expect(reason).toContain('{bucket}');
+    expect(reason).toContain('ADR-0018');
+  });
+});
+
 describe('the upload eligibility reason (§13.2.2)', () => {
   const blocked: UploadEligibility = {
     can_upload: false,

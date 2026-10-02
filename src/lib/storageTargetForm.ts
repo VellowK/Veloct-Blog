@@ -465,6 +465,29 @@ export function validateDraft(draft: StorageTargetDraft): string | null {
   if (kind === 's3' && draft.bucket.trim() === '') {
     return 'S3 目标必须填写 Bucket(§13.11);Endpoint 留空表示使用 AWS。';
   }
+  if (kind === 's3') {
+    // ADR-0018: `{bucket}.` puts the bucket into the HOSTNAME, and only ONCE at the START of the host — what
+    // Alibaba Cloud OSS requires, and what a path-style endpoint (a MinIO) must not have. The rule belongs to
+    // the crate (`veroct_s3::bucket_placeholder_problem`, which enforces it while a request is built AND asks it
+    // on the save path); this is the transcription of it, so a typo is refused here rather than at the first
+    // upload (§2.9, the pattern D168 established for §13.12's instance address).
+    const endpoint = draft.endpoint.trim();
+    if (endpoint !== '') {
+      const rest = (endpoint.includes('://') ? endpoint.slice(endpoint.indexOf('://') + 3) : endpoint).replace(
+        /\/+$/,
+        '',
+      );
+      const authority = rest.split('/')[0] ?? '';
+      const occurrences = rest.split('{bucket}').length - 1;
+      const usable =
+        occurrences === 1 &&
+        authority.startsWith('{bucket}.') &&
+        authority.length > '{bucket}.'.length;
+      if (occurrences > 0 && !usable) {
+        return `Endpoint ${endpoint} 里的 {bucket} 位置不能工作:只能写成 https://{bucket}.<主机>,而且只出现一次——那是把桶放进主机名(阿里云 OSS 就是这样要求的);自建服务请完全省略它(§13.11 / ADR-0018)。`;
+      }
+    }
+  }
   if (kind === 'github' && draft.repository.trim() === '') {
     return 'GitHub 目标必须填写仓库,写成 owner/repo(§13.13)。';
   }

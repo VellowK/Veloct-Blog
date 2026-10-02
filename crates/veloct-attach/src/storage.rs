@@ -301,6 +301,16 @@ impl StorageConfig {
                 if self.bucket.as_deref().unwrap_or("").trim().is_empty() {
                     return Err("S3 needs a bucket".into());
                 }
+                // ADR-0018: an endpoint may put the bucket into the HOSTNAME with `{bucket}`, and only in one
+                // position. The rule is the CLIENT's (`veroct_s3::bucket_placeholder_problem`), because that is
+                // where it is enforced while a request is built; it is asked here TOO so a typo is refused when
+                // the target is SAVED rather than at the first upload — the same move D168 made for §13.12's
+                // instance address, and §2.9 is why: a configuration mistake should be reported as one.
+                if let Some(problem) = veloct_s3::bucket_placeholder_problem(
+                    self.endpoint.as_deref().unwrap_or(""),
+                ) {
+                    return Err(problem);
+                }
             }
             StorageKind::GitHub => {
                 if self.repository.as_deref().unwrap_or("").trim().is_empty() {
@@ -843,6 +853,38 @@ mod tests {
         config.public_url_prefix = "https://cdn.example.com".to_string();
         config.credential_ref = Some("keychain:storage/s3-main".to_string());
         config
+    }
+
+    #[test]
+    fn a_misplaced_bucket_placeholder_is_refused_when_the_target_is_saved() {
+        // ADR-0018/D173: an endpoint may say WHERE the bucket goes with `{bucket}`. The client refuses a
+        // misplaced one while it builds a request; asking the SAME rule here is what turns a typo into a
+        // save-time error instead of a puzzling failure at the first upload (PROCESSING.md §2.9, the move D168
+        // made for §13.12's instance address).
+        let mut config = s3();
+        config.endpoint = Some("https://oss-{bucket}.example.com".to_string());
+        let error = config.validate().unwrap_err();
+        assert!(
+            error.contains("{bucket}") && error.contains("start of the host"),
+            "{error}"
+        );
+
+        // The position the rule ALLOWS saves without complaint, and so does an endpoint that names no
+        // placeholder at all — which is what a MinIO wants, and what ADR-0016 assumed for every user endpoint.
+        for endpoint in [
+            "https://{bucket}.oss-cn-chengdu.aliyuncs.com",
+            "http://127.0.0.1:9000",
+            "https://s3.example.com",
+        ] {
+            let mut ok = s3();
+            ok.endpoint = Some(endpoint.to_string());
+            assert!(ok.validate().is_ok(), "{endpoint} must be usable: {:?}", ok.validate());
+        }
+
+        // And an endpoint left EMPTY still means the AWS endpoint, which is what §13.11 documents.
+        let mut aws = s3();
+        aws.endpoint = None;
+        assert!(aws.validate().is_ok());
     }
 
     #[test]

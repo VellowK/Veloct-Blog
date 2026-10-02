@@ -471,5 +471,14 @@ SYSTEM clock — because a fixed clock is what hid the bug.
 * Both rules are verified against the live service in BOTH roles: `crates/veloct-attach/tests/live_s3.rs` and
   `crates/veloct-backup/tests/live_s3.rs` write, read and remove a real object under a dedicated prefix, and
   neither prints the credential.
+* **The addressing rule is enforced TWICE, and the two checks differ on purpose.** `S3Config`'s own
+  `endpoint_parts` refuses a misplaced placeholder while it builds a request, and `StorageConfig::validate`
+  refuses it when a target is SAVED, so a typo becomes a save-time error instead of a first-upload surprise
+  (D177, PROCESSING.md §2.9, the pattern D168 established for Lsky Pro's instance address). One function,
+  `bucket_placeholder_problem`, answers both — but the REQUEST path is stricter, because by then the one usable
+  copy has already been removed: any placeholder still present is a leftover, including the second copy in
+  `https://{bucket}.{bucket}.example.com`, which the permissive first version of this change would have turned
+  into the host `assets.{bucket}.example.com`. An existing test caught exactly that, which is the argument for
+  keeping two checks rather than one.
 * **A live test found a shipped defect that the whole suite could not.** That is the strongest argument this
   repository has produced for §5.8's claim that the live gap is the biggest honesty gap.

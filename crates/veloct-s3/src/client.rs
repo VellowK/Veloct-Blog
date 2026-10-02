@@ -155,17 +155,14 @@ impl S3Config {
             None => ("https".to_string(), trimmed.to_string()),
         };
         let rest = rest.trim_end_matches('/');
-        // A `{bucket}` that survives `S3Config::compatible` is a MISPLACED one: that function removes the single
-        // copy at the start of the host and switches to virtual-hosted addressing, so anything still here means
-        // the user wrote it where it cannot work. Refused by NAME rather than dropped or silently kept.
+        // ANY placeholder still here is a LEFTOVER: `S3Config::compatible` removed the ONE usable copy, at the
+        // start of the host. What remains is either a second copy or the only copy written where it cannot work
+        // — and both must be refused, because `host()` would otherwise put the bucket in front of a host that
+        // still contains the placeholder (`assets.{bucket}.example.com`), which is a request to a name that does
+        // not exist. This check is therefore STRICTER than `bucket_placeholder_problem`, which judges the string
+        // the user wrote; the message is shared so the two cannot word the same rule differently.
         if rest.contains(BUCKET_PLACEHOLDER) {
-            return Err(VeloctError::Invalid(format!(
-                "the S3 endpoint {:?} still contains {BUCKET_PLACEHOLDER}. Write it as \
-                 https://{BUCKET_PLACEHOLDER}.<host> — once, at the start of the host — to put the bucket into \
-                 the hostname, which is what Alibaba Cloud OSS requires, or leave it out entirely for \
-                 path-style access",
-                self.endpoint
-            )));
+            return Err(VeloctError::Invalid(placeholder_message(trimmed)));
         }
         let (authority, base_path) = match rest.split_once('/') {
             Some((authority, path)) => (authority.to_string(), format!("/{}", path.trim_matches('/'))),
@@ -237,6 +234,58 @@ impl S3Config {
             key.trim_start_matches('/')
         ))
     }
+}
+
+/// The message a misplaced `{bucket}` gets, from ONE place so the client and the save path cannot word the same
+/// rule differently.
+fn placeholder_message(endpoint: &str) -> String {
+    format!(
+        "the S3 endpoint {endpoint:?} contains {BUCKET_PLACEHOLDER} where it cannot work. Write it as \
+         https://{BUCKET_PLACEHOLDER}.<host> — ONCE, at the start of the host — to put the bucket into the \
+         hostname, which is what Alibaba Cloud OSS requires, or leave it out entirely for path-style access"
+    )
+}
+
+/// Why a `{bucket}` placeholder cannot work where it is, if it cannot.
+///
+/// **One rule, two callers, and the second one is the point:** the CLIENT needs it before it builds a request,
+/// and the SAVE PATH needs it before it writes a target — because a misplaced placeholder that only fails at the
+/// first upload is exactly the late, confusing failure the save-path validation exists to prevent
+/// (PROCESSING.md §2.9, the pattern D168 established for Lsky Pro). An EMPTY endpoint returns `None`: it means
+/// "use the AWS endpoint", which [`S3Config::compatible`] never sees.
+///
+/// The rule, in full: usable when `{bucket}.` appears exactly once at the very START of the host, with something
+/// after the dot. Everywhere else it is refused BY NAME, because the alternative — letting
+/// `https://oss-{bucket}.example.com` through — is a request to a host that does not exist, which surfaces as a
+/// DNS or signature error rather than as the typo it is.
+///
+/// This validates the string the USER wrote. [`S3Config::endpoint_parts`] validates what is LEFT after
+/// [`S3Config::compatible`] removed the one usable copy, and is therefore STRICTER: any placeholder surviving
+/// there is a leftover, including the second copy of `https://{bucket}.{bucket}.example.com`.
+pub fn bucket_placeholder_problem(endpoint: &str) -> Option<String> {
+    let trimmed = endpoint.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let rest = match trimmed.split_once("://") {
+        Some((_, rest)) => rest,
+        None => trimmed,
+    };
+    let rest = rest.trim_end_matches('/');
+    let occurrences = rest.matches(BUCKET_PLACEHOLDER).count();
+    if occurrences == 0 {
+        return None;
+    }
+
+    let prefix = format!("{BUCKET_PLACEHOLDER}.");
+    let authority = rest.split('/').next().unwrap_or("");
+    let usable =
+        occurrences == 1 && authority.starts_with(&prefix) && authority.len() > prefix.len();
+    if usable {
+        return None;
+    }
+
+    Some(placeholder_message(trimmed))
 }
 
 /// `YYYYMMDDTHHMMSSZ`, the `x-amz-date` format, from an RFC 3339 instant.
@@ -900,6 +949,38 @@ mod tests {
 
         let no_host = S3Config::compatible("assets", "us-east-1", "https://");
         assert!(no_host.host().is_err());
+    }
+
+    #[test]
+    fn the_placeholder_rule_can_be_asked_before_a_request_is_built() {
+        // The SAVE path asks the same function the request path uses (§2.9, D168's pattern), so a typo is
+        // refused when a target is written rather than at the first upload. The cases below therefore include
+        // the two that are VALID: an endpoint with no placeholder (path style, a MinIO) and an EMPTY one, which
+        // means "use the AWS endpoint" and is not this function's business to refuse.
+        for good in [
+            "",
+            "   ",
+            "http://127.0.0.1:9000",
+            "s3.example.com",
+            "https://{bucket}.oss-cn-chengdu.aliyuncs.com",
+            "https://{bucket}.gw.example.com/s3",
+        ] {
+            assert_eq!(bucket_placeholder_problem(good), None, "{good} must be usable");
+        }
+        for bad in [
+            "https://oss-{bucket}.example.com",
+            "https://gw.example.com/s3/{bucket}",
+            "https://{bucket}.{bucket}.example.com",
+            "https://{bucket}",
+            "https://{bucket}.",
+        ] {
+            let problem = bucket_placeholder_problem(bad)
+                .unwrap_or_else(|| panic!("{bad} must be refused"));
+            assert!(
+                problem.contains("{bucket}") && problem.contains("start of the host"),
+                "{bad}: {problem}"
+            );
+        }
     }
 
     #[test]

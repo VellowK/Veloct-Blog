@@ -5,8 +5,8 @@ pub mod client;
 pub mod sigv4;
 
 pub use client::{
-    amz_timestamp, hash_file, parse_list_response, Addressing, ListPage, S3Client, S3Config,
-    S3Object,
+    amz_timestamp, bucket_placeholder_problem, hash_file, parse_list_response, Addressing, ListPage,
+    S3Client, S3Config, S3Object,
 };
 pub use sigv4::{
     authorization, canonical_query_string, encode_path, hex_encode, sha256_hex, signature,
