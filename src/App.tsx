@@ -1,16 +1,49 @@
 /**
- * The workbench.
+ * The workbench shell.
  *
  * `handoff.md` §4.1 asks for a three-part layout, and §5.1 requires the preview to be the REAL Astro
  * project rather than a second renderer. So the preview pane is an iframe pointed at the dev server the
  * Rust supervisor started, and there is no Markdown rendering in this application at all — the moment
  * there were two renderers, they would disagree, and the preview would stop predicting the site.
  *
- * The editor is a plain Markdown source editor on purpose. `handoff.md` §4.2 asks for WYSIWYG, which
- * needs ProseMirror/Tiptap; that is a real piece of work and shipping a half-working WYSIWYG would be
- * worse than shipping an honest source editor that gets the SAVE behaviour right. What is here is the
- * autosave contract, the conflict handling and the live preview — the three things that are hard to
- * retrofit.
+ * The editor is a WYSIWYG Tiptap surface over the Markdown body (`Editor.tsx`). What is here is the shell
+ * around it: the autosave contract, the conflict handling and the live preview — the three things that are
+ * hard to retrofit.
+ *
+ * ## The shell's structure
+ *
+ * `DESIGN.md` is the visual system (warm cream canvas, serif display, coral accent, dark product surfaces)
+ * and Halo's admin console is the structural reference. Four regions, each with ONE job:
+ *
+ *  1. **A persistent left sidebar** (`aside.sidebar`) — the brand, the open project, the navigation, and the
+ *     content browser. EVERY top-level view lives in the navigation, grouped (`内容` / `资源` / `发布与部署` /
+ *     `维护` / `AI`); no feature was dropped to make the layout tidy, and the AI surfaces that used to be
+ *     loose buttons are navigation entries that open their modal.
+ *  2. **A top bar** (`header.topbar`) — the current page's CONTEXT as a breadcrumb (project › section ›
+ *     document) plus the controls that must be reachable from anywhere: the preview start/stop, and the
+ *     save / automatic-backup / index-issue chips that used to be crammed into a 28px status strip.
+ *  3. **One content container** (`div.content`) — a single scrollable column of cards, capped at a readable
+ *     width. A page is `PageHeader` + one card per subject; never a wall of raw controls.
+ *  4. **A status bar** (`footer.statusbar`) — the last thing that happened, in one line.
+ *
+ * Everything visible is built from the tokens in `styles.css` and the four primitives in
+ * `components/ui.tsx`. No dependency was added: no component library, no CSS framework, no icon package.
+ *
+ * ## What this turn changed, and what it did not
+ *
+ * The SHELL is new and the ATTACHMENTS page is converted as the sample (`AttachmentPanel.tsx`). The other
+ * panels are unchanged inside — they are now wrapped by the shell's content column and inherit the token
+ * re-colouring, which is deliberate: they are the "before" the owner compares the sample against.
+ *
+ * Three behaviour points worth stating rather than hiding:
+ *
+ *  * **The views are mutually exclusive.** They used to be seven independent booleans, so two panels could be
+ *    open at once and the render order silently decided which one you saw. A single `view` fixes that.
+ *  * **Clicking a document now returns to the editor.** It used to load the document behind whichever panel
+ *    was open, so the click appeared to do nothing.
+ *  * **The split handle is measured on the workspace** rather than on the preview pane. `--editor-share` is a
+ *    percentage of the workspace, so measuring the ratio anywhere else made the handle move at the wrong
+ *    speed — roughly 3× the pointer. Same property, same grid, correct frame of reference.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -38,6 +71,7 @@ import PageCreator, { AiSettingsPanel } from './PageCreator';
 import PublishPanel from './PublishPanel';
 import WorksPanel from './WorksPanel';
 import NetworkImagePanel from './NetworkImagePanel';
+import { Chip, Icon, PageHeader, SpikeMark, StateBlock, type IconName } from './components/ui';
 import {
   dueReason,
   hashText,
@@ -51,6 +85,82 @@ import {
 } from './lib/autosave';
 
 const PREVIEW_POLL_MS = 2_000;
+
+/** Every top-level view. Nothing that used to be a button is missing from this list. */
+type ViewId =
+  | 'editor'
+  | 'logs'
+  | 'publish'
+  | 'attachments'
+  | 'network-images'
+  | 'works'
+  | 'backups'
+  | 'deploy';
+
+interface NavEntry {
+  id: ViewId;
+  /** The label in the sidebar, which is also the section name in the breadcrumb. */
+  label: string;
+  icon: IconName;
+  /** The explanation the old button carried as a `title`, kept verbatim. */
+  title: string;
+}
+
+const NAV_GROUPS: Array<{ label: string; entries: NavEntry[] }> = [
+  {
+    label: '内容',
+    entries: [
+      { id: 'editor', label: '编辑器', icon: 'edit', title: '编辑选中的内容' },
+      { id: 'logs', label: '运行日志', icon: 'logs', title: '运行日志(handoff.md 第 18 节)' },
+    ],
+  },
+  {
+    label: '资源',
+    entries: [
+      { id: 'attachments', label: '附件', icon: 'clip', title: '附件池(handoff.md 第 13 节)' },
+      {
+        id: 'network-images',
+        label: '网络图片',
+        icon: 'image',
+        title: '网络图片浏览:搜索免费图库并写入远程 URL(handoff.md 第 13.14 节)',
+      },
+      { id: 'works', label: '作品', icon: 'grid', title: '作品系统:导入、封面与独立 Origin(handoff.md 第 10 节)' },
+    ],
+  },
+  {
+    label: '发布与部署',
+    entries: [
+      { id: 'publish', label: '发布', icon: 'tag', title: '检查改动、构建一次并打标签(handoff.md 第 19.3 节)' },
+      { id: 'deploy', label: '部署', icon: 'deploy', title: '部署目标(handoff.md 第 10 与 14 节)' },
+    ],
+  },
+  {
+    label: '维护',
+    entries: [
+      { id: 'backups', label: '备份与恢复', icon: 'archive', title: '备份与恢复(handoff.md 第 17 节)' },
+    ],
+  },
+];
+
+/** The two AI surfaces are modals rather than pages, so they are navigation entries with no active state. */
+const AI_ENTRIES: Array<{ label: string; icon: IconName; title: string; opens: 'creator' | 'settings' }> = [
+  {
+    label: 'AI 建页',
+    icon: 'sparkle',
+    title: '由 AI 生成整页,确认前不会创建任何文件',
+    opens: 'creator',
+  },
+  { label: 'AI 设置', icon: 'sliders', title: '模型与提供方设置(handoff.md 第 8 与 11 节)', opens: 'settings' },
+];
+
+const ALL_ENTRIES: NavEntry[] = NAV_GROUPS.flatMap((group) => group.entries);
+
+const KIND_LABEL: Record<ContentKind | 'all', string> = {
+  all: '全部',
+  article: '文章',
+  page: '页面',
+  knowledge: '知识库',
+};
 
 function useAutosave(
   document: DocumentView | null,
@@ -165,13 +275,8 @@ export default function App() {
   const [conflict, setConflict] = useState<SaveView | null>(null);
   const [pathInput, setPathInput] = useState('');
   const [filter, setFilter] = useState<ContentKind | 'all'>('all');
-  // Whether the log page is showing instead of the editor (handoff.md section 18).
-  const [showLog, setShowLog] = useState(false);
-  // The publish panel is a third main view beside the editor and the log.
-  const [showPublish, setShowPublish] = useState(false);
-  const [showAttachments, setShowAttachments] = useState(false);
-  const [showBackups, setShowBackups] = useState(false);
-  const [showDeploy, setShowDeploy] = useState(false);
+  /** The single active view. Mutually exclusive, which seven booleans could not guarantee. */
+  const [view, setView] = useState<ViewId>('editor');
   // The automatic backup rule (handoff.md section 17.5).
   const [autoBackup, setAutoBackup] = useState<AutoBackupStateView | null>(null);
   // The editor/preview split, draggable (handoff.md section 4.2). Stored as a percentage so it survives
@@ -181,10 +286,6 @@ export default function App() {
   const [aiSettings, setAiSettings] = useState<AiSettingsView | null>(null);
   const [showPageCreator, setShowPageCreator] = useState(false);
   const [showAiSettings, setShowAiSettings] = useState(false);
-  // Section 10's works system: import, metadata, the poster image and the independent Works Origin.
-  const [showWorks, setShowWorks] = useState(false);
-  // Section 13.14's network image browser: search a free stock provider and write the remote URL.
-  const [showNetworkImages, setShowNetworkImages] = useState(false);
   const splitRef = useRef<HTMLDivElement | null>(null);
   const draggingRef = useRef(false);
 
@@ -326,6 +427,7 @@ export default function App() {
       await refresh();
       setDocument(created.document);
       setSource(created.document.source);
+      setView('editor');
     } catch (caught) {
       setError(describeError(caught));
     }
@@ -384,18 +486,27 @@ export default function App() {
     }
   })();
 
-  return (
-    <div
-      className="workbench"
-      style={{ '--editor-share': `${splitPercent}%` } as React.CSSProperties}
-    >
-      <aside className="sidebar">
-        <header>
-          <strong>Veloct</strong>
-          {project && <span className="muted">{project.name}</span>}
-        </header>
+  const currentEntry = ALL_ENTRIES.find((entry) => entry.id === view);
+  const savedLabel = autosave.state.saving
+    ? '保存中…'
+    : autosave.hash === autosave.state.savedHash
+      ? '已同步'
+      : '有未保存的改动';
+  const savedTone = autosave.state.saving
+    ? 'neutral'
+    : autosave.hash === autosave.state.savedHash
+      ? 'success'
+      : 'warning';
 
-        {!project && (
+  return (
+    <div className="app">
+      <aside className="sidebar">
+        <div className="brand">
+          <SpikeMark className="brand-mark" />
+          <span className="brand-word">Veloct</span>
+        </div>
+
+        {!project ? (
           <div className="open-project">
             <p className="muted">打开或新建一个项目目录。</p>
             <input
@@ -404,37 +515,78 @@ export default function App() {
               placeholder="D:/我的站点"
               spellCheck={false}
             />
-            <button type="button" onClick={() => void openProject()}>
+            <button type="button" className="primary" onClick={() => void openProject()}>
               打开项目
             </button>
           </div>
+        ) : (
+          <p className="sidebar-project" title={project.name}>
+            {project.name}
+          </p>
         )}
 
+        {/* Every top-level view is here, grouped, and reachable whether or not a project is open: a page
+            that cannot work yet says so in its own empty state rather than disappearing from the nav. */}
+        <nav className="nav" aria-label="主导航">
+          {NAV_GROUPS.map((group) => (
+            <div className="nav-group" key={group.label}>
+              <p className="nav-group-label">{group.label}</p>
+              <ul className="nav-list">
+                {group.entries.map((entry) => (
+                  <li key={entry.id}>
+                    <button
+                      type="button"
+                      className={`nav-item${view === entry.id ? ' is-active' : ''}`}
+                      aria-current={view === entry.id ? 'page' : undefined}
+                      title={entry.title}
+                      onClick={() => setView(entry.id)}
+                    >
+                      <Icon name={entry.icon} />
+                      <span className="nav-label">{entry.label}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
+          <div className="nav-group">
+            <p className="nav-group-label">AI</p>
+            <ul className="nav-list">
+              {AI_ENTRIES.map((entry) => (
+                <li key={entry.label}>
+                  <button
+                    type="button"
+                    className="nav-item"
+                    title={entry.title}
+                    onClick={() =>
+                      entry.opens === 'creator' ? setShowPageCreator(true) : setShowAiSettings(true)
+                    }
+                  >
+                    <Icon name={entry.icon} />
+                    <span className="nav-label">{entry.label}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </nav>
+
         {project && (
-          <>
-            <nav className="filters">
+          <section className="doc-browser" aria-label="内容">
+            <div className="doc-filter">
               {(['all', 'article', 'page', 'knowledge'] as const).map((kind) => (
                 <button
                   type="button"
                   key={kind}
-                  className={filter === kind ? 'active' : ''}
+                  className={`tab${filter === kind ? ' is-active' : ''}`}
                   onClick={() => setFilter(kind)}
                 >
-                  {kind === 'all' ? '全部' : kind === 'article' ? '文章' : kind === 'page' ? '页面' : '知识库'}
+                  {KIND_LABEL[kind]}
                 </button>
               ))}
-            </nav>
+            </div>
 
-            <div className="new-buttons">
-              <button
-                type="button"
-                onClick={() => {
-                  setShowLog((showing) => !showing);
-                  setShowPublish(false);
-                }}
-              >
-                {showLog ? '返回编辑' : '查看日志'}
-              </button>
+            <div className="doc-new">
               <button type="button" onClick={() => void createDocument('article')}>
                 + 文章
               </button>
@@ -444,311 +596,370 @@ export default function App() {
               <button type="button" onClick={() => void createDocument('knowledge')}>
                 + 知识库
               </button>
-              <button
-                type="button"
-                className={showPublish ? 'active' : ''}
-                onClick={() => {
-                  setShowPublish((showing) => !showing);
-                  setShowLog(false);
-                }}
-                title="检查改动、构建一次并打标签(handoff.md 第 19.3 节)"
-              >
-                发布
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowPageCreator(true)}
-                title="由 AI 生成整页,确认前不会创建任何文件"
-              >
-                AI 建页
-              </button>
-              <button type="button" onClick={() => setShowAiSettings(true)}>
-                AI 设置
-              </button>
-              <button
-                type="button"
-                className={showAttachments ? 'active' : ''}
-                onClick={() => {
-                  setShowAttachments((showing) => !showing);
-                  setShowLog(false);
-                  setShowPublish(false);
-                }}
-                title="附件池(handoff.md 第 13 节)"
-              >
-                附件
-              </button>
-              <button
-                type="button"
-                className={showNetworkImages ? 'active' : ''}
-                onClick={() => {
-                  setShowNetworkImages((showing) => !showing);
-                  setShowWorks(false);
-                  setShowBackups(false);
-                  setShowAttachments(false);
-                  setShowLog(false);
-                  setShowPublish(false);
-                }}
-                title="网络图片浏览:搜索免费图库并写入远程 URL(handoff.md 第 13.14 节)"
-              >
-                网络图片
-              </button>
-              <button
-                type="button"
-                className={showWorks ? 'active' : ''}
-                onClick={() => {
-                  setShowWorks((showing) => !showing);
-                  setShowNetworkImages(false);
-                  setShowBackups(false);
-                  setShowAttachments(false);
-                  setShowLog(false);
-                  setShowPublish(false);
-                }}
-                title="作品系统:导入、封面与独立 Origin(handoff.md 第 10 节)"
-              >
-                作品
-              </button>
-              <button
-                type="button"
-                className={showBackups ? 'active' : ''}
-                onClick={() => {
-                  setShowBackups((showing) => !showing);
-                  setShowAttachments(false);
-                  setShowLog(false);
-                  setShowPublish(false);
-                }}
-                title="备份与恢复(handoff.md 第 17 节)"
-              >
-                备份
-              </button>
-              <button
-                type="button"
-                className={showDeploy ? 'active' : ''}
-                onClick={() => {
-                  setShowDeploy((showing) => !showing);
-                  setShowBackups(false);
-                  setShowAttachments(false);
-                  setShowLog(false);
-                  setShowPublish(false);
-                }}
-                title="部署目标(handoff.md 第 10 与 14 节)"
-              >
-                部署
-              </button>
             </div>
 
-            <ul className="document-list">
+            <ul className="doc-list">
               {visible.map((entry) => (
                 <li key={`${entry.kind}:${entry.id}`}>
                   <button
                     type="button"
-                    className={document?.id === entry.id ? 'active' : ''}
-                    onClick={() => void selectDocument(entry)}
+                    className={`doc-item${document?.id === entry.id ? ' is-active' : ''}`}
+                    onClick={() => {
+                      // Selecting content means editing it: the click used to load the document behind
+                      // whichever panel was open, so it looked like nothing happened.
+                      setView('editor');
+                      void selectDocument(entry);
+                    }}
                   >
-                    <span className="title">{entry.title}</span>
-                    <span className={`badge ${entry.wip_state}`}>{entry.wip_state}</span>
-                    {!entry.is_buildable && <span className="badge draft-only">不进入构建</span>}
+                    <span className="doc-title">{entry.title}</span>
+                    <span className="doc-meta">
+                      <span className={`badge ${entry.wip_state}`}>{entry.wip_state}</span>
+                      {!entry.is_buildable && <span className="badge draft-only">不进入构建</span>}
+                    </span>
                   </button>
                 </li>
               ))}
-              {visible.length === 0 && <li className="muted">还没有内容。</li>}
+              {visible.length === 0 && <li className="doc-empty muted">还没有内容。</li>}
             </ul>
-          </>
+          </section>
         )}
       </aside>
 
-      <main className="editor">
-        {showDeploy ? (
-          <DeployPanel enabled={project !== null} />
-        ) : showNetworkImages ? (
-          <NetworkImagePanel
-            enabled={project !== null}
-            onInsertMarkdown={(markdown) => {
-              // §13.14: the remote URL goes straight into the Markdown and the image never enters the
-              // cache pool. The buffer is appended here and the user saves when they choose, so browsing
-              // cannot edit a document by itself. Unlike the attachment panel this does NOT close: a
-              // browser is normally used for several picks in a row.
-              if (document) {
-                const next = `${source.trimEnd()}\n\n${markdown}\n`;
-                setSource(next);
-                autosave.onChange(next);
-              } else {
-                setStatus('请先打开一篇文章,再插入网络图片 Markdown');
-              }
-            }}
-          />
-        ) : showWorks ? (
-          <WorksPanel enabled={project !== null} />
-        ) : showBackups ? (
-          <BackupPanel enabled={project !== null} />
-        ) : showAttachments ? (
-          <AttachmentPanel
-            enabled={project !== null}
-            onInsertMarkdown={(markdown) => {
-              // §13.3: the pool never rewrites an article. The Markdown is appended to the buffer here and the
-              // user saves when they choose, so adding a picture cannot edit a document by itself.
-              setShowAttachments(false);
-              if (document) {
-                const next = `${source.trimEnd()}\n\n${markdown}\n`;
-                setSource(next);
-                autosave.onChange(next);
-                setStatus('已将附件 Markdown 插入编辑器,保存后生效');
-              } else {
-                setStatus('请先打开一篇文章,再插入附件 Markdown');
-              }
-            }}
-          />
-        ) : showPublish ? (
-          <PublishPanel
-            enabled={project !== null}
-            onPublished={() => void refresh()}
-          />
-        ) : showLog ? (
-          <LogView enabled={project !== null} />
-        ) : document ? (
-          <>
-            <header className="editor-header">
-              <input
-                className="title"
-                value={document.title}
-                readOnly
-                title="标题在 frontmatter 中编辑"
-              />
-              <span className="muted">{document.route}</span>
-              <div className="wip-controls">
-                {document.wip_state === 'draft' && (
-                  <button type="button" onClick={() => void transition('publish_wip')}>
-                    发布 WIP
-                  </button>
-                )}
-                {document.wip_state === 'published_wip' && (
-                  <>
-                    <button type="button" onClick={() => void transition('unpublish_wip')}>
-                      取消发布
-                    </button>
-                    <button type="button" onClick={() => void transition('finish')}>
-                      完成
-                    </button>
-                  </>
-                )}
-                {document.wip_state === 'finished_with_history' && (
-                  <span className="muted" title="旧 WIP 地址会永久重定向到文章地址">
-                    历史 WIP 地址已重定向
-                  </span>
-                )}
-              </div>
-            </header>
-
-            {conflict && (
-              <div className="conflict" role="alert">
-                <strong>保存被拒绝:文件在磁盘上已改变</strong>
-                <p>{conflict.conflict_message}</p>
-                <p className="muted">
-                  Veloct 没有覆盖磁盘上的内容。你的编辑仍在编辑器里。
-                </p>
-                <div className="conflict-actions">
-                  <button type="button" onClick={acceptDisk} disabled={!conflict.disk_source}>
-                    采用磁盘版本(放弃我的编辑)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setConflict(null);
-                      void autosave.saveNow();
-                    }}
-                  >
-                    保留我的编辑并重试
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {document.diagnostics.length > 0 && (
-              <ul className="diagnostics">
-                {document.diagnostics.map((line) => (
-                  <li key={line}>{line}</li>
-                ))}
-              </ul>
-            )}
-
-            <Editor
-              source={source}
-              editable
-              onChange={(next) => {
-                setSource(next);
-                autosave.onChange(next);
-              }}
-            />
-          </>
-        ) : (
-          <div className="empty">
-            <h1>Veloct</h1>
-            <p className="muted">
-              {project
-                ? '从左侧选择一篇内容,或新建一篇。'
-                : '打开一个项目目录以开始。'}
+      <div className="main">
+        <header className="topbar">
+          <div className="topbar-context">
+            <p className="crumb">
+              <span className="crumb-project">{project ? project.name : '未打开项目'}</span>
+              <span className="crumb-sep">/</span>
+              <span className="crumb-page">{currentEntry?.label ?? '编辑器'}</span>
+              {view === 'editor' && document && (
+                <>
+                  <span className="crumb-sep">/</span>
+                  <span className="crumb-leaf">{document.title}</span>
+                </>
+              )}
             </p>
           </div>
-        )}
-      </main>
 
-      <div
-        className="split-handle"
-        role="separator"
-        aria-orientation="vertical"
-        aria-label="拖动以调整编辑器和预览的比例"
-        aria-valuenow={splitPercent}
-        aria-valuemin={20}
-        aria-valuemax={80}
-        tabIndex={0}
-        onPointerDown={(event) => {
-          draggingRef.current = true;
-          event.currentTarget.setPointerCapture(event.pointerId);
-        }}
-        onPointerMove={(event) => {
-          if (!draggingRef.current) return;
-          const container = splitRef.current;
-          if (!container) return;
-          const bounds = container.getBoundingClientRect();
-          // The workspace begins after the sidebar, so the ratio is measured inside it.
-          const ratio = ((event.clientX - bounds.left) / bounds.width) * 100;
-          setSplitPercent(Math.min(80, Math.max(20, ratio)));
-        }}
-        onPointerUp={(event) => {
-          draggingRef.current = false;
-          event.currentTarget.releasePointerCapture(event.pointerId);
-        }}
-        onKeyDown={(event) => {
-          // A keyboard path, because a pointer-only resize is unusable without a mouse.
-          if (event.key === 'ArrowLeft') setSplitPercent((value) => Math.max(20, value - 2));
-          if (event.key === 'ArrowRight') setSplitPercent((value) => Math.min(80, value + 2));
-        }}
-      />
-
-      <section className="preview" ref={splitRef}>
-        <header>
-          <span>{previewLabel}</span>
-          {previewState === 'running' ? (
-            <button type="button" onClick={() => void api.stopPreview().then(setPreview)}>
-              停止
-            </button>
-          ) : (
-            <button type="button" onClick={() => void startPreview()} disabled={!project}>
-              启动预览
-            </button>
-          )}
+          <div className="topbar-actions">
+            {view === 'editor' &&
+              (previewState === 'running' ? (
+                <button type="button" onClick={() => void api.stopPreview().then(setPreview)}>
+                  停止预览
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="primary"
+                  onClick={() => void startPreview()}
+                  disabled={!project}
+                >
+                  启动预览
+                </button>
+              ))}
+            <Chip tone={savedTone}>{savedLabel}</Chip>
+            {autoBackup && (
+              <Chip
+                tone={autoBackup.needs_acknowledgement ? 'warning' : 'neutral'}
+                title={autoBackup.description}
+              >
+                {autoBackup.needs_acknowledgement
+                  ? '自动备份待确认(发现疑似凭据)'
+                  : autoBackup.decision.decision === 'due'
+                    ? '自动备份即将执行'
+                    : autoBackup.description}
+              </Chip>
+            )}
+            {issues.length > 0 && (
+              <Chip tone="warning" title={issues.join('\n')}>
+                {issues.length} 个索引问题
+              </Chip>
+            )}
+          </div>
         </header>
 
-        {preview?.site_url ? (
-          // The REAL Astro dev server, not a second renderer (handoff.md section 5.1).
-          <iframe title="站点预览" src={preview.site_url} sandbox="allow-same-origin allow-scripts" />
-        ) : (
-          <p className="muted preview-empty">
-            {previewState === 'crashed' && preview?.site.state === 'crashed'
-              ? preview.site.reason
-              : '预览使用与最终站点同一套 Astro 工程。启动后会在这里显示。'}
-          </p>
-        )}
-      </section>
+        <div className="content">
+          {/* An error appears HERE — at the top of the content column, where the user is looking — rather
+              than only in the status bar or a log. It is the same treatment as every other state. */}
+          {error && (
+            <div className="page">
+              <StateBlock
+                tone="error"
+                title="出错了"
+                description={error}
+                onDismiss={() => setError(null)}
+              />
+            </div>
+          )}
+
+          {view === 'attachments' ? (
+            <AttachmentPanel
+              enabled={project !== null}
+              onInsertMarkdown={(markdown) => {
+                // §13.3: the pool never rewrites an article. The Markdown is appended to the buffer here and the
+                // user saves when they choose, so adding a picture cannot edit a document by itself.
+                setView('editor');
+                if (document) {
+                  const next = `${source.trimEnd()}\n\n${markdown}\n`;
+                  setSource(next);
+                  autosave.onChange(next);
+                  setStatus('已将附件 Markdown 插入编辑器,保存后生效');
+                } else {
+                  setStatus('请先打开一篇文章,再插入附件 Markdown');
+                }
+              }}
+            />
+          ) : view === 'network-images' ? (
+            <div className="page page--legacy">
+              <NetworkImagePanel
+                enabled={project !== null}
+                onInsertMarkdown={(markdown) => {
+                  // §13.14: the remote URL goes straight into the Markdown and the image never enters the
+                  // cache pool. The buffer is appended here and the user saves when they choose, so browsing
+                  // cannot edit a document by itself. Unlike the attachment panel this does NOT close: a
+                  // browser is normally used for several picks in a row.
+                  if (document) {
+                    const next = `${source.trimEnd()}\n\n${markdown}\n`;
+                    setSource(next);
+                    autosave.onChange(next);
+                  } else {
+                    setStatus('请先打开一篇文章,再插入网络图片 Markdown');
+                  }
+                }}
+              />
+            </div>
+          ) : view === 'works' ? (
+            <div className="page page--legacy">
+              <WorksPanel enabled={project !== null} />
+            </div>
+          ) : view === 'backups' ? (
+            <div className="page page--legacy">
+              <BackupPanel enabled={project !== null} />
+            </div>
+          ) : view === 'deploy' ? (
+            <div className="page page--legacy">
+              <DeployPanel enabled={project !== null} />
+            </div>
+          ) : view === 'publish' ? (
+            <div className="page page--legacy">
+              <PublishPanel enabled={project !== null} onPublished={() => void refresh()} />
+            </div>
+          ) : view === 'logs' ? (
+            <div className="page page--legacy">
+              <LogView enabled={project !== null} />
+            </div>
+          ) : (
+            <div className="page page--workspace">
+              <div
+                className="workspace"
+                ref={splitRef}
+                style={{ '--editor-share': `${splitPercent}%` } as React.CSSProperties}
+              >
+                <section className="pane">
+                  {document ? (
+                    <>
+                      <PageHeader
+                        title={
+                          <input
+                            className="title-input"
+                            value={document.title}
+                            readOnly
+                            title="标题在 frontmatter 中编辑"
+                          />
+                        }
+                        description={document.route}
+                        actions={
+                          <div className="wip-controls">
+                            {document.wip_state === 'draft' && (
+                              <button
+                                type="button"
+                                className="primary"
+                                onClick={() => void transition('publish_wip')}
+                              >
+                                发布 WIP
+                              </button>
+                            )}
+                            {document.wip_state === 'published_wip' && (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => void transition('unpublish_wip')}
+                                >
+                                  取消发布
+                                </button>
+                                <button
+                                  type="button"
+                                  className="primary"
+                                  onClick={() => void transition('finish')}
+                                >
+                                  完成
+                                </button>
+                              </>
+                            )}
+                            {document.wip_state === 'finished_with_history' && (
+                              <span className="muted" title="旧 WIP 地址会永久重定向到文章地址">
+                                历史 WIP 地址已重定向
+                              </span>
+                            )}
+                          </div>
+                        }
+                      />
+
+                      {conflict && (
+                        <StateBlock
+                          tone="error"
+                          title="保存被拒绝:文件在磁盘上已改变"
+                          description={
+                            <>
+                              <p>{conflict.conflict_message}</p>
+                              <p className="muted">
+                                Veloct 没有覆盖磁盘上的内容。你的编辑仍在编辑器里。
+                              </p>
+                            </>
+                          }
+                          actions={
+                            <>
+                              <button
+                                type="button"
+                                onClick={acceptDisk}
+                                disabled={!conflict.disk_source}
+                              >
+                                采用磁盘版本(放弃我的编辑)
+                              </button>
+                              <button
+                                type="button"
+                                className="primary"
+                                onClick={() => {
+                                  setConflict(null);
+                                  void autosave.saveNow();
+                                }}
+                              >
+                                保留我的编辑并重试
+                              </button>
+                            </>
+                          }
+                        />
+                      )}
+
+                      {document.diagnostics.length > 0 && (
+                        <StateBlock
+                          tone="warning"
+                          title="文档诊断"
+                          description={
+                            <ul className="bullet-list">
+                              {document.diagnostics.map((line) => (
+                                <li key={line}>{line}</li>
+                              ))}
+                            </ul>
+                          }
+                        />
+                      )}
+
+                      <div className="pane-body">
+                        <Editor
+                          source={source}
+                          editable
+                          onChange={(next) => {
+                            setSource(next);
+                            autosave.onChange(next);
+                          }}
+                        />
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <PageHeader
+                        title="编辑"
+                        description="选中左侧的一篇内容后在这里写作;右侧是真实站点的预览。"
+                      />
+                      <div className="pane-body pane-body--center">
+                        <StateBlock
+                          tone="empty"
+                          title={project ? '还没有打开任何内容' : '还没有打开项目'}
+                          description={
+                            project
+                              ? '从左侧选择一篇内容,或新建一篇。'
+                              : '打开一个项目目录以开始。'
+                          }
+                        />
+                      </div>
+                    </>
+                  )}
+                </section>
+
+                <div
+                  className="split-handle"
+                  role="separator"
+                  aria-orientation="vertical"
+                  aria-label="拖动以调整编辑器和预览的比例"
+                  aria-valuenow={splitPercent}
+                  aria-valuemin={20}
+                  aria-valuemax={80}
+                  tabIndex={0}
+                  onPointerDown={(event) => {
+                    draggingRef.current = true;
+                    event.currentTarget.setPointerCapture(event.pointerId);
+                  }}
+                  onPointerMove={(event) => {
+                    if (!draggingRef.current) return;
+                    const container = splitRef.current;
+                    if (!container) return;
+                    const bounds = container.getBoundingClientRect();
+                    // The share is a percentage OF THE WORKSPACE, so the ratio is measured on the workspace.
+                    const ratio = ((event.clientX - bounds.left) / bounds.width) * 100;
+                    setSplitPercent(Math.min(80, Math.max(20, ratio)));
+                  }}
+                  onPointerUp={(event) => {
+                    draggingRef.current = false;
+                    event.currentTarget.releasePointerCapture(event.pointerId);
+                  }}
+                  onKeyDown={(event) => {
+                    // A keyboard path, because a pointer-only resize is unusable without a mouse.
+                    if (event.key === 'ArrowLeft') setSplitPercent((value) => Math.max(20, value - 2));
+                    if (event.key === 'ArrowRight') setSplitPercent((value) => Math.min(80, value + 2));
+                  }}
+                />
+
+                <section className="pane">
+                  <header className="pane-head">
+                    <h2 className="pane-title">站点预览</h2>
+                    <span className="pane-note">{previewLabel}</span>
+                  </header>
+                  <div className="pane-body">
+                    {preview?.site_url ? (
+                      // The REAL Astro dev server, not a second renderer (handoff.md section 5.1).
+                      <iframe
+                        title="站点预览"
+                        src={preview.site_url}
+                        sandbox="allow-same-origin allow-scripts"
+                      />
+                    ) : (
+                      <div className="pane-body--center">
+                        <StateBlock
+                          tone="empty"
+                          title="预览还没有启动"
+                          description={
+                            previewState === 'crashed' && preview?.site.state === 'crashed'
+                              ? preview.site.reason
+                              : '预览使用与最终站点同一套 Astro 工程。启动后会在这里显示。'
+                          }
+                        />
+                      </div>
+                    )}
+                  </div>
+                </section>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <footer className="statusbar">
+          <span>{status}</span>
+          <span className="statusbar-end muted">
+            {project ? project.name : '未打开项目'}
+          </span>
+        </footer>
+      </div>
 
       {showPageCreator && (
         <PageCreator
@@ -762,6 +973,7 @@ export default function App() {
             setShowPageCreator(false);
             setDocument(created);
             setSource(created.source);
+            setView('editor');
             setStatus(`已创建 ${created.title}`);
             void refresh();
           }}
@@ -775,35 +987,6 @@ export default function App() {
           onClose={() => setShowAiSettings(false)}
         />
       )}
-
-      <footer className="statusbar">
-        <span>{status}</span>
-        <span className="muted">
-          {autosave.state.saving ? '保存中…' : autosave.hash === autosave.state.savedHash ? '已同步' : '有未保存的改动'}
-        </span>
-        {autoBackup && (
-          <span
-            className={autoBackup.needs_acknowledgement ? 'issues' : 'muted'}
-            title={autoBackup.description}
-          >
-            {autoBackup.needs_acknowledgement
-              ? '自动备份待确认(发现疑似凭据)'
-              : autoBackup.decision.decision === 'due'
-                ? '自动备份即将执行'
-                : autoBackup.description}
-          </span>
-        )}
-        {issues.length > 0 && (
-          <span className="issues" title={issues.join('\n')}>
-            {issues.length} 个索引问题
-          </span>
-        )}
-        {error && (
-          <span className="error" role="alert" onClick={() => setError(null)} title="点击关闭">
-            {error}
-          </span>
-        )}
-      </footer>
     </div>
   );
 }

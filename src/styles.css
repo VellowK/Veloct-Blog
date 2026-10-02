@@ -1,18 +1,126 @@
+/*
+ * Veloct's frontend tokens and surfaces.
+ *
+ * Every value below comes from `DESIGN.md` at the repository root, which is the owner's design-token
+ * document. This block is the ONLY place a colour, radius, shadow or type step is written down: components
+ * use the custom properties and never a hex value, and the `.tsx` files contain no colour at all.
+ *
+ * `DESIGN.md`'s system has three surface modes, and the shell uses all three deliberately:
+ *   1. the warm cream canvas (`--color-canvas`) — the floor of every page;
+ *   2. cream cards (`--color-surface-card`, `--color-surface-soft`) — content blocks, card headers;
+ *   3. dark product surfaces (`--color-surface-dark`) — the Markdown source pane, code blocks, build output.
+ * Coral (`--color-primary`) is scarce: primary actions, the brand mark's use in an active nav item, and the
+ * "published" state. It is never used as a page background.
+ */
+
 :root {
-  color-scheme: dark;
-  --ink-950: #17161a;
-  --ink-900: #1d1c21;
-  --ink-850: #232228;
-  --ink-800: #2a2931;
-  --ink-700: #3a3944;
-  --ink-300: #b9b5c0;
-  --ink-400: #8b8794;
-  --ink-100: #ece9f1;
-  --accent-400: #e0a458;
-  --accent-500: #d99a45;
-  --danger-400: #e06c75;
-  font-family: system-ui, -apple-system, 'Segoe UI', 'Microsoft YaHei', sans-serif;
-  font-size: 14px;
+  /* ---- Colour: brand & accent ---- */
+  --color-primary: #cc785c;
+  --color-primary-active: #a9583e;
+  --color-primary-disabled: #e6dfd8;
+  --color-accent-teal: #5db8a6;
+  --color-accent-amber: #e8a55a;
+
+  /* ---- Colour: surface ---- */
+  --color-canvas: #faf9f5;
+  --color-surface-soft: #f5f0e8;
+  --color-surface-card: #efe9de;
+  --color-surface-cream-strong: #e8e0d2;
+  --color-surface-dark: #181715;
+  --color-surface-dark-elevated: #252320;
+  --color-surface-dark-soft: #1f1e1b;
+  --color-hairline: #e6dfd8;
+  --color-hairline-soft: #ebe6df;
+
+  /* ---- Colour: text ---- */
+  --color-ink: #141413;
+  --color-body-strong: #252523;
+  --color-body: #3d3d3a;
+  --color-muted: #6c6a64;
+  --color-muted-soft: #8e8b82;
+  --color-on-primary: #ffffff;
+  --color-on-dark: #faf9f5;
+  --color-on-dark-soft: #a09d96;
+
+  /* ---- Colour: semantic ---- */
+  --color-success: #5db872;
+  --color-warning: #d4a017;
+  --color-error: #c64545;
+
+  /* ---- Type ----
+     Copernicus and StyreneB are licensed Anthropic faces, so the stacks lead with them and fall back to the
+     substitutes `DESIGN.md` names. The serif/sans split is the brand voice and is kept either way. */
+  --font-display: 'Copernicus', 'Tiempos Headline', 'Cormorant Garamond', 'EB Garamond', Georgia,
+    'Songti SC', serif;
+  --font-sans: 'StyreneB', Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei',
+    sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'Cascadia Mono', Consolas, monospace;
+
+  --text-display-sm: 28px;
+  --text-title-lg: 22px;
+  --text-title-md: 18px;
+  --text-title-sm: 16px;
+  --text-body: 16px;
+  --text-body-sm: 14px;
+  --text-caption: 13px;
+  --text-caption-uppercase: 12px;
+
+  /* ---- Radius ---- */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-pill: 9999px;
+
+  /* ---- Space ---- */
+  --space-xxs: 4px;
+  --space-xs: 8px;
+  --space-sm: 12px;
+  --space-md: 16px;
+  --space-lg: 24px;
+  --space-xl: 32px;
+  --space-xxl: 48px;
+  --space-section: 96px;
+
+  /* ---- Elevation: colour-block first, shadow rare ---- */
+  --shadow-subtle: 0 1px 3px rgba(20, 20, 19, 0.08);
+  --shadow-modal: 0 18px 48px rgba(20, 20, 19, 0.28);
+
+  /* ---- Shell metrics ---- */
+  --sidebar-width: 264px;
+  --topbar-height: 60px;
+  --statusbar-height: 30px;
+
+  color-scheme: light;
+  font-family: var(--font-sans);
+  font-size: var(--text-body-sm);
+  line-height: 1.55;
+  color: var(--color-ink);
+  background: var(--color-canvas);
+}
+
+/*
+ * Legacy aliases for the panels this sample did NOT convert.
+ *
+ * `BackupPanel`, `DeployPanel`, `NetworkImagePanel`, `WorksPanel`, `PublishPanel`, `LogView`, `PageCreator`
+ * and the WYSIWYG editor still name the old dark palette's variables. Rather than leave them dark-on-cream
+ * (or rewrite them, which is the work the owner has not approved), every legacy name resolves to a
+ * `DESIGN.md` token here. An unconverted panel is therefore RE-COLOURED but not restructured, and this block
+ * can shrink as each panel is converted.
+ */
+:root {
+  --ink-950: var(--color-surface-dark);
+  --ink-900: var(--color-canvas);
+  --ink-850: var(--color-surface-soft);
+  --ink-800: var(--color-hairline);
+  --ink-700: var(--color-surface-cream-strong);
+  --ink-300: var(--color-body);
+  --ink-400: var(--color-muted);
+  --ink-100: var(--color-ink);
+  --accent-400: var(--color-primary);
+  --accent-500: var(--color-primary);
+  --danger-400: var(--color-error);
 }
 
 * {
@@ -27,22 +135,34 @@ body,
 }
 
 body {
-  background: var(--ink-950);
-  color: var(--ink-100);
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  overflow: hidden;
 }
 
+h1,
+h2,
+h3,
+h4 {
+  font-weight: 500;
+}
+
+/* `button-secondary` and `text-input` from DESIGN.md's component list. */
 button {
   font: inherit;
-  color: inherit;
-  background: var(--ink-800);
-  border: 1px solid var(--ink-700);
-  border-radius: 6px;
-  padding: 4px 10px;
+  font-size: var(--text-body-sm);
+  font-weight: 500;
+  color: var(--color-ink);
+  background: var(--color-canvas);
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-md);
+  padding: 8px 14px;
   cursor: pointer;
 }
 
 button:hover:not(:disabled) {
-  border-color: var(--accent-500);
+  border-color: var(--color-primary);
 }
 
 button:disabled {
@@ -50,279 +170,966 @@ button:disabled {
   cursor: not-allowed;
 }
 
+button.primary {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: var(--color-on-primary);
+}
+
+button.primary:hover:not(:disabled) {
+  background: var(--color-primary-active);
+  border-color: var(--color-primary-active);
+}
+
+button.primary:disabled {
+  background: var(--color-primary-disabled);
+  border-color: var(--color-primary-disabled);
+  color: var(--color-muted);
+}
+
+button.danger {
+  border-color: var(--color-error);
+  color: var(--color-error);
+  background: var(--color-canvas);
+}
+
 input,
+select,
 textarea {
   font: inherit;
-  color: inherit;
-  background: var(--ink-900);
-  border: 1px solid var(--ink-700);
-  border-radius: 6px;
-  padding: 6px 8px;
+  font-size: var(--text-body-sm);
+  color: var(--color-ink);
+  background: var(--color-canvas);
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-md);
+  padding: 8px 12px;
+  min-height: 38px;
+  min-width: 0;
+}
+
+/* `text-input-focused`: a coral border and the 3px coral ring DESIGN.md specifies. */
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+summary:focus-visible {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(204, 120, 92, 0.15);
+}
+
+code,
+pre,
+kbd,
+samp {
+  font-family: var(--font-mono);
+}
+
+code {
+  font-size: 0.92em;
+  background: var(--color-surface-soft);
+  color: var(--color-body-strong);
+  padding: 1px 5px;
+  border-radius: var(--radius-xs);
+  overflow-wrap: anywhere;
 }
 
 .muted {
-  color: var(--ink-400);
+  color: var(--color-muted);
 }
 
-/* The three-part layout handoff.md section 4.1 asks for, plus a status bar. */
-.workbench {
+/* ==================================================================================================
+ * The shell
+ *
+ * Four regions, each with one job: a persistent sidebar, a top bar carrying the current page's context and
+ * the controls that must be reachable from anywhere, ONE scrollable content column, and a status line.
+ * Halo's admin console is the structural reference; `DESIGN.md` is the visual one.
+ * ================================================================================================== */
+
+.app {
   display: grid;
-  /* The editor share is a custom property so the drag handle can set one number rather than three
-     column sizes that could disagree. */
-  grid-template-columns:
-    260px
-    minmax(0, var(--editor-share, 50%))
-    5px
-    minmax(0, 1fr);
-  grid-template-rows: minmax(0, 1fr) 28px;
-  grid-template-areas:
-    'sidebar editor split preview'
-    'status status status status';
+  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
   height: 100%;
-  gap: 1px;
-  background: var(--ink-700);
+  background: var(--color-canvas);
+  color: var(--color-ink);
 }
 
-.split-handle {
-  grid-area: split;
-  background: var(--ink-800);
-  cursor: col-resize;
-  /* A wider hit area than the visible line, because a 5px target is a nuisance to grab. */
-  position: relative;
-}
-
-.split-handle::after {
-  content: '';
-  position: absolute;
-  inset: 0 -4px;
-}
-
-.split-handle:hover,
-.split-handle:focus-visible {
-  background: var(--accent-500);
-  outline: none;
-}
+/* ---- Sidebar: brand, project, navigation, content browser ---------------------------------------- */
 
 .sidebar {
-  grid-area: sidebar;
-  background: var(--ink-900);
   display: flex;
   flex-direction: column;
   min-height: 0;
+  background: var(--color-canvas);
+  border-right: 1px solid var(--color-hairline);
 }
 
-.sidebar header {
+.brand {
   display: flex;
-  align-items: baseline;
-  gap: 8px;
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--ink-800);
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-md) var(--space-md) var(--space-sm);
+}
+
+/* DESIGN.md: the radial-spike mark is a brand glyph and is never inverted, so it stays ink. */
+.brand-mark {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  color: var(--color-ink);
+}
+
+.brand-word {
+  font-family: var(--font-display);
+  font-size: var(--text-title-lg);
+  font-weight: 400;
+  letter-spacing: -0.3px;
 }
 
 .open-project {
-  padding: 12px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-xs);
+  padding: var(--space-sm) var(--space-md) var(--space-md);
+  border-bottom: 1px solid var(--color-hairline-soft);
 }
 
-.filters,
-.new-buttons {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  padding: 8px 10px;
-}
-
-.filters button.active {
-  background: var(--ink-700);
-  border-color: var(--accent-500);
-}
-
-.document-list {
-  list-style: none;
+.sidebar-project {
   margin: 0;
-  padding: 0 6px 12px;
-  overflow-y: auto;
-  flex: 1;
-  min-height: 0;
-}
-
-.document-list button {
-  width: 100%;
-  text-align: left;
-  background: transparent;
-  border-color: transparent;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  align-items: baseline;
-  margin-bottom: 2px;
-}
-
-.document-list button.active {
-  background: var(--ink-800);
-  border-color: var(--ink-700);
-}
-
-.document-list .title {
-  flex: 1;
-  min-width: 0;
+  padding: 0 var(--space-md) var(--space-xs);
+  font-size: var(--text-caption);
+  color: var(--color-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+.nav {
+  padding: var(--space-xs) var(--space-xs) 0;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.nav-group + .nav-group {
+  margin-top: var(--space-sm);
+}
+
+.nav-group-label {
+  margin: 0 0 var(--space-xxs);
+  padding: 0 var(--space-sm);
+  font-size: var(--text-caption-uppercase);
+  font-weight: 500;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--color-muted-soft);
+}
+
+.nav-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.nav-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: 8px var(--space-sm);
+  text-align: left;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  color: var(--color-body);
+}
+
+.nav-item:hover:not(:disabled) {
+  background: var(--color-surface-soft);
+  border-color: transparent;
+}
+
+/* The active item is a cream card — the same shape DESIGN.md gives `category-tab-active`. */
+.nav-item.is-active {
+  background: var(--color-surface-card);
+  border-color: var(--color-surface-card);
+  color: var(--color-ink);
+}
+
+.nav-item.is-active .icon {
+  color: var(--color-primary);
+}
+
+.nav-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---- The content browser: a filter row, the new-content actions, then the list -------------------- */
+
+.doc-browser {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+  margin-top: var(--space-sm);
+  padding-top: var(--space-sm);
+  border-top: 1px solid var(--color-hairline-soft);
+}
+
+.doc-filter,
+.doc-new {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xxs);
+  padding: 0 var(--space-sm);
+}
+
+.doc-new {
+  margin-top: var(--space-xs);
+}
+
+.tab {
+  padding: 4px 10px;
+  font-size: var(--text-caption);
+  background: transparent;
+  border-color: transparent;
+  border-radius: var(--radius-md);
+  color: var(--color-muted);
+}
+
+.tab:hover:not(:disabled) {
+  border-color: transparent;
+  color: var(--color-ink);
+}
+
+.tab.is-active {
+  background: var(--color-surface-card);
+  border-color: var(--color-surface-card);
+  color: var(--color-ink);
+}
+
+.doc-new button {
+  padding: 5px 10px;
+  font-size: var(--text-caption);
+}
+
+.doc-list {
+  list-style: none;
+  margin: var(--space-sm) 0 0;
+  padding: 0 var(--space-xs) var(--space-md);
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+.doc-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: 7px var(--space-xs);
+  margin-bottom: 1px;
+  text-align: left;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+}
+
+.doc-item:hover:not(:disabled) {
+  background: var(--color-surface-soft);
+  border-color: transparent;
+}
+
+.doc-item.is-active {
+  background: var(--color-surface-cream-strong);
+  border-color: var(--color-surface-cream-strong);
+}
+
+.doc-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-caption);
+  font-weight: 400;
+}
+
+.doc-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xxs);
+}
+
+.doc-empty {
+  padding: var(--space-xs);
+  font-size: var(--text-caption);
+}
+
+/* `badge-pill` / `badge-coral`. The WIP state is the one badge that carries the coral, because
+   "published" is the state the owner acts on. */
 .badge {
   font-size: 11px;
-  padding: 1px 5px;
-  border-radius: 4px;
-  background: var(--ink-700);
-  color: var(--ink-300);
+  font-weight: 500;
+  padding: 1px 8px;
+  border-radius: var(--radius-pill);
+  background: var(--color-surface-card);
+  color: var(--color-body);
+  white-space: nowrap;
 }
 
 .badge.published_wip {
-  background: var(--accent-500);
-  color: var(--ink-950);
+  background: var(--color-primary);
+  color: var(--color-on-primary);
 }
 
 .badge.draft-only {
   background: transparent;
-  border: 1px solid var(--ink-700);
-  color: var(--ink-400);
+  border: 1px solid var(--color-hairline);
+  color: var(--color-muted);
 }
 
-.editor {
-  grid-area: editor;
-  background: var(--ink-900);
-  display: flex;
-  flex-direction: column;
+/* ---- Main column: top bar / content / status line ------------------------------------------------ */
+
+.main {
+  display: grid;
+  grid-template-rows: var(--topbar-height) minmax(0, 1fr) var(--statusbar-height);
+  min-width: 0;
   min-height: 0;
+  background: var(--color-canvas);
+}
+
+/* The top bar carries the page's CONTEXT (a breadcrumb) and the controls that must be reachable from
+   anywhere: the preview, and the save / backup / index chips that used to live in a 28px status strip.
+   A page's own actions belong in its page header, so they are never duplicated here. */
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  padding: 0 var(--space-xl);
+  min-width: 0;
+  border-bottom: 1px solid var(--color-hairline);
+  background: var(--color-canvas);
+}
+
+.topbar-context {
   min-width: 0;
 }
 
-.editor-header {
+.crumb {
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-xs);
+  font-size: var(--text-caption);
+  color: var(--color-muted);
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.crumb-project {
+  color: var(--color-body-strong);
+  font-weight: 500;
+}
+
+.crumb-sep {
+  color: var(--color-muted-soft);
+}
+
+.crumb-page {
+  color: var(--color-ink);
+  font-weight: 500;
+}
+
+.crumb-leaf {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.topbar-actions {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--ink-800);
+  gap: var(--space-xs);
+  flex: 0 0 auto;
+}
+
+/* ONE scrollable column of pages. The padding lives here rather than on each page so every page starts on
+   the same line, whatever it renders. */
+.content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-lg);
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-lg) var(--space-xl) var(--space-xxl);
+}
+
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+  /* Content height, never squeezed: the CONTENT container scrolls, so a long page can never have its
+     cards clipped by a flex shrink. The two modifiers below opt back into filling the height. */
+  flex: 0 0 auto;
+  width: 100%;
+  max-width: 1120px;
+}
+
+/* A panel that has not been converted yet still gets the shell's container: the same column, the same
+   width, the panel's own internal layout untouched. */
+.page--legacy {
+  flex: 1;
+  min-height: 0;
+}
+
+/* The editor page is a two-pane workspace rather than a column of cards, so it takes the full width and
+   whatever height is left under the top bar. */
+.page--workspace {
+  flex: 1;
+  min-height: 0;
+  max-width: none;
+}
+
+/* ---- Page header: title + description + the page's own actions, the same shape on every page ----- */
+
+.page-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-lg);
   flex-wrap: wrap;
 }
 
-.editor-header .title {
+.page-header-text {
+  min-width: 0;
   flex: 1;
-  min-width: 120px;
-  font-weight: 600;
+}
+
+.page-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--text-display-sm);
+  font-weight: 400;
+  line-height: 1.2;
+  letter-spacing: -0.3px;
+}
+
+.page-lede {
+  margin: var(--space-xxs) 0 0;
+  max-width: 78ch;
+  font-size: var(--text-body-sm);
+  color: var(--color-muted);
+}
+
+.page-header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  flex-wrap: wrap;
+}
+
+/* The document title is a read-only input so it can be focused, selected and copied — behaviour worth
+   keeping. It only has to LOOK like the display heading it is. */
+.title-input {
+  font-family: var(--font-display);
+  font-size: var(--text-display-sm);
+  font-weight: 400;
+  letter-spacing: -0.3px;
+  color: var(--color-ink);
   background: transparent;
   border-color: transparent;
+  border-radius: var(--radius-sm);
+  padding: 0;
+  min-height: 0;
+  width: 100%;
+  max-width: 56ch;
 }
 
 .wip-controls {
   display: flex;
-  gap: 6px;
+  gap: var(--space-xs);
   align-items: center;
+  flex-wrap: wrap;
 }
 
-.source {
-  flex: 1;
-  min-height: 0;
-  resize: none;
-  border: none;
-  border-radius: 0;
-  background: var(--ink-900);
-  font-family: 'Cascadia Mono', Consolas, 'Courier New', monospace;
-  font-size: 13px;
-  line-height: 1.6;
-  padding: 12px 14px;
-  white-space: pre-wrap;
-}
-
-.source:focus {
-  outline: none;
-}
-
-.conflict {
-  margin: 10px 12px 0;
-  padding: 10px 12px;
-  border: 1px solid var(--danger-400);
-  border-radius: 8px;
-  background: rgba(224, 108, 117, 0.08);
-}
-
-.conflict p {
-  margin: 6px 0;
-}
-
-.conflict-actions {
-  display: flex;
-  gap: 8px;
-  margin-top: 8px;
-}
-
+/* Kept for the page creator, which reports a draft's diagnostics as a list. Same state language as
+   `.state--warning`, because it says the same kind of thing. */
 .diagnostics {
-  margin: 10px 12px 0;
-  padding: 8px 12px 8px 28px;
-  border: 1px solid var(--accent-500);
-  border-radius: 8px;
-  background: rgba(224, 164, 88, 0.08);
+  margin: 0;
+  padding: var(--space-xs) var(--space-sm) var(--space-xs) var(--space-lg);
+  border: 1px solid var(--color-hairline);
+  border-left: 3px solid var(--color-warning);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-soft);
   max-height: 120px;
   overflow-y: auto;
+  font-size: var(--text-caption);
 }
 
-.empty {
-  margin: auto;
-  text-align: center;
-  padding: 24px;
+/* ---- Cards: the unit of content, so a page is a column of subjects rather than a wall of controls -- */
+
+.card {
+  background: var(--color-canvas);
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
 }
 
-.preview {
-  grid-area: preview;
-  background: var(--ink-850);
+.card-head {
   display: flex;
-  flex-direction: column;
-  min-height: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-md);
+  padding: var(--space-md) var(--space-lg);
+  border-bottom: 1px solid var(--color-hairline-soft);
+  background: var(--color-surface-soft);
+}
+
+.card-head-text {
   min-width: 0;
 }
 
-.preview header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--ink-800);
+.card-title {
+  margin: 0;
+  font-size: var(--text-title-sm);
+  font-weight: 500;
+  color: var(--color-ink);
 }
 
-.preview iframe {
+.card-desc {
+  margin: var(--space-xxs) 0 0;
+  max-width: 84ch;
+  font-size: var(--text-caption);
+  color: var(--color-muted);
+}
+
+.card-head-actions {
+  display: flex;
+  gap: var(--space-xs);
+  flex-wrap: wrap;
+}
+
+.card-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  padding: var(--space-lg);
+}
+
+.card-note {
+  margin: 0;
+  font-size: var(--text-caption);
+  color: var(--color-muted);
+}
+
+.card-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  flex-wrap: wrap;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+/* ---- Forms: a label above the control, guidance beneath it, in a grid that wraps ------------------ */
+
+.form-grid {
+  display: grid;
+  gap: var(--space-md);
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  align-items: start;
+}
+
+.form-grid--single {
+  grid-template-columns: minmax(200px, 340px);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xxs);
+  min-width: 0;
+}
+
+/* A path or a URL is worth the whole row. `1 / -1` rather than `span 2`, so it cannot create a column
+   that overflows a narrow window. */
+.field--grow {
+  grid-column: 1 / -1;
+}
+
+.field-label {
+  font-size: var(--text-caption);
+  font-weight: 500;
+  color: var(--color-body-strong);
+}
+
+.field-hint {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--color-muted);
+}
+
+.field input,
+.field select,
+.field textarea {
+  width: 100%;
+}
+
+/* ---- State: ONE treatment for empty, loading, error, success, warning and info --------------------
+   The left rule and the icon badge carry the tone; the surface stays cream, because the canvas is the
+   brand and a full red panel would introduce a second visual language. This is the part Halo's console
+   does best and this application did worst — an error used to be a line of text at the top of a long
+   column, or a `title` tooltip nobody hovers. */
+
+.state {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-sm);
+  padding: var(--space-md) var(--space-lg);
+  border: 1px solid var(--color-hairline);
+  border-left-width: 3px;
+  border-radius: var(--radius-lg);
+  background: var(--color-canvas);
+}
+
+.state--inline {
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-md);
+}
+
+.state-icon {
+  flex: 0 0 22px;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-pill);
+  background: var(--color-surface-card);
+  color: var(--color-body);
+  font-size: var(--text-caption-uppercase);
+  font-weight: 500;
+  line-height: 1;
+}
+
+.state-icon svg {
+  width: 13px;
+  height: 13px;
+}
+
+.state-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xxs);
+}
+
+.state-title {
+  margin: 0;
+  font-size: var(--text-body-sm);
+  font-weight: 500;
+  color: var(--color-ink);
+}
+
+.state-desc {
+  font-size: var(--text-caption);
+  line-height: 1.55;
+  color: var(--color-body);
+  overflow-wrap: anywhere;
+}
+
+.state-desc p {
+  margin: 0;
+}
+
+.state-desc p + p {
+  margin-top: var(--space-xxs);
+}
+
+.state-actions {
+  display: flex;
+  gap: var(--space-xs);
+  flex-wrap: wrap;
+  margin-top: var(--space-xs);
+}
+
+.state-dismiss {
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  font-size: 11px;
+  background: transparent;
+  border-color: transparent;
+  color: var(--color-muted);
+}
+
+.state-dismiss:hover:not(:disabled) {
+  border-color: transparent;
+  color: var(--color-ink);
+}
+
+.state--empty {
+  border-left-color: var(--color-surface-cream-strong);
+}
+
+.state--empty .state-icon {
+  background: transparent;
+  color: var(--color-muted-soft);
+}
+
+.state--loading {
+  border-left-color: var(--color-accent-amber);
+}
+
+.state--loading .state-icon {
+  background: transparent;
+}
+
+.state--info {
+  border-left-color: var(--color-accent-teal);
+}
+
+.state--info .state-icon {
+  background: var(--color-accent-teal);
+  color: var(--color-on-primary);
+}
+
+.state--success {
+  border-left-color: var(--color-success);
+}
+
+.state--success .state-icon {
+  background: var(--color-success);
+  color: var(--color-on-primary);
+}
+
+.state--warning {
+  border-left-color: var(--color-warning);
+}
+
+.state--warning .state-icon {
+  background: var(--color-warning);
+  color: var(--color-on-primary);
+}
+
+.state--error {
+  border-left-color: var(--color-error);
+}
+
+.state--error .state-icon {
+  background: var(--color-error);
+  color: var(--color-on-primary);
+}
+
+.spinner {
+  width: 12px;
+  height: 12px;
+  border-radius: var(--radius-pill);
+  border: 2px solid var(--color-hairline);
+  border-top-color: var(--color-primary);
+  animation: spin 700ms linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation: none;
+  }
+}
+
+/* ---- Chips: the top bar's status tokens ----------------------------------------------------------- */
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xxs);
+  padding: 3px 10px;
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-pill);
+  background: var(--color-canvas);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  /* The full text is on the chip's `title`, so a long automatic-backup sentence clips rather than
+     pushing the breadcrumb out of the top bar. */
+  max-width: 280px;
+}
+
+.chip::before {
+  content: '';
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background: var(--color-muted-soft);
+}
+
+.chip--success::before {
+  background: var(--color-success);
+}
+
+.chip--warning {
+  border-color: var(--color-warning);
+  color: var(--color-body-strong);
+}
+
+.chip--warning::before {
+  background: var(--color-warning);
+}
+
+.chip--error {
+  border-color: var(--color-error);
+  color: var(--color-body-strong);
+}
+
+.chip--error::before {
+  background: var(--color-error);
+}
+
+.chip--primary::before {
+  background: var(--color-primary);
+}
+
+.icon {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+}
+
+/* ---- The editor page: a two-pane workspace rather than a column of cards -------------------------- */
+
+.workspace {
+  display: grid;
+  /* The editor share is a custom property so the drag handle writes one number rather than three column
+     sizes that could disagree. It is a percentage OF THIS ELEMENT, which is why the handle measures its
+     ratio here and not on the preview pane. */
+  grid-template-columns: minmax(0, var(--editor-share, 50%)) 10px minmax(0, 1fr);
+  flex: 1;
+  min-height: 0;
+}
+
+.pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--color-canvas);
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.pane-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  border-bottom: 1px solid var(--color-hairline);
+  background: var(--color-surface-soft);
+}
+
+.pane-title {
+  margin: 0;
+  font-size: var(--text-title-sm);
+  font-weight: 500;
+}
+
+.pane-note {
+  font-size: var(--text-caption);
+  color: var(--color-muted);
+}
+
+.pane-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+/* Centred inside whatever pane it sits in — either as a modifier on `.pane-body` or on its own. */
+.pane-body--center {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-lg);
+}
+
+.pane-body--center > .state {
+  max-width: 420px;
+}
+
+/* The preview is the REAL Astro dev server in an iframe (handoff.md section 5.1), so it owns its own
+   scrolling and paints the site's own background. */
+.pane-body iframe {
   flex: 1;
   min-height: 0;
   border: none;
-  background: #fff;
+  background: var(--color-canvas);
 }
 
-.preview-empty {
-  padding: 16px;
+.split-handle {
+  position: relative;
+  background: transparent;
+  cursor: col-resize;
 }
+
+/* A wider hit area than the visible line, because the line itself is a nuisance to grab. */
+.split-handle::after {
+  content: '';
+  position: absolute;
+  inset: 0 4px;
+  border-radius: var(--radius-pill);
+  background: var(--color-hairline);
+}
+
+.split-handle:hover::after,
+.split-handle:focus-visible::after {
+  background: var(--color-primary);
+}
+
+.split-handle:focus-visible {
+  outline: none;
+}
+
+/* ---- Status line: the last thing that happened, in one line --------------------------------------- */
 
 .statusbar {
-  grid-area: status;
-  background: var(--ink-850);
   display: flex;
   align-items: center;
-  gap: 16px;
-  padding: 0 12px;
-  font-size: 12px;
+  gap: var(--space-md);
+  padding: 0 var(--space-md);
+  border-top: 1px solid var(--color-hairline);
+  background: var(--color-surface-soft);
+  font-size: 11px;
+  color: var(--color-muted);
+  white-space: nowrap;
+  overflow: hidden;
 }
 
-.statusbar .error {
-  color: var(--danger-400);
+.statusbar-end {
   margin-left: auto;
-  cursor: pointer;
-}
-
-.statusbar .issues {
-  color: var(--accent-400);
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* The log page (handoff.md section 18). */
@@ -907,143 +1714,216 @@ button.primary {
   font-size: 11px;
 }
 
-/* The attachment pool (handoff.md section 13). */
-.attachment-panel {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  flex: 1;
-  overflow-y: auto;
-  padding: 10px 14px;
-  gap: 12px;
-}
-
-.attachment-header {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.attachment-header strong {
-  margin-right: auto;
-}
-
-.attachment-panel h3 {
-  margin: 0 0 6px;
-  font-size: 13px;
-  color: var(--ink-300);
-}
-
-.attachment-panel section {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.attachment-panel label {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  flex: 1;
-}
-
-.attachment-panel label > span {
-  font-size: 12px;
-  color: var(--ink-400);
-}
-
-.attachment-panel .row {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.attachment-error {
-  color: var(--danger-400);
-  margin: 0;
-}
-
-.attachment-notice {
-  color: var(--accent-400);
-  margin: 0;
-}
-
-.attachment-result code,
-.attachment-panel .hint code {
-  font-family: 'Cascadia Mono', Consolas, monospace;
-  font-size: 11px;
-  background: var(--ink-850);
-  padding: 1px 4px;
-  border-radius: 3px;
-}
-
-.attachment-result button {
-  margin-left: 8px;
-}
-
-.attachment-list,
-.orphan-list {
+/* The attachment pool (handoff.md section 13) — the page this sample converts.
+   A row is a card-shaped unit with three zones: what the file is, its three independent axes, and its
+   actions. Anything that went wrong takes the WHOLE row as a state block, which is the point: a failure
+   used to be a `title` tooltip on two words and a line at the top of a long scrolling column. */
+.row-list {
   list-style: none;
   margin: 0;
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: var(--space-xs);
 }
 
-.attachment-list li,
-.orphan-list li {
+.row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-xs) var(--space-md);
+  align-items: start;
+  padding: var(--space-sm) var(--space-md);
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-md);
+  background: var(--color-canvas);
+}
+
+/* A recorded failure marks the row itself, so the row is findable before the message is read. */
+.row--failed {
+  border-color: var(--color-error);
+}
+
+.row-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xxs);
+}
+
+.row-title {
+  margin: 0;
   display: flex;
   align-items: center;
-  gap: 8px;
   flex-wrap: wrap;
-  padding: 4px 8px;
-  border: 1px solid var(--ink-800);
-  border-radius: 6px;
-  font-size: 12px;
+  gap: var(--space-xs);
+  font-size: var(--text-body-sm);
+  font-weight: 500;
+  color: var(--color-ink);
+  overflow-wrap: anywhere;
 }
 
-.attachment-list li .name {
-  font-weight: 600;
+.row-meta {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+  font-size: var(--text-caption);
+  color: var(--color-muted);
+  overflow-wrap: anywhere;
 }
 
-.attachment-list li button {
-  margin-left: auto;
+.row-axes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xxs);
+  margin-top: var(--space-xxs);
 }
 
-.attachment-list li button + button {
-  margin-left: 0;
+.row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+  align-items: center;
+  justify-content: flex-end;
 }
 
-/* Each axis gets its own colour so a failure is visible per axis rather than as one status. */
-.axis {
-  padding: 1px 5px;
-  border-radius: 4px;
-  background: var(--ink-850);
-  color: var(--ink-300);
+.row-actions button {
+  padding: 5px 10px;
+  font-size: var(--text-caption);
+}
+
+.row-hint {
+  grid-column: 1 / -1;
+  margin: 0;
   font-size: 11px;
+  line-height: 1.5;
+  color: var(--color-muted);
+}
+
+.row-hint--warn {
+  color: var(--color-warning);
+}
+
+/* A state block inside a row takes the whole row. */
+.row > .state {
+  grid-column: 1 / -1;
+}
+
+/* Each axis gets its own treatment so a failure is visible per axis rather than as one status (§13.1). */
+.axis {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 9px;
+  border-radius: var(--radius-pill);
+  background: var(--color-surface-card);
+  color: var(--color-body);
+  font-size: 11px;
+  font-weight: 500;
 }
 
 .axis-failed {
-  background: rgba(224, 108, 117, 0.18);
-  color: var(--danger-400);
+  background: var(--color-error);
+  color: var(--color-on-primary);
 }
 
 .axis-succeeded,
 .axis-applied {
-  color: var(--accent-400);
+  background: var(--color-surface-cream-strong);
+  color: var(--color-body-strong);
 }
 
-.orphan-list.safe li {
-  border-color: var(--accent-500);
+.plain-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xxs);
+  font-size: var(--text-caption);
 }
 
-.orphan-list.confirm li {
-  border-color: var(--ink-700);
+.plain-list li {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+  padding: var(--space-xxs) var(--space-xs);
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-sm);
 }
 
-.orphan-list li button {
+.plain-list li button {
   margin-left: auto;
+  padding: 3px 8px;
+  font-size: 11px;
+}
+
+.bullet-list {
+  margin: 0;
+  padding-left: var(--space-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xxs);
+  font-size: var(--text-caption);
+}
+
+.disclosure {
+  font-size: var(--text-caption);
+  color: var(--color-muted);
+}
+
+.disclosure summary {
+  padding: var(--space-xs) 0;
+  color: var(--color-body);
+  cursor: pointer;
+}
+
+.disclosure .plain-list {
+  margin-top: var(--space-xs);
+}
+
+.subform {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  margin-top: var(--space-xs);
+  padding: var(--space-md);
+  border: 1px solid var(--color-hairline-soft);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-soft);
+}
+
+.subform-title {
+  margin: 0;
+  font-size: var(--text-caption);
+  font-weight: 500;
+  letter-spacing: 1px;
+  color: var(--color-muted);
+}
+
+/* Deleting a target also removes its credential, so it is an explicit step in the page rather than a
+   `confirm()` a stray keypress could dismiss. */
+.confirm {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding: var(--space-sm);
+  border: 1px solid var(--color-error);
+  border-radius: var(--radius-md);
+}
+
+.confirm-text {
+  margin: 0;
+  font-size: var(--text-caption);
+  line-height: 1.55;
+  color: var(--color-body);
+}
+
+.confirm-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
 }
 
 /* Backup and restore (handoff.md section 17). */
@@ -1354,107 +2234,11 @@ button.primary {
   font-size: 12px;
 }
 
-/* Storage targets in the attachment panel (handoff.md sections 13.10-13.13). */
-.storage-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-
-.storage-list li {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  padding: 4px 8px;
-  border: 1px solid var(--ink-800);
-  border-radius: 6px;
-  font-size: 12px;
-}
-
-.storage-list .name {
-  font-weight: 600;
-}
-
-.attachment-panel .warn {
-  color: var(--accent-400);
-}
-
-.attachment-panel .bad {
-  color: var(--danger-400);
-}
-
-.attachment-panel .ok {
-  color: var(--accent-400);
-}
-
-.attachment-panel .missing {
-  color: var(--danger-400);
-}
-
-/* The storage-target form (handoff.md sections 13.1, 13.11, 13.13; PROCESSING.md section 5.5). */
-.storage-form {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.attachment-panel h4 {
-  margin: 10px 0 4px;
-  font-size: 13px;
-  color: var(--ink-300);
-}
-
-/* A control's guidance is part of its label, so it is read together with it. */
-.attachment-panel label > .field-hint {
-  font-size: 11px;
-  color: var(--ink-400);
-}
-
-/* Why a kind has no adapter in this build (sections 13.10 and 13.12), and what a kind switch did not keep. */
-.kind-notice {
-  margin: 0;
-  font-size: 12px;
-}
-
-.kind-notice.warn {
-  color: var(--accent-400);
-}
-
-.kind-notice.info {
-  color: var(--ink-400);
-}
-
-/* Section 13.2.2's reason, next to the control it explains. */
-.eligibility-reason {
-  font-size: 11px;
-  color: var(--ink-400);
-}
-
-/* Deleting a target also removes its credential, so it is an explicit step in the panel rather than a
-   dialog a stray keypress could dismiss. */
-.target-confirm {
-  flex-basis: 100%;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 6px 8px;
-  border: 1px solid var(--danger-400);
-  border-radius: 6px;
-}
-
-.target-confirm p {
-  margin: 0;
-  font-size: 12px;
-}
-
-.attachment-panel .danger {
-  border-color: var(--danger-400);
-  color: var(--danger-400);
-}
+/* The storage-target form and the target list (handoff.md sections 13.10-13.13; PROCESSING.md 5.5) are
+   now built from the shell's own `.row`, `.form-grid`, `.field`, `.subform` and `.state` — see the
+   attachment pool block above. The classes that used to live here (`.storage-list`, `.storage-form`,
+   `.kind-notice`, `.eligibility-reason`, `.target-confirm`, and the panel-scoped `.warn` / `.bad` /
+   `.ok` / `.missing`) are gone with the panel they belonged to, rather than left behind as dead CSS. */
 
 /* The works system (handoff.md section 10; PROCESSING.md section 5.9).
    The panel is the third view beside the attachment pool and the backup panel, so it borrows their
@@ -1819,4 +2603,73 @@ button.primary {
   font-size: 11px;
   white-space: pre-wrap;
   word-break: break-all;
+}
+
+/* ==================================================================================================
+ * The retune for the panels this sample did NOT convert
+ *
+ * Those panels keep their own internal structure — that is the point of a one-page sample. They are
+ * re-coloured by the legacy aliases near the top of this file, and this block gives them the design
+ * tokens' TWO remaining shared properties: the type faces, and the dark product surface where a code
+ * pane genuinely is one. Every value is a token; no new colour is introduced. This block shrinks to
+ * nothing as each panel is converted.
+ * ================================================================================================== */
+
+/* The serif display face is the brand voice, so a heading inside a panel uses it too. */
+.editor-content .tiptap h1,
+.editor-content .tiptap h2,
+.editor-content .tiptap h3,
+.editor-content .tiptap h4 {
+  font-family: var(--font-display);
+  font-weight: 400;
+  letter-spacing: -0.3px;
+  color: var(--color-ink);
+}
+
+/* One mono face for every code surface, named once. */
+.markdown-source,
+.log-entries,
+.build-log,
+.fingerprint,
+.draft-source,
+.release-list .release-id,
+.target-list .target-id,
+.frontmatter-strip .fm.id .fm-value,
+.draft-summary code {
+  font-family: var(--font-mono);
+}
+
+/* Dark product surfaces. `DESIGN.md`'s third surface mode is where product chrome belongs, so the raw
+   Markdown pane is dark and so is a fenced code block inside the editor. Both need their text flipped,
+   which is exactly why they are listed together. */
+.markdown-source {
+  background: var(--color-surface-dark);
+  color: var(--color-on-dark);
+  border-radius: 0;
+}
+
+.editor-content .tiptap pre,
+.build-log {
+  color: var(--color-on-dark);
+}
+
+.editor-content .tiptap code {
+  background: var(--color-surface-soft);
+  color: var(--color-body-strong);
+}
+
+.editor-content .tiptap pre code {
+  background: none;
+  color: inherit;
+}
+
+.log-entries .timestamp,
+.log-entries .category {
+  color: var(--color-muted-soft);
+}
+
+/* `DESIGN.md`'s `button-primary` label is `on-primary`, never the dark surface the old palette used. */
+button.primary {
+  color: var(--color-on-primary);
+  font-weight: 500;
 }
