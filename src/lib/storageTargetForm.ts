@@ -144,9 +144,9 @@ const KIND_FIELDS: Record<string, StorageFieldKey[]> = {
   // §13.12 names "实例地址 / API 地址" and an independent Token, which is the credential; there is no path
   // prefix, because the KEY and the public URL are the INSTANCE's rather than ours.
   lsky: ['instance', 'credential'],
-  // SFTP has no adapter in this build (§5.3) and no field the command surface can use, so it stays offerable
-  // and reported rather than half-configured. Lsky Pro used to be here and left when §5.4's protocol was
-  // verified against the vendor's own artifacts.
+  // The RETIRED §13.10 kind (ADR-0017). It is NOT offered — the kind list comes from the crate's canonical
+  // `ALL`, which no longer contains it — but a target saved before the removal still exists in a user's list,
+  // and this entry is what lets the form render that row with the build's own reason instead of a blank.
   sftp: [],
 };
 
@@ -165,7 +165,7 @@ const KIND_LABELS: Record<string, string> = {
   local: '本机 / 服务器目录(§13.10)',
   s3: 'S3 / S3-compatible(§13.11)',
   github: 'GitHub 仓库(§13.13)',
-  sftp: '自己的服务器 SFTP(§13.10)',
+  sftp: 'SFTP(已从 §13.10 移除)',
   lsky: 'Lsky Pro 兰空图床(§13.12)',
 };
 
@@ -181,8 +181,8 @@ const KIND_ALIASES: Record<string, string> = {
   's3-compatible': 's3',
   s3_compatible: 's3',
   gh: 'github',
-  ssh: 'sftp',
-  server: 'sftp',
+  // `ssh` and `server` are GONE: both were spellings of §13.10's SSH target, which was REMOVED (ADR-0017), and
+  // an alias that maps a retired spelling onto a live kind would be a second door into a kind that cannot work.
   lskypro: 'lsky',
   lsky_pro: 'lsky',
 };

@@ -820,7 +820,7 @@ AI 不得未经确认直接覆盖 Markdown。
 
 ## 13.1 正式附件存储目标
 
-1. 用户自己的服务器
+1. 本机 / 服务器目录（§13.10）
 2. S3 / S3-compatible
 3. Lsky Pro（兰空图床）
 4. GitHub 仓库
@@ -946,14 +946,14 @@ storage_target_id
 
 - S3：`bucket + key_prefix`
 - GitHub：`repository + branch + path_prefix`
-- SFTP / SSH：`host identity + remote directory`
+- 本机 / 服务器目录：目标目录（项目根 + 目标 id）+ `path_prefix`
 - Lsky Pro：`instance + configured album / upload scope`
 
 改变路径前缀、远程目录等形成新的 namespace。旧 namespace 的对象记录继续保留，系统不自动搬迁远程文件。
 
 ## 13.6 公开 URL 前缀迁移
 
-服务器、S3、GitHub 等目标的公开 URL 前缀与对象实际路径分离。
+本机 / 服务器目录、S3、GitHub 等目标的公开 URL 前缀与对象实际路径分离。
 
 修改公开 URL 前缀：
 
@@ -989,17 +989,14 @@ photo.webp
 
 清理必须尊重状态和引用索引。
 
-## 13.10 服务器附件存储
+## 13.10 本机 / 服务器目录附件存储
 
-支持 SSH / SFTP。
+使用本机目录，或这台机器已经能写入的服务器目录。**不需要 SSH 客户端**：目标是一个路径，不是一个协议。
 
 用户可配置：
 
-- 主机
-- 端口
-- 用户名
-- 认证信息
-- 远程目录
+- 目录：由项目根与目标 id 决定，没有主机 / 端口 / 用户名 / 认证信息
+- 路径前缀
 - 公开 URL 前缀
 
 ## 13.11 S3
@@ -1257,8 +1254,6 @@ EdgeOne 两个区域是两个独立 logical deployment target。
 发布生成当前唯一 `dist/` 后：
 
 - 用户自行将 `dist/site` 与 `dist/works` 静态内容上传到自己的 1Panel 网站环境 / Works Origin 环境。
-
-SSH / SFTP 不属于网站部署系统，只属于附件存储系统。
 
 ## 14.12 部署结果
 
@@ -2065,7 +2060,7 @@ error
 - Cloudflare Pages、EdgeOne 中国大陆、EdgeOne 国际可以独立发布主站 / Works 子目标。
 - 失败目标可以手动按原 Release 重发。
 - 1Panel 可以由用户手动上传当前 `dist`。
-- 附件缓存池、服务器、S3、兰空、GitHub、远程图片供应全部按规则工作。
+- 附件缓存池、本机 / 服务器目录、S3、兰空、GitHub、远程图片供应全部按规则工作。
 - 相同文件可以安全去重；多引用场景不会错误清理。
 - 远程附件不会因删除引用而自动删除。
 - 自动备份、手动备份、本地导出、完整恢复、仅内容恢复可用。

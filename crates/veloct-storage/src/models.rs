@@ -160,8 +160,11 @@ string_enum! {
 
 string_enum! {
     /// `handoff.md` §13.1.
+    ///
+    /// `sftp` is GONE: §13.10's SSH target was removed on 2026-10-02 (ADR-0017), and a stored-value mapping
+    /// that still named it would be the kind of stale list that ages into a wrong answer. The macro's
+    /// `unknown` fallback means a row written before the removal degrades to "unknown" rather than failing.
     pub enum StorageKind {
-        Sftp => "sftp",
         S3 => "s3",
         Lsky => "lsky",
         Github => "github",

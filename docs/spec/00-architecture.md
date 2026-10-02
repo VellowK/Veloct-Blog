@@ -335,5 +335,45 @@ signing-key derivation. Nothing here has been run against a live bucket, and the
 Status: **implemented** for both §17.4 (backup) and §13.11 (attachment storage);
 `unimplemented_reason` now answers `None` for S3 in both crates, which is asserted rather than assumed.
 
+## ADR-0017 — SFTP is REMOVED from §13.10, at the owner's decision; §13.10 keeps the directory target
+
+`handoff.md` is the locked contract, and this note records the change made to it at the owner's explicit
+request: **the SSH/SFTP attachment target is gone.** The owner's words were that it "really is useless", and
+the evidence supports that reading rather than merely permitting it:
+
+- **It was never implementable without a new dependency — and the reason recorded for that was wrong.**
+  `PROCESSING.md` §5.3 said an SSH implementation "pulls OpenSSL onto Windows/MSVC", but the comment that
+  reason came from is attached to **git2** in the root `Cargo.toml` (`git2`'s `https`/`ssh` features). An
+  SFTP client has its own choices: `ssh2` → `libssh2-sys` (a C library), and **`russh` 0.63 → no OpenSSL and
+  no libssh2 at all** (RustCrypto throughout; `ring`/`aws-lc-rs` are OPTIONAL features, not defaults).
+  Measured on 2026-10-02: this workspace already builds `rustls` + `aws-lc-rs` + `ring`, and its `Cargo.lock`
+  already contains `tokio` and `tokio-util` — so neither the crypto nor the runtime would have been new.
+- **It was the last kind with no adapter, and the target nobody could use.** There is no live SFTP server in
+  this environment, so every SFTP claim was a `NOT_CONFIGURED` plus a paragraph of prose, and §28's H15 was
+  PARTIAL for it. A protocol that can only ever be reported is a cost with no payer.
+- **The 远程目录 the clause named is already covered** by a target that DOES work: `StorageKind::Local`,
+  §13.10's "server storage" where the server is this machine — also the target the whole upload-and-delete
+  path is proven against.
+
+**What §13.10 is now:** the local / server DIRECTORY target — a path, not a protocol. No SSH client, no host,
+no port, no credential; the directory comes from the project root and the target id, and the user configures a
+path prefix and a public URL prefix. The clause keeps its number and its neighbours.
+
+**Compatibility rule, and it is deliberate: an old record still LOADS.** The kind is removed from
+`StorageKind::ALL` and from `StorageKind::parse`, so it can never be OFFERED or configured again. The enum
+variant is RETAINED and marked load-only, because `read_storage_targets` parses the whole
+`.veloct/storage-targets.json` as one `Vec<StorageConfig>`: dropping the variant would make ONE stale record
+fail the ENTIRE list, taking a user's other targets with it. So a target saved before the removal still loads,
+is reported as removed with a reason a user can act on, can be DELETED, and cannot be re-saved. Its SSH fields
+(`host`, `port`, `username`) are kept so that record round-trips instead of having its configuration silently
+erased.
+
+**What was NOT removed, and why:** the "a kind this build cannot use is LISTED and REPORTED, never silently
+missing" mechanism (ADR-0010). It still has exactly one user — the load-only record above — and it is the shape
+Pixabay's refusal and Lsky Pro's former gap both relied on. A future kind that cannot be implemented gets that
+treatment rather than a deleted row.
+
+Status: **removed**, 2026-10-02, at the owner's request.
+
 
 

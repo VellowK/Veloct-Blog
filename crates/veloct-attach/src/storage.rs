@@ -1,7 +1,9 @@
 //! Storage adapters.
 //!
-//! `handoff.md` §13.1 names five target kinds and §13.10–§13.13 fix what each one is configured
-//! with. §13.5 adds the piece that keeps dedup honest: a target has a stable `storage_namespace`
+//! `handoff.md` §13.1 names the target kinds and §13.10–§13.13 fix what each one is configured with.
+//! **§13.10's SSH/SFTP target was REMOVED on 2026-10-02 (ADR-0017)**, so the canonical list holds four
+//! OFFERED kinds and the retired variant survives only so a record saved before the removal still loads.
+//! §13.5 adds the piece that keeps dedup honest: a target has a stable `storage_namespace`
 //! derived from the fields that decide an object's identity (`bucket + key_prefix` for S3,
 //! `repository + branch + path_prefix` for GitHub, and so on). Changing a prefix forms a NEW
 //! namespace, and §13.5 says the old namespace's object records are kept — nothing is migrated.
@@ -24,7 +26,15 @@ use crate::state::StorageTargetId;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StorageKind {
-    /// The user's own server over SSH/SFTP (`handoff.md` §13.10).
+    /// **RETIRED — load-only, and deliberately still here.** §13.10 used to require an SSH/SFTP target; the
+    /// owner removed it on 2026-10-02 (ADR-0017), so this kind is NOT in [`StorageKind::ALL`] and
+    /// [`StorageKind::parse`] refuses its spellings: it can never be offered or configured again.
+    ///
+    /// It is kept because `read_storage_targets` parses the whole `.veloct/storage-targets.json` as ONE
+    /// `Vec<StorageConfig>`: dropping the variant would make a single stale record fail the ENTIRE list and
+    /// take a user's other targets with it. A target saved before the removal therefore still loads, is
+    /// reported as removed, can be deleted and cannot be re-saved. `host`/`port`/`username` below survive for
+    /// the same reason — so the record round-trips instead of having its configuration silently erased.
     Sftp,
     /// A local directory: this machine, or a directory this machine can already write.
     ///
@@ -43,16 +53,26 @@ pub enum StorageKind {
 }
 
 impl StorageKind {
-    /// Every kind this build knows, in the order `handoff.md` §13.1 names them — with the
+    /// Every kind this build KNOWS AND OFFERS, in the order `handoff.md` §13.1 names them — with the
     /// zero-configuration directory first, because it is the one target a new project can always use.
     ///
-    /// This is the ONE canonical list. The `storage_kinds` command and the window's kind list both read it,
-    /// and whether a kind has an adapter is answered per kind by `targets::unimplemented_reason`, whose match
-    /// is exhaustive — so a kind added to this enum does not compile until it is answered there. A second list
-    /// of kinds somewhere else would be a second answer to §13.10–§13.13's question ("which kinds exist, and
-    /// which of them work"), and two answers eventually disagree.
-    pub const ALL: [StorageKind; 5] = [Self::Local, Self::S3, Self::GitHub, Self::Sftp, Self::LskyPro];
+    /// This is the ONE canonical list of OFFERABLE kinds. The `storage_kinds` command and the window's kind
+    /// list both read it, and whether a kind has an adapter is answered per kind by
+    /// `targets::unimplemented_reason`, whose match is exhaustive — so a kind added to this enum does not
+    /// compile until it is answered there. A second list of kinds somewhere else would be a second answer to
+    /// §13.10–§13.13's question ("which kinds exist, and which of them work"), and two answers eventually
+    /// disagree.
+    ///
+    /// **SFTP is absent on purpose** (ADR-0017): the variant exists for a record saved before its removal,
+    /// and a retired kind is not an offered one. That is also why the array's length and the enum's variant
+    /// count no longer match — `every_listed_kind_answers_the_adapter_question_consistently` and
+    /// `a_retired_kind_is_not_offered_and_still_reports_why` state the difference.
+    pub const ALL: [StorageKind; 4] = [Self::Local, Self::S3, Self::GitHub, Self::LskyPro];
 
+    /// The crate's own name for a kind, as it is stored and shown.
+    ///
+    /// A RETIRED kind keeps its spelling so a record saved before the removal still reads back under the name
+    /// it was saved with; [`StorageKind::parse`] is the door that is closed, not this one.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Sftp => "sftp",
@@ -63,11 +83,16 @@ impl StorageKind {
         }
     }
 
+    /// The kind a typed spelling names, among the kinds this build OFFERS.
+    ///
+    /// `None` means the spelling names nothing this build can configure — including `sftp`, `ssh` and
+    /// `server`, because §13.10's SSH target was REMOVED (ADR-0017) and a kind that cannot be configured must
+    /// not be offered by the one function the command surface trusts. An OLD record does not come through
+    /// here: it is read by serde, which is why the retired variant survives at all.
     pub fn parse(value: &str) -> Option<Self> {
         match value.trim().to_ascii_lowercase().as_str() {
-            "sftp" | "ssh" => Some(Self::Sftp),
-            // A local directory is written as `local`, but a user naming the thing they mean — a
-            // directory — is not making a mistake, and `dir` is how the window's own kind list spells it.
+            // A local directory is written as `local`, but a user naming the thing they mean — a directory —
+            // is not making a mistake, and `dir` is how the window's own kind list spells it.
             "local" | "dir" | "directory" => Some(Self::Local),
             "s3" | "s3_compatible" | "s3-compatible" => Some(Self::S3),
             "lsky" | "lskypro" | "lsky_pro" => Some(Self::LskyPro),
@@ -95,7 +120,8 @@ impl StorageKind {
             // is recorded in `lsky.rs`. The PAID line ("Lsky Pro+", 2.x/enterprise 1.x) is deliberately
             // NOT claimed: from 2.3.0 the vendor encrypts that backend and publishes no API reference.
             Self::LskyPro => true,
-            // SFTP needs a live server to verify against, and there is none in this environment.
+            // §13.10's SSH/SFTP target was REMOVED (ADR-0017), so neither its protocol nor its absence from
+            // the build can be "verified": it is a retired kind that only an old record still names.
             Self::Sftp => false,
         }
     }
@@ -114,7 +140,9 @@ pub struct StorageConfig {
     #[serde(default)]
     pub enabled: bool,
 
-    /// SFTP: host. Unused by the other kinds.
+    /// SSH fields for the RETIRED §13.10 target (ADR-0017). Nothing implements this kind any more: they are
+    /// kept so a record saved before the removal round-trips unchanged instead of having its configuration
+    /// silently erased by the next write.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub host: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -206,6 +234,9 @@ impl StorageConfig {
                 self.branch.clone().unwrap_or_else(|| "main".to_string()),
                 prefix,
             ],
+            // The RETIRED kind keeps its namespace shape, because §13.5 says an old namespace's object records
+            // are kept and never migrated: an object recorded under `sftp:host|port|user|prefix` must keep
+            // resolving to that namespace so its record still describes the object it was written for.
             StorageKind::Sftp => vec![
                 self.host.clone().unwrap_or_default(),
                 self.port.map(|port| port.to_string()).unwrap_or_default(),
@@ -242,11 +273,12 @@ impl StorageConfig {
     /// The production caller is the SAVE path: `save_storage_target` runs this (through `save_target_config`)
     /// before it writes the target list, so the rules below are enforced where the user meets them rather than
     /// at the first upload. It is called for a kind this build IMPLEMENTS only — `is_implemented` is the check —
-    /// because SFTP's arm (host and username) asks for protocol fields nothing in this build can use yet, and a
-    /// half-filled target of that kind is one of the ways §13.10's gap stays visible in the target list.
+    /// because the one kind that is not implemented is the RETIRED §13.10 target (ADR-0017), which cannot be
+    /// configured at all any more: its arm below states the removal rather than demanding fields for a protocol
+    /// nothing speaks.
     ///
-    /// Every OTHER kind's arm is live, and Lsky Pro's became live when §5.4's protocol was verified against the
-    /// vendor's own artifacts: its `instance` is now required where the user saves it, not at the first upload.
+    /// Every OFFERED kind's arm is live, and Lsky Pro's became live when §5.4's protocol was verified against the
+    /// vendor's own artifacts: its `instance` is required where the user saves it, not at the first upload.
     pub fn validate(&self) -> std::result::Result<(), String> {
         if self.id.as_str().trim().is_empty() {
             return Err("a storage target needs an id".into());
@@ -255,13 +287,15 @@ impl StorageConfig {
             return Err("a storage target needs a name".into());
         }
         match self.kind {
+            // A retired kind cannot be made valid by filling anything in, so the arm says so instead of asking
+            // for a host and a username no adapter would read. §13.5 keeps the old record's namespace alive
+            // (above) — validation is about whether a target can be USED, and this one cannot.
             StorageKind::Sftp => {
-                if self.host.as_deref().unwrap_or("").trim().is_empty() {
-                    return Err("SFTP needs a host".into());
-                }
-                if self.username.as_deref().unwrap_or("").trim().is_empty() {
-                    return Err("SFTP needs a username".into());
-                }
+                return Err(
+                    "SFTP 已从 §13.10 移除(ADR-0017):这个目标无法再使用,请删除它并改用本机 / 服务器目录、S3、\
+                     兰空图床或 GitHub 目标。旧的记录仍会加载,所以这里说明原因而不是要求填写主机与用户名。"
+                        .into(),
+                );
             }
             StorageKind::S3 => {
                 if self.bucket.as_deref().unwrap_or("").trim().is_empty() {
@@ -812,11 +846,11 @@ mod tests {
     }
 
     #[test]
-    fn all_four_documented_kinds_are_supported() {
-        // handoff.md section 13.1 lists the targets; sections 13.10 to 13.13 name the protocols, and
-        // `local` is the directory target a machine that IS the server writes into.
-        assert_eq!(StorageKind::parse("sftp"), Some(StorageKind::Sftp));
-        assert_eq!(StorageKind::parse("ssh"), Some(StorageKind::Sftp));
+    fn the_four_offered_kinds_parse_and_the_retired_one_does_not() {
+        // handoff.md section 13.1 lists the targets; sections 13.10 to 13.13 name the protocols, and `local` is
+        // the directory target a machine that IS the server writes into. **§13.10's SSH target was REMOVED on
+        // 2026-10-02 (ADR-0017)**, so its spellings are answered with `None`: a kind that cannot be configured
+        // must not come back through the one function the command surface trusts.
         assert_eq!(StorageKind::parse("local"), Some(StorageKind::Local));
         assert_eq!(
             StorageKind::parse("dir"),
@@ -828,29 +862,39 @@ mod tests {
         assert_eq!(StorageKind::parse("lsky"), Some(StorageKind::LskyPro));
         assert_eq!(StorageKind::parse("github"), Some(StorageKind::GitHub));
         assert_eq!(StorageKind::parse("ftp"), None);
-        // The two are distinct: a directory is not an SSH server, which is the confusion that let an
-        // unconfigured SFTP target become a local one.
-        assert_ne!(StorageKind::Local.as_str(), StorageKind::Sftp.as_str());
+
+        for retired in ["sftp", "ssh", "SFTP", " server "] {
+            assert_eq!(
+                StorageKind::parse(retired),
+                None,
+                "{retired:?} must no longer be configurable"
+            );
+        }
+        // Not being parseable is one claim; not being OFFERED is the other, and a `parse` test cannot see it.
+        assert!(!StorageKind::ALL.contains(&StorageKind::Sftp));
+        // The variant itself survives for a record saved BEFORE the removal, under the spelling it was saved
+        // with — so its own name still has to round-trip.
+        assert_eq!(StorageKind::Sftp.as_str(), "sftp");
     }
 
     #[test]
-    fn the_canonical_kind_list_names_every_kind_this_build_has_exactly_once() {
+    fn the_canonical_kind_list_names_every_offered_kind_exactly_once() {
         // `StorageKind::ALL` is the ONE list the `storage_kinds` command and the window read; a kind missing
         // from it is a kind nothing can offer. The expected list is written out and guarded by `spelling_of`,
         // an exhaustive match with NO wildcard arm: a kind added to `StorageKind` does not compile until it is
-        // named THERE, one line below this test, where the fix is to extend both lists together. The two are
-        // compared as whole arrays, so a missing kind, an extra one or a duplicate all fail here.
+        // named THERE, one line below this test, where the fix is to extend both lists together — **and the
+        // retired §13.10 kind is the reason that match covers variants the list does NOT contain** (ADR-0017).
+        // The two are compared as whole arrays, so a missing kind, an extra one or a duplicate all fail here.
         let expected = [
             StorageKind::Local,
             StorageKind::S3,
             StorageKind::GitHub,
-            StorageKind::Sftp,
             StorageKind::LskyPro,
         ];
         assert_eq!(
             StorageKind::ALL,
             expected,
-            "StorageKind::ALL must name every kind this build has, once, in §13.1's order"
+            "StorageKind::ALL must name every OFFERED kind this build has, once, in §13.1's order"
         );
 
         let mut spellings: Vec<&str> = Vec::new();
@@ -867,6 +911,10 @@ mod tests {
             spellings.push(spelling);
         }
         assert_eq!(spellings.len(), StorageKind::ALL.len());
+        // The retired kind has a spelling and is NOT in the list, which is what makes the difference between
+        // "a kind this build offers" and "a kind a record may still name" testable rather than implied.
+        assert_eq!(spelling_of(StorageKind::Sftp).1, "sftp");
+        assert!(!spellings.contains(&"sftp"));
     }
 
     /// A kind's variant and its stored spelling, from a match with NO wildcard arm.
@@ -905,27 +953,26 @@ mod tests {
     }
 
     #[test]
-    fn sftp_is_the_last_kind_reported_as_a_gap_in_the_canonical_list() {
-        // PROCESSING.md §5.3 keeps SFTP as a REPORTED gap, so the kind-level answer has to say so before any
-        // target of that kind exists. What is asserted here is the answer, not a restatement of it: the reason
-        // comes from the crate function the command calls.
+    fn a_retired_kind_is_not_offered_and_still_reports_why() {
+        // ADR-0017: §13.10's SSH/SFTP target was removed. Two claims that can disagree, so both are asserted.
         //
-        // Lsky Pro USED to be checked in this pair and no longer is: §5.4's protocol was read from the
-        // vendor's own artifacts on 2026-10-02 and `lsky::LskyStore` implements it, so the crate now reports
-        // it as working — and this test is what would catch the report and the adapter disagreeing.
-        let kind = StorageKind::Sftp;
-        assert!(StorageKind::ALL.contains(&kind), "{kind:?} must be offered");
-        assert!(!crate::targets::is_implemented(kind), "{kind:?} has no adapter");
-        let reason = crate::targets::unimplemented_reason(kind).expect("a reported gap");
-        assert!(!reason.trim().is_empty(), "{kind:?} must say why not");
+        // 1. It is NOT OFFERED: the canonical list the `storage_kinds` command and the window read does not
+        //    contain it, so no user can configure one.
+        // 2. It still REPORTS a reason, because a record saved before the removal LOADS — the variant survives
+        //    for exactly that — and the window has to explain what happened to the target it is showing.
+        let retired = StorageKind::Sftp;
+        assert!(
+            !StorageKind::ALL.contains(&retired),
+            "a retired kind is not an offered kind"
+        );
+        assert!(!crate::targets::is_implemented(retired), "{retired:?}");
+        let reason = crate::targets::unimplemented_reason(retired).expect("a reportable reason");
+        assert!(reason.contains("移除"), "{reason}");
+        assert!(reason.contains("13.10"), "{reason}");
 
-        // And the kinds that DO have an adapter carry no gap, so "no reason" stays meaningful.
-        for kind in [
-            StorageKind::Local,
-            StorageKind::S3,
-            StorageKind::GitHub,
-            StorageKind::LskyPro,
-        ] {
+        // And every OFFERED kind carries no gap, so "no reason" stays meaningful. This is the assertion that
+        // fails first when a kind is added to the list without an adapter behind it.
+        for kind in StorageKind::ALL {
             assert!(crate::targets::is_implemented(kind), "{kind:?} has an adapter");
             assert!(
                 crate::targets::unimplemented_reason(kind).is_none(),
@@ -974,8 +1021,10 @@ mod tests {
     }
 
     #[test]
-    fn the_sftp_namespace_includes_the_host_identity() {
-        // handoff.md section 13.5: host identity + remote directory.
+    fn the_retired_kinds_namespace_is_unchanged_so_old_object_records_still_resolve() {
+        // ADR-0017 removed §13.10's SSH target, but §13.5 says an old namespace's object records are KEPT and
+        // never migrated. An object recorded under `sftp:host|port|user|prefix` must therefore keep resolving to
+        // the namespace it was written in, or its record would stop describing the object it names.
         let mut config = StorageConfig::new("s", "Server", StorageKind::Sftp);
         config.host = Some("assets.example.com".to_string());
         config.port = Some(22);
@@ -1026,12 +1075,12 @@ mod tests {
 
     #[test]
     fn validation_requires_the_fields_each_kind_needs() {
-        let mut config = StorageConfig::new("s", "S", StorageKind::Sftp);
-        assert!(config.validate().unwrap_err().contains("host"));
-        config.host = Some("h".to_string());
-        assert!(config.validate().unwrap_err().contains("username"));
-        config.username = Some("u".to_string());
-        assert!(config.validate().is_ok());
+        // The RETIRED §13.10 kind cannot be made valid by filling anything in, so its arm reports the removal
+        // instead of demanding a host and a username — fields no adapter would read (ADR-0017).
+        let config = StorageConfig::new("s", "S", StorageKind::Sftp);
+        let refusal = config.validate().unwrap_err();
+        assert!(refusal.contains("移除"), "{refusal}");
+        assert!(refusal.contains("13.10"), "{refusal}");
 
         let mut config = StorageConfig::new("s3", "S", StorageKind::S3);
         assert!(config.validate().unwrap_err().contains("bucket"));

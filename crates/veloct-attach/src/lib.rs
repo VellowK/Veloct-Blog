@@ -12,9 +12,10 @@
 //! * Dedup key is `storage_target_id + storage_namespace + content_hash`, so a URL is never
 //!   reused across targets.
 //!
-//! Vendor protocols (S3, Lsky Pro, GitHub, SFTP) are tested against local fakes and the test
-//! names say so. A protocol that could not be verified is reported as unconfigured rather than
-//! pretended to work.
+//! Vendor protocols (S3, Lsky Pro, GitHub) are tested against local fakes and the test names say so. A
+//! protocol that could not be verified is reported as unconfigured rather than pretended to work, and a kind
+//! the CONTRACT no longer names — §13.10's SSH/SFTP target, removed on 2026-10-02 (ADR-0017) — is reported as
+//! removed, because a target saved before that decision must still load and must not look usable.
 
 #![forbid(unsafe_code)]
 

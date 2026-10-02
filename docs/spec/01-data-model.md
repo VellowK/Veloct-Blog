@@ -196,7 +196,7 @@ CREATE TABLE ai_requests (       -- metadata only; no chat history (handoff §11
 
 -- ---------- deployment targets (no secrets) ----------
 CREATE TABLE storage_defs (      -- attachment storage targets, handoff §13
-  id TEXT PRIMARY KEY, kind TEXT NOT NULL,       -- sftp|s3|lsky|github|remote_image
+  id TEXT PRIMARY KEY, kind TEXT NOT NULL,       -- s3|lsky|github|remote_image (§13.10's sftp was removed, ADR-0017)
   name TEXT NOT NULL, config TEXT NOT NULL,      -- JSON, secret-free
   credential_ref TEXT, enabled INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL);
 CREATE TABLE storage_namespaces (-- §13.5 namespace identity

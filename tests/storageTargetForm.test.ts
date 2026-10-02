@@ -190,7 +190,13 @@ describe('which fields a kind shows', () => {
     expect(normaliseKind('GITHUB')).toBe('github');
     expect(normaliseKind('s3-compatible')).toBe('s3');
     expect(normaliseKind('lskypro')).toBe('lsky');
-    expect(normaliseKind('ssh')).toBe('sftp');
+    // `ssh` and `server` are NOT aliases any more. Both were spellings of §13.10's SSH target, which was
+    // REMOVED (ADR-0017): an alias that mapped a retired spelling onto a live kind would be a second door into
+    // a kind that cannot work, so the form now knows nothing about them — and the crate refuses them at the
+    // command surface, which is asserted on the Rust side.
+    expect(normaliseKind('ssh')).not.toBe('sftp');
+    expect(normaliseKind('server')).not.toBe('sftp');
+    expect(fieldKeysForKind('ssh')).toEqual([]);
     expect(fieldKeysForKind('dir')).toEqual(fieldKeysForKind('local'));
   });
 

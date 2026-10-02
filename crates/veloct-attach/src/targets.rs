@@ -12,9 +12,10 @@
 //! * **GitHub (§13.13) is implemented**, over the documented Contents API. It is the target whose protocol is
 //!   small enough to get right without a new dependency, and §13.13 asks for it by name.
 //! * **S3 (§13.11) is implemented**, over `veloct-s3`'s SigV4 client (ADR-0016).
-//! * **SFTP (§13.10) is NOT implemented.** The workspace deliberately has no `ssh` feature because it pulls
-//!   OpenSSL onto Windows/MSVC (see the root `Cargo.toml`), so SFTP needs a dependency decision that is not a
-//!   storage adapter's to make. [`UnsupportedStore`] reports that in the user's terms.
+//! * **SFTP (§13.10) was REMOVED** — the contract itself no longer asks for it (ADR-0017, 2026-10-02). The
+//!   kind survives as a load-only variant so a target saved before the removal is not silently lost with the
+//!   rest of the list, and it reaches [`UnsupportedStore`], which says the target was removed and what to use
+//!   instead. Nothing can configure a new one: it is not in [`StorageKind::ALL`] and `parse` refuses it.
 //! * **Lsky Pro (§13.12) IS implemented**, over the contract read from the vendor's own shipped API page and
 //!   from the routes and handlers behind it — `crate::lsky` records that reading, the three obligations it
 //!   puts on a caller, and the two limits it leaves. It is the one target whose KEY and PUBLIC URL are the
@@ -301,10 +302,10 @@ pub fn target_from_config(
             })?;
             Box::new(LskyStore::new(config.clone(), token, client)?)
         }
-        // §13.10's SFTP needs SSH, which this workspace deliberately does not depend on. It reports rather
-        // than guessing, and ADR-0010 forbids replacing that with a plausible-looking request. An SFTP target
-        // with no host and no credential lands HERE and says so, rather than being quietly rewritten
-        // into a local directory.
+        // §13.10's SSH/SFTP target was REMOVED (ADR-0017), so this arm exists for ONE case: a target saved
+        // before the removal, which still loads and must report what happened to it rather than being quietly
+        // rewritten into a local directory (the defect the two kinds exist to end). Nothing can configure a new
+        // one — the kind is not in `StorageKind::ALL` and `parse` refuses its spellings.
         StorageKind::Sftp => Box::new(UnsupportedStore::new(config.clone())),
         StorageKind::Local => {
             // §13.10's "server storage" where the server is this machine. No credential and no network,
@@ -359,14 +360,19 @@ pub fn is_implemented(kind: StorageKind) -> bool {
 
 /// Why a kind has no adapter, in the user's terms.
 ///
-/// The explicit `match` stays, because the REASON's text is the part a user acts on: §5.3/§5.4's gaps have to
-/// say what to use instead, and a derived reason could not say it. This is the one place the
-/// implemented/unimplemented split is written down; [`is_implemented`] reads it rather than repeating it.
+/// The explicit `match` stays, because the REASON's text is the part a user acts on and has to say what to use
+/// instead. This is the one place the implemented/unimplemented split is written down; [`is_implemented`] reads
+/// it rather than repeating it.
+///
+/// The only arm left is the RETIRED §13.10 kind (ADR-0017). It is not a "gap waiting for an adapter" any more,
+/// and the reason says so — a user looking at a target saved before the removal needs the removal, not a
+/// promise.
 pub fn unimplemented_reason(kind: StorageKind) -> Option<&'static str> {
     match kind {
         StorageKind::GitHub | StorageKind::S3 | StorageKind::Local | StorageKind::LskyPro => None,
         StorageKind::Sftp => Some(
-            "SFTP 需要 SSH 实现,本构建出于依赖原因没有引入;请改用 GitHub、S3、兰空图床或服务器目录目标。",
+            "SFTP 已从 §13.10 移除(2026-10-02,ADR-0017):该目标无法再使用,请改用本机 / 服务器目录、S3、\
+             兰空图床或 GitHub 目标。旧记录仍会加载,所以这里说明原因。",
         ),
     }
 }
@@ -619,15 +625,17 @@ mod tests {
     }
 
     #[test]
-    fn sftp_reports_that_it_has_no_adapter_instead_of_failing_obscurely() {
-        // A guessed protocol would fail for a reason nobody can read, and a silent no-op would look like a
-        // successful upload. S3 USED to be in this list, and Lsky Pro left it when §5.4's protocol was read
-        // from the vendor's own artifacts, so this now covers the one kind that genuinely has none.
+    fn the_retired_kind_reports_the_removal_rather_than_failing_obscurely() {
+        // A target that cannot be used must fail for a reason a user can read, and it must not look like a
+        // successful upload. ADR-0017 removed §13.10's SSH target, so this is no longer "an adapter is missing":
+        // it is a target that no longer exists, and the reason says that instead.
         let kind = StorageKind::Sftp;
         assert!(!is_implemented(kind), "{kind:?} is not implemented");
         let reason = unimplemented_reason(kind).expect("a reason");
-        assert!(!reason.is_empty(), "{kind:?}");
+        assert!(reason.contains("移除"), "{reason}");
+        assert!(reason.contains("ADR-0017"), "{reason}");
 
+        // An OLD record still builds — that is why the variant survives — and its store reports the removal.
         let config = StorageConfig {
             kind,
             name: "t".to_string(),
@@ -641,20 +649,19 @@ mod tests {
             matches!(error, VeloctError::NotConfigured { .. }),
             "{kind:?}: {error}"
         );
+        assert!(
+            error.to_string().contains("移除") || error.hint().unwrap_or_default().contains("移除"),
+            "{error} / {:?}",
+            error.hint()
+        );
         // And the capabilities say so, so a caller can tell before trying.
         assert!(!target.capabilities().verified, "{kind:?}");
 
-        assert!(is_implemented(StorageKind::GitHub));
-        assert!(unimplemented_reason(StorageKind::GitHub).is_none());
-        assert!(is_implemented(StorageKind::S3));
-        assert!(unimplemented_reason(StorageKind::S3).is_none());
-        // The local directory is implemented TOO, and by its own kind rather than by degrading SFTP.
-        assert!(is_implemented(StorageKind::Local));
-        assert!(unimplemented_reason(StorageKind::Local).is_none());
-        // §13.12's Lsky Pro is the newest member of the implemented set, and its reason is GONE because the
-        // contract was read from the vendor's own shipped API page and source — see `crate::lsky`.
-        assert!(is_implemented(StorageKind::LskyPro));
-        assert!(unimplemented_reason(StorageKind::LskyPro).is_none());
+        // Every OFFERED kind is implemented and carries no gap.
+        for kind in StorageKind::ALL {
+            assert!(is_implemented(kind), "{kind:?} has an adapter");
+            assert!(unimplemented_reason(kind).is_none(), "{kind:?}");
+        }
     }
 
     #[test]
@@ -697,24 +704,29 @@ mod tests {
     }
 
     #[test]
-    fn an_unconfigured_sftp_target_reports_the_gap_rather_than_becoming_a_local_directory() {
-        // This is the defect the two kinds exist to end: a `sftp` target with no host and no credential
-        // used to be handed a LOCAL directory adapter by the shell, so it uploaded successfully to the
-        // machine it was running on and reported a remote URL that no server serves.
+    fn a_target_saved_before_the_removal_reports_it_rather_than_becoming_a_local_directory() {
+        // Two defects are ended here at once, and both matter for a RECORD rather than for a new target (ADR-0017).
+        //
+        // The old one: a `sftp` target with no host and no credential used to be handed a LOCAL directory
+        // adapter by the shell, so it uploaded successfully to the machine it was running on and reported a URL
+        // no server serves. The new one: the kind was removed, so the target must SAY that instead of becoming
+        // an obscure failure or, worse, a working local upload under a name that promises a remote server.
         let config = StorageConfig::new("server", "my server", StorageKind::Sftp);
         let client = std::sync::Arc::new(FakeHttpClient::new()) as std::sync::Arc<dyn HttpClient>;
         let target = target_from_config(config, None, std::sync::Arc::clone(&client), None).unwrap();
 
         assert_eq!(target.config().kind, StorageKind::Sftp);
-        assert!(!target.capabilities().verified, "the gap is visible before a caller tries");
+        assert!(!target.capabilities().verified, "the state is visible before a caller tries");
         assert!(
             !target.capabilities().can_delete_remotely,
             "and nothing can be deleted there either"
         );
         let error = target.store("a.png", b"x").unwrap_err();
         assert_eq!(error.code(), "NOT_CONFIGURED");
-        // The §13.10 gap, in the user's terms, rather than a directory that silently accepted the bytes.
-        assert!(error.hint().unwrap_or_default().contains("SSH"), "{:?}", error.hint());
+        // The REMOVAL, in the user's terms, rather than a directory that silently accepted the bytes.
+        let hint = error.hint().unwrap_or_default();
+        assert!(hint.contains("移除"), "{hint}");
+        assert!(hint.contains("ADR-0017"), "{hint}");
     }
 
     #[test]

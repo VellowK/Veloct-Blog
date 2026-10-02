@@ -1361,14 +1361,13 @@ mod tests {
 
     #[test]
     fn an_upload_through_a_target_with_no_adapter_reports_what_to_do() {
-        // SFTP is the LAST kind in this state. S3, GitHub and now §13.12's Lsky Pro have each left it as
-        // their protocol was implemented, and Lsky Pro left it when §5.4's contract was read from the
-        // vendor's own shipped API page and source. The failure is a `NOT_CONFIGURED` carrying the reason,
-        // not a mysterious protocol error.
+        // SFTP is the LAST kind in this state, and it is not a "gap" any more: **§13.10's SSH target was REMOVED
+        // on 2026-10-02 (ADR-0017)**, so what this drives is the path a target SAVED BEFORE the removal takes.
+        // The failure is a `NOT_CONFIGURED` carrying the reason, not a mysterious protocol error.
         //
         // A target that cannot be BUILT (no credential) errors from `target_from_config` instead of from a
         // store at upload time — `an_s3_target_without_its_secret_...` and the Lsky Pro equivalent in
-        // `veloct-attach` assert that shape, which is why this test uses the kind that has no adapter at all.
+        // `veloct-attach` assert that shape, which is why this test uses the kind that no longer exists.
         let dir = project();
         let source = write_file(dir.path(), "photo.png", b"BYTES");
         let mut service = AttachmentService::open(dir.path()).unwrap();
@@ -1385,7 +1384,7 @@ mod tests {
         let error = service.upload(&view.id, &target, NOW).unwrap_err();
         assert_eq!(error.code(), "NOT_CONFIGURED");
         assert!(
-            error.hint().unwrap_or_default().contains("SSH"),
+            error.hint().unwrap_or_default().contains("移除"),
             "{error} / {:?}",
             error.hint()
         );
@@ -1585,12 +1584,13 @@ mod tests {
         let upload = service.upload(&view.id, &actual, NOW).unwrap();
         let remote = veloct_attach::local_root(dir.path(), "local").join(&upload.remote_key);
 
-        // Section 13.10's SFTP kind has no adapter in this build, so it cannot delete either.
-        let sftp = unsupported_target(veloct_attach::StorageKind::Sftp, "server");
-        let error = service.delete_remote_object(&view.id, &sftp).unwrap_err();
+        // The RETIRED §13.10 kind cannot delete remotely either (ADR-0017), and its reason names the removal:
+        // a user with a target saved before that decision is told the target is gone, not that a protocol failed.
+        let retired = unsupported_target(veloct_attach::StorageKind::Sftp, "server");
+        let error = service.delete_remote_object(&view.id, &retired).unwrap_err();
         assert_eq!(error.code(), "NOT_CONFIGURED");
         assert!(
-            error.hint().unwrap_or_default().contains("SSH"),
+            error.hint().unwrap_or_default().contains("移除"),
             "{error} / {:?}",
             error.hint()
         );

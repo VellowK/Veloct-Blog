@@ -2007,8 +2007,10 @@ mod tests {
             .delete_remote_object(&id, &unsupported)
             .expect_err("a target with no adapter cannot delete");
         assert_eq!(error.code(), "NOT_CONFIGURED");
+        // §13.10's SSH target was REMOVED (ADR-0017), so the reason names the removal rather than a protocol
+        // gap: the caller has to be told the target no longer exists, not that an adapter is missing.
         assert!(
-            error.hint().unwrap_or_default().contains("SSH"),
+            error.hint().unwrap_or_default().contains("移除"),
             "{error} / {:?}",
             error.hint()
         );

@@ -442,20 +442,14 @@ fn save_target_config(
     config: veloct_attach::StorageConfig,
     credential: Option<String>,
 ) -> Result<(), CommandError> {
-    // Only a kind this build IMPLEMENTS is validated.
+    // EVERY kind is validated, because the exemption this used to carry is GONE with the kind it existed for.
     //
-    // An unimplemented kind is EXEMPT on purpose. `validate`'s SFTP arm demands a host and a username, and a
-    // half-filled SFTP target is one of the ways §13.10's gap becomes visible in the target list (the window
-    // can record "I have no adapter for this" before the protocol fields exist). Refusing the save would
-    // delete that path. The arm is deliberately KEPT: it states the shape the adapter will need, so it stays
-    // a unit test's subject and must not be softened into accepting anything.
-    //
-    // SFTP is the ONLY exempt kind now. Lsky Pro's arm — an instance address — stopped being exempt when
-    // §5.4's protocol was verified and the kind gained an adapter, so that rule is enforced on the save path;
-    // D142 in the matrix said exactly this would happen.
-    if veloct_attach::is_implemented(config.kind) {
-        config.validate().map_err(command_invalid)?;
-    }
+    // D142's rule was "only a kind this build implements is validated", so a half-filled SFTP target could be
+    // SAVED in order to keep §13.10's gap visible in the target list. §13.10's SSH target was REMOVED
+    // (ADR-0017) and the command surface can no longer produce one — `parse_storage_kind` refuses its spellings
+    // — so the only effect the exemption could still have is to let a RETIRED target be written, which is the
+    // opposite of what a user needs. `validate`'s retired arm states the removal, and it is now reached.
+    config.validate().map_err(command_invalid)?;
 
     if let (Some(handle), Some(secret)) = (config.credential_ref.as_deref(), credential) {
         crate::credentials::set(handle, secret.trim())?;
@@ -610,17 +604,14 @@ pub fn delete_remote_object(
 
 /// Parse a storage kind.
 ///
-/// The crate owns the names (`StorageKind::parse`), so the window cannot accept a spelling the model does
-/// not; `server` is kept here because this command surface accepted it as the §13.10 spelling before the
-/// `local` kind existed, and it means the REMOTE server, not a directory on this machine.
+/// The crate owns the names (`StorageKind::parse`), so the window cannot accept a spelling the model does not.
+/// **`server` is gone**: this surface used to map it to §13.10's SSH target, which was REMOVED (ADR-0017), and a
+/// spelling that names a target nothing can configure must not resolve to something else — it must be refused.
 pub fn parse_storage_kind(text: &str) -> Result<veloct_attach::StorageKind, CommandError> {
     let normalized = text.trim().to_ascii_lowercase();
-    if normalized == "server" {
-        return Ok(veloct_attach::StorageKind::Sftp);
-    }
     veloct_attach::StorageKind::parse(&normalized).ok_or_else(|| {
         command_invalid(format!(
-            "unknown storage kind {normalized:?}; expected one of sftp, local (dir/directory), s3, lsky, github"
+            "unknown storage kind {normalized:?}; expected one of local (dir/directory), s3, lsky, github"
         ))
     })
 }
@@ -787,9 +778,9 @@ mod tests {
     }
 
     #[test]
-    fn the_window_parses_every_kind_including_the_local_directory() {
-        // The command surface must accept the kind names the model does, and `local` / `dir` / `directory`
-        // must reach the LOCAL kind rather than the SFTP one — that conflation is the bug this closes.
+    fn the_window_parses_every_offered_kind_and_refuses_the_retired_one() {
+        // The command surface must accept the kind names the model does, and `local` / `dir` / `directory` must
+        // reach the LOCAL kind — that conflation is the bug this closes.
         assert_eq!(
             parse_storage_kind("local").unwrap(),
             veloct_attach::StorageKind::Local
@@ -804,15 +795,6 @@ mod tests {
             veloct_attach::StorageKind::Local
         );
         assert_eq!(
-            parse_storage_kind("sftp").unwrap(),
-            veloct_attach::StorageKind::Sftp
-        );
-        // `server` was this surface's spelling for the §13.10 remote server and keeps meaning that.
-        assert_eq!(
-            parse_storage_kind("server").unwrap(),
-            veloct_attach::StorageKind::Sftp
-        );
-        assert_eq!(
             parse_storage_kind("s3").unwrap(),
             veloct_attach::StorageKind::S3
         );
@@ -825,9 +807,21 @@ mod tests {
             veloct_attach::StorageKind::LskyPro
         );
 
+        // §13.10's SSH target was REMOVED (ADR-0017). Its spellings — including `server`, which this surface
+        // used to map specially — must be REFUSED rather than resolving to a target nothing can configure.
+        for retired in ["sftp", "ssh", "server", "SFTP"] {
+            let error = parse_storage_kind(retired).unwrap_err();
+            assert!(
+                error.to_string().contains("unknown storage kind"),
+                "{retired}: {error}"
+            );
+        }
+
         let error = parse_storage_kind("webdav").unwrap_err();
         assert!(error.to_string().contains("webdav"), "{error}");
         assert!(error.to_string().contains("local"), "{error}");
+        // The list it offers no longer names a kind that cannot be configured.
+        assert!(!error.to_string().contains("sftp"), "{error}");
     }
 
     #[test]
@@ -850,8 +844,10 @@ mod tests {
         );
         let error = target.store("photo.png", b"BYTES").unwrap_err();
         assert_eq!(error.code(), "NOT_CONFIGURED");
+        // §13.10's SSH target was REMOVED (ADR-0017), so the reason names the removal rather than a protocol
+        // gap — a user with a record saved before it needs to know the target no longer exists.
         assert!(
-            error.hint().unwrap_or_default().contains("SSH"),
+            error.hint().unwrap_or_default().contains("移除"),
             "{error} / {:?}",
             error.hint()
         );
@@ -1099,26 +1095,15 @@ mod tests {
     }
 
     #[test]
-    fn storage_kinds_reports_sftp_as_the_gap_and_every_other_kind_as_working() {
-        // PROCESSING.md §5.3 keeps SFTP as a reported gap; §5.5's window has to be able to say so BEFORE a
-        // target of that kind is saved, which is the case a target list alone cannot answer.
+    fn storage_kinds_offers_only_kinds_that_work_and_does_not_offer_the_retired_one() {
+        // §5.5's window has to be able to answer "does this build have an adapter for this kind" BEFORE a
+        // target of that kind is saved, and the command's OWN answer is what is asserted here.
         //
-        // Lsky Pro was in this gap loop until §5.4's protocol was read from the vendor's own artifacts and
-        // `lsky::LskyStore` implemented it, so it moved to the working loop. The command's own answer is what
-        // is asserted here, not a restatement of the crate's.
+        // This list used to carry SFTP as a reported gap and then Lsky Pro as a second one. **§13.10's SSH
+        // target was REMOVED (ADR-0017)** and Lsky Pro was implemented, so the honest state is now: every kind
+        // the command OFFERS works, and the retired kind is not offered at all.
         let views = storage_kinds();
-        let spelling = "sftp";
-        let view = views
-            .iter()
-            .find(|view| view.kind == spelling)
-            .unwrap_or_else(|| panic!("{spelling} must be reported"));
-        assert!(!view.implemented, "{spelling} has no adapter in this build");
-        let reason = view
-            .unimplemented_reason
-            .as_deref()
-            .unwrap_or_else(|| panic!("{spelling} must report its gap"));
-        assert!(!reason.trim().is_empty(), "{spelling}");
-
+        assert_eq!(views.len(), 4, "four kinds are offered: {views:?}");
         for spelling in ["local", "s3", "github", "lsky"] {
             let view = views
                 .iter()
@@ -1127,6 +1112,10 @@ mod tests {
             assert!(view.implemented, "{spelling} has an adapter");
             assert!(view.unimplemented_reason.is_none(), "{spelling}");
         }
+        assert!(
+            !views.iter().any(|view| view.kind == "sftp"),
+            "a retired kind is not offered, so the window cannot offer it either"
+        );
     }
 
     #[test]
@@ -1206,43 +1195,40 @@ mod tests {
     }
 
     #[test]
-    fn a_host_less_sftp_target_still_saves_and_the_list_reports_it_as_a_gap() {
-        // The DECISION this exemption implements: `validate` is called only for a kind this build IMPLEMENTS.
-        // A half-filled SFTP target is one of the ways §13.10's gap becomes visible in the target list, so it
-        // must still save — which is why the arm that would refuse it is deliberately not consulted.
+    fn a_retired_target_is_refused_by_the_save_path_and_says_why() {
+        // D142's exemption is GONE, and this is the test that says what replaced it. The rule used to be "only
+        // a kind this build implements is validated", so a half-filled SFTP target could be saved to keep
+        // §13.10's gap visible. §13.10's SSH target was REMOVED (ADR-0017) and the command surface can no
+        // longer PRODUCE one, so the only remaining effect of the exemption would be to let a retired target be
+        // written — the opposite of what a user needs. Every kind is validated now.
         let project = tempfile::TempDir::new().unwrap();
         let config =
             veloct_attach::StorageConfig::new("server", "my server", veloct_attach::StorageKind::Sftp);
-        assert!(!veloct_attach::is_implemented(config.kind), "the exemption's premise");
+        assert!(!veloct_attach::is_implemented(config.kind), "the retired kind");
 
-        // The arm is still there and still refuses: it states the shape the adapter will need, so it is kept
-        // rather than softened, and this asserts that keeping it is not the same as obeying it.
+        // The arm reports the REMOVAL rather than demanding fields for a protocol nothing speaks.
         let problem = config
             .validate()
-            .expect_err("the SFTP arm still demands a host and a username");
-        assert!(problem.contains("host"), "{problem}");
+            .expect_err("a retired kind cannot be made valid");
+        assert!(problem.contains("移除"), "{problem}");
+        assert!(problem.contains("ADR-0017"), "{problem}");
 
-        // And the save path ACCEPTS it, because this build has no SFTP adapter.
-        save_target_config(project.path(), config, None).unwrap();
-
-        let saved = read_storage_targets(project.path()).unwrap();
-        assert_eq!(saved.len(), 1, "an unimplemented kind is not refused");
-        let view = StorageTargetView::of(&saved[0], saved[0].has_credential());
-        assert_eq!(view.kind, "sftp");
+        // And the SAVE path refuses it for that reason, writing nothing at all.
+        let error = save_target_config(project.path(), config, None)
+            .expect_err("a retired target must not be written");
+        assert!(error.to_string().contains("移除"), "{error}");
         assert!(
-            !view.implemented,
-            "the target list still reports the gap, which is what the exemption preserves"
-        );
-        assert!(
-            !view.unimplemented_reason.unwrap_or_default().trim().is_empty(),
-            "and it reports WHY"
+            !project.path().join(STORAGE_TARGETS_FILE).exists(),
+            "a refused save writes no file"
         );
     }
 
     #[test]
-    fn an_implemented_kind_is_still_validated_where_an_unimplemented_one_is_exempt() {
-        // The other half of the exemption, so it cannot be read as "nothing is validated any more": S3 IS
-        // implemented, so its rule (a bucket) is enforced on the save path.
+    fn every_kind_is_validated_on_the_save_path_now_that_the_exemption_is_gone() {
+        // The exemption's other half, re-stated for the rule that replaced it: this is why removing the gate did
+        // not turn the save path into "nothing is validated". S3's rule (a bucket) is enforced, and the retired
+        // kind's rule (it cannot be used) is enforced too — the two tests together cover both branches that
+        // used to be one `if`.
         let project = tempfile::TempDir::new().unwrap();
         let mut config =
             veloct_attach::StorageConfig::new("assets", "S3 附件", veloct_attach::StorageKind::S3);
@@ -1417,14 +1403,15 @@ mod tests {
             without.hint
         );
 
-        // And the routing is the SHARED one: an SFTP target with no host reaches the store that REPORTS the
-        // §13.10 gap rather than degrading into a local directory.
-        let sftp = vec![veloct_attach::StorageConfig::new(
+        // And the routing is the SHARED one: a RETIRED kind reaches the store that REPORTS the removal rather
+        // than degrading into a local directory (ADR-0017). This is the path a target saved before the removal
+        // takes, which is the only reason the variant still exists.
+        let retired = vec![veloct_attach::StorageConfig::new(
             "server",
             "my server",
             veloct_attach::StorageKind::Sftp,
         )];
-        let reporting = resolve_stored_target(&sftp, "server", root, |_| None).expect("it builds");
+        let reporting = resolve_stored_target(&retired, "server", root, |_| None).expect("it builds");
         assert!(!reporting.capabilities().verified);
         assert!(!reporting.capabilities().can_delete_remotely);
     }

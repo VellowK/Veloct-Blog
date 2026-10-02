@@ -1161,12 +1161,15 @@ export const api = {
   storageTargets: () => invoke<StorageTargetView[]>('storage_targets'),
 
   /**
-   * Every storage kind this build knows, with its adapter status (sections 13.10-13.13).
+   * Every storage kind this build OFFERS, with its adapter status (sections 13.10-13.13).
    *
    * Reads no project state deliberately: whether a KIND has an adapter is a fact about the build, so this
-   * answers before a target of that kind exists — which is where PROCESSING.md §5.3's gap has to be
-   * visible. `storageTargets` can only report a saved target, and a kind with no adapter is exactly the kind a
-   * user cannot usefully save (an SFTP target needs a host).
+   * answers before a target of that kind exists. `storageTargets` can only report a saved target, and a kind
+   * this build cannot use is exactly the kind a user cannot usefully save.
+   *
+   * **A RETIRED kind is not in this list at all** (ADR-0017 removed §13.10's SSH target), which is a different
+   * answer from "listed with a reason" — a kind nothing can configure is not offered, while a target SAVED
+   * before the removal still shows up through `storageTargets` with the build's own explanation.
    */
   storageKinds: () => invoke<StorageKindView[]>('storage_kinds'),
 
@@ -1235,7 +1238,8 @@ export const api = {
    *
    * `removeAttachment` deletes the record and the cached bytes and deliberately leaves the remote file alone;
    * this is the only path that asks for the remote object to go. It is refused — removing nothing — when the
-   * target cannot delete remotely (SFTP and Lsky Pro report their gap) or when `storageTargetId` is not the
+   * target cannot delete remotely (a RETIRED kind reports the removal; Lsky Pro CAN delete) or when
+   * `storageTargetId` is not the
    * target the object's record names, so pass the target the object is actually on: the attachment's own
    * `storage_target_id` for the ordinary flow (add and upload to the same target), or the matching
    * `storage_target_id` from `attachmentObjects()` when it is not.
