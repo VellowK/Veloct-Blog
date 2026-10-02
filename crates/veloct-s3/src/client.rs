@@ -142,7 +142,7 @@ impl S3Config {
         let trimmed = self.endpoint.trim();
         if trimmed.is_empty() {
             return Err(VeloctError::Invalid(
-                "the S3 endpoint is empty; write it as https://host[:port]".into(),
+                "S3 端点不能为空:请写成 https://主机[:端口],例如 https://s3.example.com。".into(),
             ));
         }
         // The scheme is split off BEFORE the trailing slashes are trimmed: `https://` with nothing after
@@ -170,7 +170,7 @@ impl S3Config {
         };
         if authority.trim().is_empty() {
             return Err(VeloctError::Invalid(format!(
-                "the S3 endpoint {:?} has no host",
+                "S3 端点 {:?} 没有主机名。",
                 self.endpoint
             )));
         }
@@ -238,11 +238,17 @@ impl S3Config {
 
 /// The message a misplaced `{bucket}` gets, from ONE place so the client and the save path cannot word the same
 /// rule differently.
+///
+/// `ADR-0018` is named IN the message rather than only in this comment: the one position the placeholder may
+/// take — once, at the very start of the host, as `https://{bucket}.<host>` — is what Alibaba Cloud OSS
+/// requires, and a user who wrote `https://oss-{bucket}.example.com` needs to read WHERE it belongs, not
+/// merely that it is wrong.
 fn placeholder_message(endpoint: &str) -> String {
     format!(
-        "the S3 endpoint {endpoint:?} contains {BUCKET_PLACEHOLDER} where it cannot work. Write it as \
-         https://{BUCKET_PLACEHOLDER}.<host> — ONCE, at the start of the host — to put the bucket into the \
-         hostname, which is what Alibaba Cloud OSS requires, or leave it out entirely for path-style access"
+        "S3 端点 {endpoint:?} 里的 {BUCKET_PLACEHOLDER} 位置不对:只能写成 \
+         https://{BUCKET_PLACEHOLDER}.<主机>,而且 {BUCKET_PLACEHOLDER} 只能出现一次、必须在主机名开头,\
+         那是把桶放进主机名(阿里云 OSS 就是这样要求的,§13.11 / ADR-0018);自建服务请完全省略它,\
+         改用路径式访问。"
     )
 }
 
@@ -945,7 +951,7 @@ mod tests {
 
         let empty = S3Config::compatible("assets", "us-east-1", "   ");
         let error = empty.host().unwrap_err();
-        assert!(error.to_string().contains("endpoint is empty"), "{error}");
+        assert!(error.to_string().contains("端点不能为空"), "{error}");
 
         let no_host = S3Config::compatible("assets", "us-east-1", "https://");
         assert!(no_host.host().is_err());
@@ -977,7 +983,7 @@ mod tests {
             let problem = bucket_placeholder_problem(bad)
                 .unwrap_or_else(|| panic!("{bad} must be refused"));
             assert!(
-                problem.contains("{bucket}") && problem.contains("start of the host"),
+                problem.contains("{bucket}") && problem.contains("主机名开头"),
                 "{bad}: {problem}"
             );
         }
@@ -1036,7 +1042,7 @@ mod tests {
                 .expect_err("a misplaced placeholder is refused rather than sent")
                 .to_string();
             assert!(
-                error.contains("{bucket}") && error.contains("start of the host"),
+                error.contains("{bucket}") && error.contains("主机名开头"),
                 "{endpoint}: {error}"
             );
         }

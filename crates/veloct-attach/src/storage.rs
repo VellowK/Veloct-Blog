@@ -331,12 +331,10 @@ impl StorageConfig {
                 // a relative one produces something no client can resolve. It is refused HERE because the crate
                 // is the AUTHORITY for the rule and the window's copy is a transcription of it
                 // (PROCESSING.md §5.10.1) — `lsky::api_base` still refuses it too, for a target that predates
-                // this rule or is built without the save path.
+                // this rule or is built without the save path, and both call sites now share ONE message
+                // (`lsky::instance_not_absolute`) so they cannot word the same rule differently.
                 if !instance.starts_with("http://") && !instance.starts_with("https://") {
-                    return Err(format!(
-                        "实例地址 {instance:?} 必须以 http:// 或 https:// 开头:上传地址是在它后面拼 \
-                         /api/v1 得到的。"
-                    ));
+                    return Err(crate::lsky::instance_not_absolute(instance));
                 }
             }
             StorageKind::Local => {
@@ -871,7 +869,7 @@ mod tests {
         config.endpoint = Some("https://oss-{bucket}.example.com".to_string());
         let error = config.validate().unwrap_err();
         assert!(
-            error.contains("{bucket}") && error.contains("start of the host"),
+            error.contains("{bucket}") && error.contains("主机名开头"),
             "{error}"
         );
 

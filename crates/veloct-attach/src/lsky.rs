@@ -218,6 +218,20 @@ impl LskyStore {
     }
 }
 
+/// Why an instance address cannot be used as the API base, in the user's terms.
+///
+/// **ONE string for BOTH call sites**, which is the point of the function existing at all: the SAVE path asks
+/// it from `StorageConfig::validate`, so the mistake is refused where the user meets it, and [`api_base`] asks
+/// it when the endpoint is BUILT — for a target that predates the save-time rule, or a caller that never ran
+/// the save path. Each caller passes the value IT judged (the save path the whitespace-trimmed field, the
+/// adapter the raw one), so the offending value quoted is exactly what that caller saw. A second, hand-written
+/// copy of this sentence is how the two would come to word the same rule differently.
+pub(crate) fn instance_not_absolute(instance: &str) -> String {
+    format!(
+        "实例地址 {instance:?} 必须以 http:// 或 https:// 开头:上传地址是在它后面拼 /{API_PATH} 得到的。"
+    )
+}
+
 /// The API base for a configured instance.
 ///
 /// §13.12 says "实例地址 / API 地址" — either spelling is accepted, so an instance that already names the
@@ -229,17 +243,11 @@ pub fn api_base(config: &StorageConfig) -> Result<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .ok_or_else(|| {
-            VeloctError::Invalid(format!(
-                "the Lsky Pro target {} has no instance address",
-                config.name
-            ))
+            VeloctError::Invalid(format!("Lsky Pro 目标 {} 没有实例地址(§13.12)。", config.name))
         })?;
     let trimmed = raw.trim_end_matches('/');
     if !trimmed.starts_with("http://") && !trimmed.starts_with("https://") {
-        return Err(VeloctError::Invalid(format!(
-            "the Lsky Pro instance {raw:?} must be an absolute http(s) URL, because the endpoint is built \
-             by appending /{API_PATH} to it"
-        )));
+        return Err(VeloctError::Invalid(instance_not_absolute(raw)));
     }
     if trimmed.ends_with(API_PATH) {
         Ok(trimmed.to_string())
@@ -469,13 +477,13 @@ mod tests {
         relative.instance = Some("img.example.com".to_string());
         let error = api_base(&relative).unwrap_err();
         assert!(
-            error.to_string().contains("absolute http(s) URL"),
+            error.to_string().contains("http:// 或 https://"),
             "{error}"
         );
 
         let mut missing = config();
         missing.instance = None;
-        assert!(api_base(&missing).unwrap_err().to_string().contains("instance"));
+        assert!(api_base(&missing).unwrap_err().to_string().contains("没有实例地址"));
     }
 
     #[test]

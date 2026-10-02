@@ -553,8 +553,10 @@ describe('asking the crate about a draft', () => {
   });
 
   it("shows the crate's own message, word for word", async () => {
-    // An English arm and a Chinese one, because the crate's `validate` speaks both and the window must not
-    // reword either: the message IS the authority's answer.
+    // The two literals below are ARBITRARY: each is what this test's fake invoker ANSWERS, so what is proved
+    // is that the window hands back exactly what it was given — not that the crate words anything this way.
+    // (The crate's own refusals are Chinese now: one language per UI. A literal here is still free to be
+    // English, because nothing in the window interprets it.) The window must not reword the authority's answer.
     const english = 'S3 needs a bucket';
     expect(await validateDraft({ ...emptyDraft('s3'), id: 'x', name: 'X' }, crate(() => english))).toBe(
       english,
