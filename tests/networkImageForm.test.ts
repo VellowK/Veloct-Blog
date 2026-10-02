@@ -20,10 +20,13 @@ import type {
   ImageSearchView,
   NetworkImageChoiceResultView,
   NetworkImageSourceView,
+  NetworkImageTopicView,
 } from '../src/lib/api';
 import {
   attributionNotice,
   attributionToggle,
+  browseAction,
+  browseIntent,
   choiceNotice,
   hasKey,
   insertReadiness,
@@ -32,10 +35,15 @@ import {
   pageSizeFor,
   refusedSummary,
   resultMeta,
+  resultsEmptyText,
+  resultsHeading,
   searchNotice,
   searchReadiness,
   sourceOptions,
   suggestedAlt,
+  topicLabel,
+  topicNotice,
+  topicsReadiness,
   validateKeyInput,
 } from '../src/lib/networkImageForm';
 
@@ -78,6 +86,78 @@ const PIXABAY = source({
   default_per_page: 0,
   max_per_page: 0,
 });
+
+function topic(overrides: Partial<NetworkImageTopicView> = {}): NetworkImageTopicView {
+  return {
+    id: 'bo8jQKTaE0Y',
+    slug: 'wallpapers',
+    title: 'Wallpapers',
+    visibility: 'featured',
+    total_photos: 1344,
+    description: 'A curated list of wallpapers.',
+    ...overrides,
+  };
+}
+
+/**
+ * The reference implementation's browse decisions, transcribed from
+ * `halo-sigs/plugin-unsplash` (`console/src/components/UnsplashSelectorProvider.vue`).
+ *
+ * Its query function is a three-branch rule, and the precedence in it is the one thing that is easy to
+ * get wrong: **a keyword wins over a selected topic**. Every row was read from that source, and the
+ * `mode` column is what the window must decide.
+ */
+const PLUGIN_BROWSE_RULE: ReadonlyArray<{
+  keyword: string;
+  topic: string | null;
+  mode: 'search' | 'topic' | 'idle';
+  why: string;
+}> = [
+  {
+    keyword: 'coffee',
+    topic: null,
+    mode: 'search',
+    why: 'search.getPhotos when there is a keyword',
+  },
+  {
+    keyword: 'coffee',
+    topic: 'bo8jQKTaE0Y',
+    mode: 'search',
+    why: 'a topic is a starting point, NOT a filter: the keyword still wins',
+  },
+  {
+    keyword: '   ',
+    topic: 'bo8jQKTaE0Y',
+    mode: 'topic',
+    why: 'whitespace is not a keyword, so topics.getPhotos runs',
+  },
+  {
+    keyword: '',
+    topic: 'bo8jQKTaE0Y',
+    mode: 'topic',
+    why: 'topics.getPhotos with topicIdOrSlug',
+  },
+  {
+    keyword: '',
+    topic: null,
+    mode: 'idle',
+    why: 'the plugin returns [] with neither, and sends nothing',
+  },
+];
+
+/** The crate's paging rule, transcribed from `providers::validate_paging`. */
+const CRATE_PAGE_RULE: ReadonlyArray<{
+  page: number;
+  perPage: number;
+  accepted: boolean;
+  why: string;
+}> = [
+  { page: 1, perPage: 30, accepted: true, why: 'exactly the documented ceiling' },
+  { page: 1, perPage: 48, accepted: false, why: 'above the documented ceiling of 30' },
+  { page: 1, perPage: 0, accepted: false, why: 'a page of nothing is not a page' },
+  { page: 0, perPage: 30, accepted: false, why: 'pages start at 1' },
+  { page: 2, perPage: 10, accepted: true, why: 'the provider default' },
+];
 
 function result(overrides: Partial<ImageResultView> = {}): ImageResultView {
   return {
@@ -366,6 +446,121 @@ describe('the results header and paging', () => {
   });
 });
 
+describe('the one browse button, which names the mode it will send', () => {
+  const perPage = 30;
+
+  it('is a keyword search while the keyword box has something in it', () => {
+    const action = browseAction({
+      source: UNSPLASH,
+      query: 'coffee',
+      topic: 'bo8jQKTaE0Y',
+      perPage,
+      busy: false,
+    });
+    expect(action.ready).toBe(true);
+    expect(action.label).toBe('搜索');
+    // The keyword wins even with a topic selected, so the button must not offer to browse the topic.
+    expect(action.label).not.toContain('主题');
+  });
+
+  it('offers the topic browse only when the box is empty and a topic is selected', () => {
+    const action = browseAction({
+      source: UNSPLASH,
+      query: '   ',
+      topic: 'bo8jQKTaE0Y',
+      perPage,
+      busy: false,
+    });
+    expect(action.ready).toBe(true);
+    expect(action.label).toBe('浏览主题照片');
+  });
+
+  it('refuses with a sentence rather than a silent disabled button', () => {
+    // Neither a keyword nor a topic: the reason names BOTH ways to proceed.
+    const idle = browseAction({ source: UNSPLASH, query: '', topic: null, perPage, busy: false });
+    expect(idle.ready).toBe(false);
+    expect(idle.reason).toContain('关键词');
+    expect(idle.reason).toContain('主题');
+
+    // A source with no key is asked for one BEFORE the keyword is requested, which is the order the
+    // search path already uses.
+    const noKey = browseAction({
+      source: source({ has_key: false }),
+      query: '',
+      topic: 'bo8jQKTaE0Y',
+      perPage,
+      busy: false,
+    });
+    expect(noKey.ready).toBe(false);
+    expect(noKey.reason).toContain('操作系统凭据库');
+
+    // A refused source keeps the provider's own reason, not "enter a keyword".
+    const refused = browseAction({ source: PIXABAY, query: 'coffee', topic: null, perPage, busy: false });
+    expect(refused.ready).toBe(false);
+    expect(refused.reason).toContain('热链');
+
+    expect(
+      browseAction({ source: UNSPLASH, query: 'coffee', topic: null, perPage, busy: true }).reason,
+    ).toContain('正在搜索');
+  });
+
+  it('agrees word for word with searchReadiness wherever a search is what would be sent', () => {
+    // The two functions share the text of the four preconditions by transcription, not by a call, and a
+    // ONE-SIDED edit to either is what this compares. Whenever a keyword is present the browse button
+    // and the search button are the same button, so their verdicts must be identical — including the
+    // sentence shown while it is disabled.
+    const cases: Array<{
+      label: string;
+      source: NetworkImageSourceView | undefined;
+      query: string;
+      busy: boolean;
+    }> = [
+      { label: 'no source', source: undefined, query: 'coffee', busy: false },
+      { label: 'a refused source', source: PIXABAY, query: 'coffee', busy: false },
+      { label: 'a source with no key', source: source({ has_key: false }), query: 'coffee', busy: false },
+      { label: 'a running search', source: UNSPLASH, query: 'coffee', busy: true },
+      { label: 'a ready source', source: UNSPLASH, query: 'coffee', busy: false },
+    ];
+
+    for (const one of cases) {
+      const search = searchReadiness({ source: one.source, query: one.query, busy: one.busy });
+      const browse = browseAction({
+        source: one.source,
+        query: one.query,
+        topic: null,
+        perPage,
+        busy: one.busy,
+      });
+      expect(browse.ready, one.label).toBe(search.ready);
+      expect(browse.reason, one.label).toBe(search.reason);
+      expect(browse.label, one.label).toBe('搜索');
+    }
+  });
+
+  it('asks for a KEY and not for a keyword when a topic browse is what an empty box would send', () => {
+    // The one place the two orders differ, and deliberately: with a topic selected and an empty box the
+    // next click browses the topic, so the missing key is what blocks it — not a keyword the browse
+    // would never use.
+    const withTopic = browseAction({
+      source: source({ has_key: false }),
+      query: '',
+      topic: 'bo8jQKTaE0Y',
+      perPage,
+      busy: false,
+    });
+    expect(withTopic.reason).toContain('操作系统凭据库');
+    // And with no topic either, the keyword is asked for, because nothing at all can be sent.
+    const withNeither = browseAction({
+      source: source({ has_key: true }),
+      query: '',
+      topic: null,
+      perPage,
+      busy: false,
+    });
+    expect(withNeither.reason).toContain('关键词');
+  });
+});
+
 describe('the shape the panel sends back to the command', () => {
   it('carries everything the credit line and the compliance step need', () => {
     // A design assertion: the window sends the whole result back rather than an id, because a provider
@@ -381,5 +576,152 @@ describe('the shape the panel sends back to the command', () => {
     ] as const) {
       expect(one[field], `${field} is what the round trip needs`).toBeTruthy();
     }
+  });
+});
+
+describe('topic browsing, which is added BESIDE the keyword search', () => {
+  it('transcribes the reference implementation\'s own precedence for every combination', () => {
+    // The table's `mode` column was read from the plugin's source, not reasoned about here. A shape the
+    // plugin sends to search.getPhotos must not be sent to topics.getPhotos, or the browse mode would
+    // silently search for a topic id that is not a keyword.
+    for (const rule of PLUGIN_BROWSE_RULE) {
+      const intent = browseIntent({
+        topic: rule.topic,
+        query: rule.keyword,
+        page: 1,
+        perPage: 30,
+      });
+      expect(intent.mode, `${rule.keyword}/${rule.topic}: ${rule.why}`).toBe(rule.mode);
+    }
+  });
+
+  it('searches by KEYWORD while a topic is selected, which is the rule that is easy to miss', () => {
+    const intent = browseIntent({
+      topic: 'bo8jQKTaE0Y',
+      query: 'coffee',
+      page: 1,
+      perPage: 30,
+    });
+    expect(intent.mode).toBe('search');
+    if (intent.mode !== 'search') throw new Error('unreachable');
+    expect(intent.query).toBe('coffee');
+    // The topic id is NOT smuggled into the query: the plugin passes it to a different endpoint, and a
+    // window that concatenated the two would send a search Unsplash never receives.
+    expect(intent.query).not.toContain('bo8jQKTaE0Y');
+  });
+
+  it('treats a whitespace keyword as no keyword, so the topic browse still runs', () => {
+    const intent = browseIntent({ topic: 'bo8jQKTaE0Y', query: '   ', page: 2, perPage: 30 });
+    expect(intent.mode).toBe('topic');
+    if (intent.mode !== 'topic') throw new Error('unreachable');
+    expect(intent.topic).toBe('bo8jQKTaE0Y');
+    expect(intent.page).toBe(2);
+  });
+
+  it('sends nothing at all with neither a keyword nor a topic, and says which is missing', () => {
+    const intent = browseIntent({ topic: null, query: '', page: 1, perPage: 30 });
+    expect(intent.mode).toBe('idle');
+    if (intent.mode !== 'idle') throw new Error('unreachable');
+    expect(intent.reason).toContain('关键词');
+    expect(intent.reason).toContain('主题');
+
+    // An empty-string topic is the same as no topic, which is what the strip's "cancel" leaves behind.
+    expect(browseIntent({ topic: '', query: '', page: 1, perPage: 30 }).mode).toBe('idle');
+    expect(browseIntent({ topic: '   ', query: '', page: 1, perPage: 30 }).mode).toBe('idle');
+  });
+
+  it('transcribes the crate\'s paging rule, so the browse mode cannot ask for 48', () => {
+    // `providers::validate_paging` refuses `per_page` above the source's ceiling with "Unsplash 每页最多
+    // 返回 30 条。" The reference implementation asks for 48. If the window ever passed 48 through, the
+    // crate would refuse the request — which is a failure the user would see as "the strip does not
+    // work", so the transcription is asserted here rather than trusted.
+    for (const rule of CRATE_PAGE_RULE) {
+      const accepted = rule.page >= 1 && rule.perPage >= 1 && rule.perPage <= UNSPLASH.max_per_page;
+      expect(accepted, `page=${rule.page} perPage=${rule.perPage}: ${rule.why}`).toBe(rule.accepted);
+    }
+    // And the clamp the window actually applies turns a requested 48 into the ceiling.
+    expect(pageSizeFor(UNSPLASH, 48)).toBe(30);
+  });
+
+  it('names a topic chip with the provider\'s own photo count', () => {
+    expect(topicLabel(topic())).toBe('Wallpapers(1344)');
+    // `total_photos` absent is NOT "0 photos": printing 0 would be a claim the provider did not make.
+    expect(topicLabel(topic({ total_photos: 0 }))).toBe('Wallpapers');
+    // A missing title degrades to the slug rather than to an empty chip.
+    expect(topicLabel(topic({ title: '  ' }))).toBe('wallpapers(1344)');
+  });
+
+  it('makes the topic strip its own readiness sentence rather than a silent disabled control', () => {
+    expect(topicsReadiness({ source: UNSPLASH, busy: false }).ready).toBe(true);
+
+    // Topics are Unsplash's alone. A Pexels user is told which provider has them.
+    const pexels = topicsReadiness({ source: PEXELS, busy: false });
+    expect(pexels.ready).toBe(false);
+    expect(pexels.reason).toContain('Unsplash');
+    expect(pexels.reason).toContain('Pexels');
+
+    // A refused source keeps ITS reason, not "no topics".
+    expect(topicsReadiness({ source: PIXABAY, busy: false }).reason).toContain('热链');
+
+    const noKey = topicsReadiness({ source: source({ has_key: false }), busy: false });
+    expect(noKey.ready).toBe(false);
+    expect(noKey.needsKey).toBe(true);
+    expect(noKey.reason).toContain('操作系统凭据库');
+
+    expect(topicsReadiness({ source: UNSPLASH, busy: true }).reason).toContain('主题');
+    expect(topicsReadiness({ source: undefined, busy: false }).reason).toContain('来源');
+  });
+
+  it('names the topic in the results header, because a browse has no keyword to show', () => {
+    const view = search({ source: 'unsplash', label: 'Unsplash', query: 'bo8jQKTaE0Y' });
+    const header = topicNotice(view, 'Wallpapers');
+    expect(header).toContain('主题');
+    expect(header).toContain('Wallpapers');
+    expect(header).toContain('共 1 条结果');
+    expect(header).not.toContain('隐藏');
+
+    // With no title to show, the provider's own identifier is what is named rather than an empty pair
+    // of brackets.
+    expect(topicNotice(view, '   ')).toContain('bo8jQKTaE0Y');
+    // The drop count is explained by the same rule the keyword header uses.
+    expect(topicNotice(search({ dropped: 2 }), 'Wallpapers')).toContain('2 条结果因为缺少可用地址被隐藏');
+  });
+
+  it('picks the header and the empty-state sentence from ONE mode decision', () => {
+    const view = search({ source: 'unsplash', label: 'Unsplash', query: 'wallpapers' });
+
+    // A topic selected with an empty box: the topic is named, and an empty result blames the topic.
+    const browsing = { topic: 'bo8jQKTaE0Y', topicTitle: 'Wallpapers', query: '  ' };
+    expect(resultsHeading(view, browsing)).toContain('主题「Wallpapers」');
+    expect(resultsEmptyText(browsing)).toContain('换一个主题');
+    expect(resultsEmptyText(browsing)).not.toContain('关键词');
+
+    // A keyword typed while that topic is still selected: the KEYWORD is what the results show, so the
+    // header must not be labelled with the topic and the empty sentence must not blame it.
+    const searching = { topic: 'bo8jQKTaE0Y', topicTitle: 'Wallpapers', query: 'coffee' };
+    expect(resultsHeading(view, searching)).toBe(searchNotice(view));
+    expect(resultsHeading(view, searching)).not.toContain('主题');
+    expect(resultsEmptyText(searching)).toContain('关键词');
+
+    // No topic at all is the ordinary search header.
+    expect(resultsHeading(view, { topic: null, topicTitle: '', query: '' })).toBe(searchNotice(view));
+    expect(resultsEmptyText({ topic: null, query: '' })).toContain('关键词');
+  });
+
+  it('keeps the SAME view type for a topic browse, so the grid is not a second implementation', () => {
+    // A design assertion, in the shape the round-trip test above uses: a topic browse returns
+    // `ImageSearchView`, so `searchNotice`/`moreLabel`/`resultMeta` all apply to it unchanged.
+    const fromTopic = search({
+      source: 'unsplash',
+      label: 'Unsplash',
+      query: 'wallpapers',
+      attribution_rule: UNSPLASH.attribution_rule,
+      attribution_optional: false,
+    });
+    expect(moreLabel(fromTopic, 1)).toBe('加载第 2 页');
+    expect(resultMeta(fromTopic.results[0]!)).toContain('Lukas Rodriguez');
+    // And the credit rule is the SOURCE's, not the browse mode's: a topic pick from Unsplash is still
+    // a pick that cannot drop the credit line.
+    expect(fromTopic.attribution_optional).toBe(false);
   });
 });

@@ -373,12 +373,18 @@ implementation of the same documented API**, and comparing it with §13.14's is 
 **So Veloct is the stricter of the two on the two things that are obligations** (the key never reaches a UI; the
 download report is sent), and **the plugin is ahead on exactly one feature: browsing by topic.**
 
-**Three candidates, none taken, and the reasons are stated rather than implied:**
+**Three candidates, and the first was ADOPTED the same day on the owner's instruction (D181):**
 
-1. **Topic browsing is the one worth considering.** It is a genuine browse mode (Unsplash curates the topics),
-   the SDK call is two endpoints, and its absence is the only gap the comparison found. It is NOT taken here
-   because it is a feature addition, not a defect: §13.14's clause is met by search, the window has no place to
-   put a topic strip today, and the owner is the one who decides scope.
+1. **Topic browsing — ADOPTED on 2026-10-02.** It is a genuine browse mode (Unsplash curates the topics), the
+   provider calls are two endpoints, and its absence was the only gap the comparison found. **It is an
+   ENHANCEMENT BEYOND §13.14's letter** — that clause's flow is 搜索 → 用户选择 → 直接写入远程 URL → Markdown —
+   and it is recorded as the owner's decision rather than as contract compliance. **What was followed, and what
+   was not:** the topic list, the "a keyword wins over a selected topic" precedence, and the single browse
+   action come from the plugin; its `per_page` values (100 for topics, 48 for photos) are **above** Unsplash's
+   documented ceiling of 30 and are NOT copied, `has_more` comes from the provider's own
+   `Link: …; rel="next"` header instead of being inferred from array length, the automatic selection of the
+   first topic is dropped because it sends a request the user did not ask for, there is no rendition choice,
+   and **its 转存 mode is absent entirely** — see (3).
 2. **A rendition choice is NOT worth copying.** Veloct's 1080 px `regular` is the size §13.14's flow needs and
    D164 verified live; letting a user pick `raw` invites multi-megabyte pages for no benefit the clause asks for.
 3. **The 转存 (re-host) mode is the one to be careful about, and NOT to copy as it stands.** Two reasons, and the

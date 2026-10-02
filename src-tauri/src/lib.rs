@@ -131,6 +131,8 @@ pub fn run() {
             images::save_image_source_key,
             images::delete_image_source_key,
             images::search_network_images,
+            images::network_image_topics,
+            images::browse_network_topic_photos,
             images::choose_network_image,
         ])
         .setup(|app| {

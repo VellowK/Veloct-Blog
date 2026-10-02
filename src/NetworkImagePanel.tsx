@@ -26,10 +26,13 @@ import {
   type ImageSourceName,
   type NetworkImageChoiceResultView,
   type NetworkImageSourceView,
+  type NetworkImageTopicView,
 } from './lib/api';
 import {
   attributionNotice,
   attributionToggle,
+  browseAction,
+  browseIntent,
   choiceNotice,
   hasKey,
   insertReadiness,
@@ -37,10 +40,13 @@ import {
   pageSizeFor,
   refusedSummary,
   resultMeta,
-  searchNotice,
+  resultsEmptyText,
+  resultsHeading,
   searchReadiness,
   sourceOptions,
   suggestedAlt,
+  topicLabel,
+  topicsReadiness,
   validateKeyInput,
 } from './lib/networkImageForm';
 
@@ -58,6 +64,10 @@ export default function NetworkImagePanel({ enabled, onInsertMarkdown }: Props) 
   const [pageSize, setPageSize] = useState(0);
   const [page, setPage] = useState(1);
   const [found, setFound] = useState<ImageSearchView | null>(null);
+  // Topic browsing: the strip's list, the selected topic, and the title to name it in the header.
+  const [topics, setTopics] = useState<NetworkImageTopicView[]>([]);
+  const [selectedTopic, setSelectedTopic] = useState<string | null>(null);
+  const [topicTitle, setTopicTitle] = useState('');
 
   const [keyInput, setKeyInput] = useState('');
   const [alt, setAlt] = useState('');
@@ -86,11 +96,15 @@ export default function NetworkImagePanel({ enabled, onInsertMarkdown }: Props) 
   const refusal = useMemo(() => refusedSummary(options.refused), [options.refused]);
 
   // The page size follows the source's own default until the user picks one, and is clamped to the
-  // ceiling the crate reports.
+  // ceiling the crate reports. A source change also drops the topic strip: topics are Unsplash's, so a
+  // list fetched for one source must not be shown as another source's.
   useEffect(() => {
     setPageSize(current ? current.default_per_page : 0);
     setFound(null);
     setPage(1);
+    setTopics([]);
+    setSelectedTopic(null);
+    setTopicTitle('');
   }, [current?.source, current?.default_per_page]);
 
   const run = useCallback(async (action: () => Promise<void>, done: string | null) => {
@@ -130,27 +144,98 @@ export default function NetworkImagePanel({ enabled, onInsertMarkdown }: Props) 
   // ---- Search ---------------------------------------------------------------------------------
 
   const readiness = searchReadiness({ source: current, query, busy });
+  // Topic browsing is Unsplash's alone, so its readiness is its own sentence rather than a second
+  // condition inside `searchReadiness`.
+  const topicReadiness = topicsReadiness({ source: current, busy });
 
   const search = useCallback(
     (nextPage: number) =>
       run(async () => {
         if (!current) return;
-        const result = await api.searchNetworkImages({
-          source: current.source,
-          query: query.trim(),
+        // ONE decision about which endpoint a click sends, in the pure module: a non-empty keyword
+        // wins over the selected topic, and the per-page is the clamped one. This is the reference
+        // implementation's own precedence (docs/spec/03-upstream-facts.md §7.1).
+        const intent = browseIntent({
+          topic: selectedTopic,
+          query,
           page: nextPage,
           perPage: pageSizeFor(current, pageSize),
         });
-        // A page-2 request continues the list rather than replacing it, so "load more" appends.
+        if (intent.mode === 'idle') throw new Error(intent.reason);
+
+        const result =
+          intent.mode === 'topic'
+            ? await api.browseNetworkTopicPhotos({
+                source: current.source,
+                topic: intent.topic,
+                page: intent.page,
+                perPage: intent.perPage,
+              })
+            : await api.searchNetworkImages({
+                source: current.source,
+                query: intent.query,
+                page: intent.page,
+                perPage: intent.perPage,
+              });
+        // A page-2 request continues the list rather than replacing it, so "load more" appends. The
+        // mode is part of the identity, so switching between a topic and a keyword starts fresh.
         setFound((previous) =>
-          nextPage > 1 && previous && previous.source === result.source && previous.query === result.query
+          nextPage > 1 &&
+          previous &&
+          previous.source === result.source &&
+          previous.query === result.query
             ? { ...result, results: [...previous.results, ...result.results] }
             : result,
         );
         setPage(nextPage);
       }, null),
-    [current, pageSize, query, run],
+    [current, pageSize, query, run, selectedTopic],
   );
+
+  /** Open a topic's photos, which is the browse this panel adds beside the keyword search. */
+  const openTopic = useCallback(
+    async (topic: NetworkImageTopicView) => {
+      setSelectedTopic(topic.id);
+      setQuery('');
+      await run(async () => {
+        if (!current) return;
+        const result = await api.browseNetworkTopicPhotos({
+          source: current.source,
+          topic: topic.id,
+          page: 1,
+          perPage: pageSizeFor(current, pageSize),
+        });
+        setFound(result);
+        setTopicTitle(topic.title);
+        setPage(1);
+      }, null);
+    },
+    [current, pageSize, run],
+  );
+
+  const loadTopics = () =>
+    run(async () => {
+      if (!current) return;
+      const listed = await api.networkImageTopics(current.source);
+      setTopics(listed);
+      // Nothing is auto-selected: a strip that opens a topic on its own would send a request the user
+      // did not ask for, and the plugin's own auto-select of the first topic is not copied here.
+    }, null);
+
+  /**
+   * What the one button under the search box does, and why it is disabled.
+   *
+   * `browseAction` is the decision, in the pure module: the reference implementation's rule (a keyword
+   * wins over a selected topic) folded together with the search's readiness, so the button's label and
+   * its reason come from ONE place rather than from two conditions that could disagree.
+   */
+  const searchAction = browseAction({
+    source: current,
+    query,
+    topic: selectedTopic,
+    perPage: current ? pageSizeFor(current, pageSize) : 0,
+    busy,
+  });
 
   // ---- Choosing -------------------------------------------------------------------------------
 
@@ -300,20 +385,79 @@ export default function NetworkImagePanel({ enabled, onInsertMarkdown }: Props) 
           <button
             type="button"
             onClick={() => void search(1)}
-            disabled={!readiness.ready}
-            title={readiness.reason ?? '搜索'}
+            disabled={!searchAction.ready}
+            title={searchAction.reason ?? searchAction.label}
           >
-            搜索
+            {searchAction.label}
           </button>
         </div>
         {/* A disabled button with no explanation is what §13.2.2's reason exists to prevent. */}
-        {readiness.reason && <p className="muted hint">{readiness.reason}</p>}
+        {searchAction.reason && <p className="muted hint">{searchAction.reason}</p>}
+      </section>
+
+      {/* Topic browsing, ADDED BESIDE the keyword search rather than instead of it: the clause
+          §13.14 states is met by the search above, and this is the browse mode the owner asked for.
+          A keyword in the box wins over the selected topic, which is the reference implementation's
+          own precedence. */}
+      <section>
+        <h3>主题</h3>
+        <div className="row">
+          <button
+            type="button"
+            onClick={() => void loadTopics()}
+            disabled={!topicReadiness.ready}
+            title={topicReadiness.reason ?? '读取主题'}
+          >
+            {topics.length > 0 ? '刷新主题' : '读取主题'}
+          </button>
+          {selectedTopic && (
+            <button
+              type="button"
+              onClick={() => {
+                setSelectedTopic(null);
+                setTopicTitle('');
+                setFound(null);
+              }}
+              disabled={busy}
+            >
+              取消选择主题
+            </button>
+          )}
+        </div>
+        {/* The reason is a sentence, not a silent disabled control. */}
+        {topicReadiness.reason && <p className="muted hint">{topicReadiness.reason}</p>}
+        {topics.length > 0 ? (
+          <div className="row network-image-topics">
+            {topics.map((topic) => (
+              <button
+                key={topic.id}
+                type="button"
+                className={topic.id === selectedTopic ? 'active' : ''}
+                onClick={() => void openTopic(topic)}
+                disabled={busy}
+                title={topic.description ?? topic.slug}
+              >
+                {topicLabel(topic)}
+              </button>
+            ))}
+          </div>
+        ) : (
+          <p className="muted">
+            主题由 Unsplash 自己维护。读取后选一个主题即可浏览它的照片;关键词框里有内容时,
+            搜索会按关键词走(与参考实现一致)。
+          </p>
+        )}
       </section>
 
       {found && (
         <section>
-          <h3>{searchNotice(found)}</h3>
-          {found.results.length === 0 && <p className="muted">没有结果,换一个关键词试试。</p>}
+          {/* ONE decision about which mode the results came from, from the pure module, so the header
+              and the empty-state message cannot disagree. A keyword in the box wins over the selected
+              topic, which is the rule `browseIntent` applies to the request too. */}
+          <h3>{resultsHeading(found, { topic: selectedTopic, topicTitle, query })}</h3>
+          {found.results.length === 0 && (
+            <p className="muted">{resultsEmptyText({ topic: selectedTopic, query })}</p>
+          )}
 
           <div className="row">
             <label className="grow">

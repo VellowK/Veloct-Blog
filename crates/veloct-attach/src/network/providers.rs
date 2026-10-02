@@ -1,8 +1,10 @@
 //! The two providers this build can search, and what their own documentation says about each.
 //!
 //! **Every URL, header, parameter, response field and obligation in this file was READ FROM the
-//! provider's own documentation or published OpenAPI specification on 2026-10-01, and the document is
-//! named beside the rule.** That matters more here than anywhere else in this crate: a stock-photo API
+//! provider's own documentation or published OpenAPI specification on 2026-10-01 — and Unsplash's TOPIC
+//! endpoints (§13.14's browse mode, an owner-requested enhancement) on 2026-10-02, when the reference
+//! implementation `halo-sigs/plugin-unsplash` was read and compared.** The document is
+//! named beside the rule. That matters more here than anywhere else in this crate: a stock-photo API
 //! is external, unversioned data, and `handoff.md` §20 forbids inventing vendor behaviour. The same
 //! facts are recorded for the next agent in `docs/spec/03-upstream-facts.md`.
 //!
@@ -31,7 +33,7 @@
 //! passed in for the length of one request, which is what keeps it out of every struct in the crate
 //! and therefore out of a `Debug` dump, a serialised view or a log line.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use veloct_core::http::{HttpClient, HttpRequest, HttpResponse};
 use veloct_core::{Result, VeloctError};
@@ -50,6 +52,44 @@ pub const UNSPLASH_API: &str = "https://api.unsplash.com";
 
 /// Unsplash's photo search path (OpenAPI `paths./search/photos`).
 pub const UNSPLASH_SEARCH_PATH: &str = "/search/photos";
+
+/// Unsplash's topic list path (OpenAPI `paths./topics`, operation `get`).
+pub const UNSPLASH_TOPICS_PATH: &str = "/topics";
+
+/// Unsplash's topic-photos path with the topic placeholder still in it.
+///
+/// The OpenAPI path is `/topics/{topicSlug}/photos` (parameter `topicSlug`, `required`), which
+/// [`TOPIC_SLUG_PLACEHOLDER`] is substituted out of. A reader comparing this constant with the
+/// specification finds it spelled the same way rather than as a `format!` argument buried in a
+/// builder.
+pub const UNSPLASH_TOPIC_PHOTOS_PATH: &str = "/topics/{topic}/photos";
+
+/// The placeholder [`UNSPLASH_TOPIC_PHOTOS_PATH`] carries, named once so the substitution cannot
+/// drift from the constant above it.
+pub const TOPIC_SLUG_PLACEHOLDER: &str = "{topic}";
+
+/// Unsplash's topic `per_page` ceiling.
+///
+/// **This is the SAME number as [`UNSPLASH_MAX_PER_PAGE`] because it is the same rule.** Unsplash
+/// states one global pagination ceiling — "paginated into pages of 10 items by default, up to a
+/// maximum of 30" (documentation, "Pagination") — and the OpenAPI `perPage` parameter is a shared
+/// `$ref` (`components/parameters/perPage`: `default: 10`) that both `/topics` and
+/// `/topics/{topicSlug}/photos` reuse, with no per-operation override. It is a separate name so a
+/// future change to one endpoint's ceiling can be made without silently moving the other.
+///
+/// The reference implementation this browse mode is modelled on asks for 100 topics and 48 photos
+/// (`halo-sigs/plugin-unsplash`, `console/src/components/UnsplashSelectorProvider.vue`). **48 is
+/// above the documented ceiling and is not copied here.**
+pub const UNSPLASH_TOPICS_MAX_PER_PAGE: u16 = 30;
+
+/// The `order_by` value the topics list is requested with.
+///
+/// OpenAPI `paths./topics.get` documents `order_by` with `default: position` and the enum
+/// `featured`/`latest`/`oldest`/`position`/`temporary`/`updated`. **`featured` rather than the
+/// default**, because the whole point of the strip is the topics Unsplash itself curates: `position`
+/// is an editorial ranking whose meaning is not documented, so pinning the value the reference
+/// implementation uses keeps the browse mode honest about what it asked for.
+pub const UNSPLASH_TOPICS_ORDER_BY: &str = "featured";
 
 /// The version header Unsplash asks every request to carry (documentation, "Version").
 pub const UNSPLASH_ACCEPT_VERSION: &str = "v1";
@@ -214,6 +254,28 @@ impl SearchQuery {
     }
 }
 
+/// The paging rules EVERY request in this module obeys, checked in one place.
+///
+/// Extracted when the topic requests arrived, because a second copy of these three checks is a
+/// second chance to word one of the three refusals differently — and the search path's tests assert
+/// on those sentences.
+pub fn validate_paging(source: ImageSource, page: u16, per_page: u16) -> Result<()> {
+    let facts = facts(source)?;
+    if page == 0 {
+        return Err(VeloctError::Invalid(
+            "page 从 1 开始。".to_string(),
+        ));
+    }
+    if per_page == 0 || per_page > facts.max_per_page {
+        return Err(VeloctError::Invalid(format!(
+            "{} 每页最多返回 {} 条。",
+            source.label(),
+            facts.max_per_page
+        )));
+    }
+    Ok(())
+}
+
 /// Build the search request for a source.
 ///
 /// The key travels in the `Authorization` header and **never in the URL**. Both providers accept a
@@ -232,18 +294,7 @@ pub fn search_request(
             "请输入要搜索的关键词。".to_string(),
         ));
     }
-    if query.page == 0 {
-        return Err(VeloctError::Invalid(
-            "page 从 1 开始。".to_string(),
-        ));
-    }
-    if query.per_page == 0 || query.per_page > facts.max_per_page {
-        return Err(VeloctError::Invalid(format!(
-            "{} 每页最多返回 {} 条。",
-            source.label(),
-            facts.max_per_page
-        )));
-    }
+    validate_paging(source, query.page, query.per_page)?;
 
     let url = format!(
         "{}{}?query={}&page={}&per_page={}",
@@ -255,15 +306,236 @@ pub fn search_request(
     );
 
     let request = match facts.auth {
-        AuthScheme::ClientId => HttpRequest::get(url)
-            .header("Authorization", format!("Client-ID {api_key}"))
-            // Unsplash asks every request to state the version, so a future v2 default cannot change
-            // what this parses without a change here.
-            .header("Accept-Version", UNSPLASH_ACCEPT_VERSION),
+        AuthScheme::ClientId => unsplash_get(url, api_key),
         AuthScheme::RawKey => HttpRequest::get(url).header("Authorization", api_key),
     };
 
     Ok(request)
+}
+
+// ---------------------------------------------------------------------------------------------
+// Unsplash topic browsing
+//
+// **This is an ENHANCEMENT the owner asked for, not a clause of `handoff.md` §13.14.** §13.14
+// prescribes 搜索 → 用户选择 → 直接写入远程 URL → Markdown and says nothing about browsing; keyword
+// search is what satisfies the clause, and these two endpoints are added BESIDE it. Nothing below is
+// a prerequisite of the search path, and the search path is unchanged by it.
+//
+// The shape is modelled on the reference implementation the owner named
+// (`halo-sigs/plugin-unsplash`), including the one rule in it that is easy to miss: **a selected
+// topic plus a non-empty keyword searches by KEYWORD**, and only a selected topic with NO keyword
+// lists the topic's photos.
+// ---------------------------------------------------------------------------------------------
+
+/// One curated topic, from `Topic.Basic` (OpenAPI `schemas.Topic.Basic` =
+/// `Topic.VeryBasic` + the fields below): `id`, `slug`, `title` and `visibility` are `required`,
+/// as are `description` and `total_photos`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TopicResult {
+    /// Unsplash's stable id, which the photos path takes (the reference implementation passes
+    /// `selectedTopic.id` where the SDK's parameter is named `topicIdOrSlug`).
+    pub id: String,
+    /// The addressable form, which the API also accepts in that same slot.
+    pub slug: String,
+    /// What the strip shows.
+    pub title: String,
+    /// `Topic.Visibility`: `featured`/`visible`/`hidden`/`removed`. Kept because a topic that is not
+    /// `featured` is a different thing from one that is, and the strip should not have to guess.
+    pub visibility: String,
+    /// `total_photos`, `required` in the schema and a number the strip can show.
+    #[serde(default)]
+    pub total_photos: u64,
+    /// The topic's description, `required` in the schema but explicitly nullable.
+    #[serde(default)]
+    pub description: Option<String>,
+}
+
+/// One topic request's inputs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TopicQuery {
+    pub page: u16,
+    pub per_page: u16,
+}
+
+impl TopicQuery {
+    /// A first page with the provider's own ceiling.
+    ///
+    /// **The ceiling, not the default.** The reference implementation asks for one page of 100 and
+    /// never pages; the value here is [`UNSPLASH_TOPICS_MAX_PER_PAGE`] because it is the largest page
+    /// the provider documents, so the strip has the whole curated set in ONE request. A page larger
+    /// than the provider allows would be refused locally by [`validate_paging`] instead.
+    pub fn first_page() -> Self {
+        Self {
+            page: 1,
+            per_page: UNSPLASH_TOPICS_MAX_PER_PAGE,
+        }
+    }
+}
+
+/// The `Authorization`/`Accept-Version` headers every Unsplash request in this module carries.
+///
+/// One place, because the three request builders plus [`download_tracking_request`] all have to
+/// agree: the key goes in the header and **never in the URL**, and the version is stated so a future
+/// `v2` default cannot change what is parsed here without a change in this file.
+fn unsplash_get(url: impl Into<String>, api_key: &str) -> HttpRequest {
+    HttpRequest::get(url)
+        .header("Authorization", format!("Client-ID {api_key}"))
+        .header("Accept-Version", UNSPLASH_ACCEPT_VERSION)
+}
+
+/// Build the request that lists Unsplash's curated topics.
+///
+/// **Unsplash only**, so there is no `source` argument to get wrong: the endpoint is Unsplash's and no
+/// other source this build offers has an equivalent, and the command layer refuses a different source
+/// with `Unsupported` before reaching here.
+pub fn topics_request(api_key: &str, query: &TopicQuery) -> Result<HttpRequest> {
+    validate_paging(ImageSource::Unsplash, query.page, query.per_page)?;
+    Ok(unsplash_get(
+        format!(
+            "{}{}?page={}&per_page={}&order_by={}",
+            UNSPLASH_API,
+            UNSPLASH_TOPICS_PATH,
+            query.page,
+            query.per_page,
+            UNSPLASH_TOPICS_ORDER_BY
+        ),
+        api_key,
+    ))
+}
+
+/// Build the request that lists ONE topic's photos.
+///
+/// `topic` is an id or a slug — the OpenAPI parameter is `topicSlug`, the SDK's is `topicIdOrSlug`,
+/// and the reference implementation passes an id — and it is percent-encoded through the module's
+/// [`encode_value`] because it is substituted into a PATH. The encode is the same RFC 3986 rule the
+/// search term uses, which is what keeps a `/` from turning one path segment into two.
+pub fn topic_photos_request(topic: &str, api_key: &str, query: &TopicQuery) -> Result<HttpRequest> {
+    let id = topic.trim();
+    if id.is_empty() {
+        return Err(VeloctError::Invalid(
+            "请先选择一个主题。".to_string(),
+        ));
+    }
+    validate_paging(ImageSource::Unsplash, query.page, query.per_page)?;
+
+    let path = UNSPLASH_TOPIC_PHOTOS_PATH.replace(TOPIC_SLUG_PLACEHOLDER, &encode_value(id));
+    Ok(unsplash_get(
+        format!(
+            "{}{}?page={}&per_page={}",
+            UNSPLASH_API, path, query.page, query.per_page
+        ),
+        api_key,
+    ))
+}
+
+/// Parse a topic-list response.
+///
+/// `TopicFeed` (OpenAPI `components.responses.TopicFeed`) is a **bare JSON ARRAY** of
+/// `Topic.Basic` — there is no `{ total, results }` envelope and no `total_pages` field, which is why
+/// the topic list has no "is there another page" answer beyond the `Link` header and is fetched as a
+/// single maximal page.
+pub fn parse_topics(response: &HttpResponse) -> Result<Vec<TopicResult>> {
+    serde_json::from_slice::<Vec<TopicResult>>(&response.body).map_err(|error| {
+        VeloctError::Attachment(format!(
+            "{} 的主题列表响应不是预期的 JSON: {error}",
+            ImageSource::Unsplash.label()
+        ))
+    })
+}
+
+/// Whether a `Link` response header advertises another page.
+///
+/// `AssetFeed` — the shape of a topic's photos — carries no `total_pages` field, so the provider's own
+/// answer is the header: Unsplash's documentation ("Pagination headers") shows
+/// `<…&page=4>; rel="next"` among the comma-separated links, and the OpenAPI `headers.linkFeed` gives
+/// the exact grammar `<url>; rel="…"` repeated after commas. The reference implementation infers
+/// "more" from the array length instead, which cannot tell a full last page from a full middle one.
+///
+/// A header that is absent, or present without a `rel="next"`, means no more pages.
+pub fn link_has_next(link_header: Option<&str>) -> bool {
+    link_header
+        .map(|header| {
+            // Each comma-separated entry is `<url>; rel="…"`, so the `rel` attribute is never the
+            // first `;`-separated token and the URL itself cannot be mistaken for a relation.
+            header.split(',').any(|entry| {
+                entry.split(';').skip(1).any(|attribute| {
+                    attribute
+                        .trim()
+                        .strip_prefix("rel=")
+                        .map(|value| value.trim().trim_matches('"').eq_ignore_ascii_case("next"))
+                        .unwrap_or(false)
+                })
+            })
+        })
+        .unwrap_or(false)
+}
+
+/// Parse a topic's photos into the crate's own search shape.
+///
+/// The body is an `AssetFeed` — a **bare array of `Asset.Basic`**, the same photo object the search
+/// feed returns — so the results are built by the same [`unsplash_result`] the search path uses, and
+/// the `download_location` a pick must report is carried exactly as it is for a searched result.
+/// `has_more` comes from the `Link` header for the reason [`link_has_next`] gives.
+pub fn parse_topic_photos(topic: &str, response: &HttpResponse) -> Result<ImageSearch> {
+    let photos: Vec<UnsplashPhoto> = serde_json::from_slice(&response.body).map_err(|error| {
+        VeloctError::Attachment(format!(
+            "{} 的主题照片响应不是预期的 JSON: {error}",
+            ImageSource::Unsplash.label()
+        ))
+    })?;
+
+    let mut search = ImageSearch::new(
+        ImageSource::Unsplash,
+        topic,
+        photos.into_iter().map(unsplash_result).collect(),
+    );
+    search.has_more = link_has_next(response.header("Link"));
+    Ok(search)
+}
+
+/// List Unsplash's curated topics through the caller's HTTP client.
+pub fn list_topics(
+    client: &dyn HttpClient,
+    api_key: &str,
+    query: &TopicQuery,
+) -> Result<Vec<TopicResult>> {
+    let key = require_key(ImageSource::Unsplash, api_key)?;
+    let request = topics_request(key, query)?;
+    let response = client.execute(request)?;
+    if !response.is_success() {
+        return Err(provider_failure(ImageSource::Unsplash, &response, key));
+    }
+    parse_topics(&response)
+}
+
+/// List one topic's photos through the caller's HTTP client.
+pub fn browse_topic(
+    client: &dyn HttpClient,
+    api_key: &str,
+    topic: &str,
+    query: &TopicQuery,
+) -> Result<ImageSearch> {
+    let key = require_key(ImageSource::Unsplash, api_key)?;
+    let request = topic_photos_request(topic, key, query)?;
+    let response = client.execute(request)?;
+    if !response.is_success() {
+        return Err(provider_failure(ImageSource::Unsplash, &response, key));
+    }
+    parse_topic_photos(topic, &response)
+}
+
+/// The key a request needs, or the same "not configured" refusal every path in this module gives.
+///
+/// One place, so the two topic entry points cannot word the hint differently from [`search`].
+fn require_key(source: ImageSource, api_key: &str) -> Result<&str> {
+    let key = api_key.trim();
+    if key.is_empty() {
+        return Err(VeloctError::not_configured(
+            format!("{} 的访问密钥", source.label()),
+            "在「网络图片浏览」里为这个来源填写密钥,它会存进操作系统凭据库",
+        ));
+    }
+    Ok(key)
 }
 
 /// A provider failure, with the credential redacted **where it is known**.
@@ -565,9 +837,7 @@ pub fn download_tracking_request(
     };
 
     let request = match facts.auth {
-        AuthScheme::ClientId => HttpRequest::get(location)
-            .header("Authorization", format!("Client-ID {api_key}"))
-            .header("Accept-Version", UNSPLASH_ACCEPT_VERSION),
+        AuthScheme::ClientId => unsplash_get(location, api_key),
         AuthScheme::RawKey => HttpRequest::get(location).header("Authorization", api_key),
     };
     Ok(Some(request))
@@ -598,13 +868,7 @@ pub fn search(
     api_key: &str,
     query: &SearchQuery,
 ) -> Result<ImageSearch> {
-    if api_key.trim().is_empty() {
-        return Err(VeloctError::not_configured(
-            format!("{} 的访问密钥", source.label()),
-            "在「网络图片浏览」里为这个来源填写密钥,它会存进操作系统凭据库",
-        ));
-    }
-
+    let api_key = require_key(source, api_key)?;
     let request = search_request(source, api_key, query)?;
     let response = client.execute(request)?;
     if !response.is_success() {
@@ -843,6 +1107,277 @@ mod tests {
                 .all(|(name, _)| !name.eq_ignore_ascii_case("accept-version")),
             "the version header is Unsplash's, not a shared convention"
         );
+    }
+
+    /// An Unsplash topic-list response (`components.responses.TopicFeed`): a BARE ARRAY of
+    /// `Topic.Basic`, with every field the schema marks `required` present.
+    fn unsplash_topics_body() -> serde_json::Value {
+        serde_json::json!([
+            {
+                "id": "bo8jQKTaE0Y",
+                "slug": "wallpapers",
+                "title": "Wallpapers",
+                "description": "A curated list of wallpapers.",
+                "visibility": "featured",
+                "featured": true,
+                "published_at": "2018-01-16T15:07:42-05:00",
+                "updated_at": "2018-10-19T10:00:00-04:00",
+                "starts_at": "2018-01-16T15:07:42-05:00",
+                "ends_at": null,
+                "only_submissions_after": null,
+                "total_photos": 1344,
+                "status": "open",
+                "links": {
+                    "self": "https://api.unsplash.com/topics/wallpapers",
+                    "html": "https://unsplash.com/t/wallpapers",
+                    "photos": "https://api.unsplash.com/topics/wallpapers/photos"
+                },
+                "owners": [{ "id": "pXhwzz1JtQU", "username": "jimmyexample", "name": "James Example" }],
+                "cover_photo": null,
+                "preview_photos": null,
+                "current_user_contributions": []
+            },
+            {
+                "id": "CDwuwXJAbEw",
+                "slug": "3d-renders",
+                "title": "3D Renders",
+                "description": null,
+                "visibility": "featured",
+                "featured": true,
+                "published_at": "2019-04-10T10:00:00-04:00",
+                "updated_at": "2019-04-10T10:00:00-04:00",
+                "starts_at": "2019-04-10T10:00:00-04:00",
+                "ends_at": null,
+                "only_submissions_after": null,
+                "total_photos": 90,
+                "status": "open",
+                "links": {
+                    "self": "https://api.unsplash.com/topics/3d-renders",
+                    "html": "https://unsplash.com/t/3d-renders",
+                    "photos": "https://api.unsplash.com/topics/3d-renders/photos"
+                },
+                "owners": [{ "id": "pXhwzz1JtQU", "username": "jimmyexample", "name": "James Example" }],
+                "cover_photo": null,
+                "preview_photos": null,
+                "current_user_contributions": []
+            }
+        ])
+    }
+
+    const NEXT_LINK: &str = "<https://api.unsplash.com/topics/wallpapers/photos?page=1>; rel=\"first\", \
+                             <https://api.unsplash.com/topics/wallpapers/photos?page=3>; rel=\"last\", \
+                             <https://api.unsplash.com/topics/wallpapers/photos?page=2>; rel=\"next\"";
+
+    #[test]
+    fn a_topic_list_request_is_the_documented_one_with_the_key_in_the_header() {
+        let request =
+            topics_request(UNS_KEY, &TopicQuery::first_page()).expect("a readable request");
+
+        // OpenAPI `paths./topics`, operation `get`: no path parameter, and the key in `Authorization`.
+        assert!(request.url.starts_with("https://api.unsplash.com/topics?"), "{}", request.url);
+        assert!(request.url.contains("page=1"), "{}", request.url);
+        // The provider's own ceiling — NOT the 100 the reference implementation asks for, which is
+        // above Unsplash's documented maximum of 30.
+        assert!(request.url.contains("per_page=30"), "{}", request.url);
+        assert!(request.url.contains("order_by=featured"), "{}", request.url);
+        assert!(!request.url.contains(UNS_KEY), "{}", request.url);
+        assert_eq!(
+            request
+                .headers
+                .iter()
+                .find(|(name, _)| name.eq_ignore_ascii_case("authorization"))
+                .map(|(_, value)| value.as_str()),
+            Some(&*format!("Client-ID {UNS_KEY}"))
+        );
+        assert_eq!(
+            request
+                .headers
+                .iter()
+                .find(|(name, _)| name.eq_ignore_ascii_case("accept-version"))
+                .map(|(_, value)| value.as_str()),
+            Some(UNSPLASH_ACCEPT_VERSION),
+            "the topics endpoints are Unsplash's, so they carry its version header too"
+        );
+    }
+
+    #[test]
+    fn a_topic_photos_request_puts_the_topic_in_the_path_and_encodes_it() {
+        let mut query = TopicQuery::first_page();
+        query.page = 2;
+
+        let request =
+            topic_photos_request("bo8jQKTaE0Y", UNS_KEY, &query).expect("a readable request");
+        // The OpenAPI path is `/topics/{topicSlug}/photos`, and the placeholder is substituted rather
+        // than the path being re-spelled by hand.
+        assert_eq!(
+            request.url,
+            "https://api.unsplash.com/topics/bo8jQKTaE0Y/photos?page=2&per_page=30"
+        );
+
+        // A slug with a `/` is ONE path segment, so the separator is encoded rather than passed
+        // through — the same rule the search term follows.
+        let request =
+            topic_photos_request("a/b", UNS_KEY, &query).expect("a readable request");
+        assert!(request.url.contains("/topics/a%2Fb/photos"), "{}", request.url);
+        assert!(!request.url.contains(UNS_KEY), "{}", request.url);
+    }
+
+    #[test]
+    fn a_topic_request_with_no_topic_or_a_page_size_above_the_ceiling_is_refused_locally() {
+        let query = TopicQuery::first_page();
+
+        let error = topic_photos_request("   ", UNS_KEY, &query).unwrap_err();
+        assert!(error.to_string().contains("主题"), "{error}");
+
+        let mut too_many = TopicQuery::first_page();
+        too_many.per_page = UNSPLASH_TOPICS_MAX_PER_PAGE + 1;
+        // The 48 the reference implementation asks for is above the documented ceiling, so THIS is
+        // the number the refusal names.
+        let error = topics_request(UNS_KEY, &too_many).unwrap_err();
+        assert!(error.to_string().contains("30"), "{error}");
+        too_many.per_page = 48;
+        assert!(
+            topic_photos_request("wallpapers", UNS_KEY, &too_many).is_err(),
+            "48 is above the documented ceiling and is refused rather than copied"
+        );
+
+        let mut zero_page = TopicQuery::first_page();
+        zero_page.page = 0;
+        assert!(topics_request(UNS_KEY, &zero_page).is_err());
+    }
+
+    #[test]
+    fn the_topic_body_is_a_bare_array_and_its_required_fields_are_read() {
+        // `TopicFeed` is an ARRAY. A parser expecting `{ total, results }` — the search envelope —
+        // would refuse this, which is the mistake this test exists for.
+        let response = HttpResponse {
+            status: 200,
+            headers: Vec::new(),
+            body: serde_json::to_vec(&unsplash_topics_body()).unwrap(),
+        };
+        let topics = parse_topics(&response).expect("the documented shape parses");
+        assert_eq!(topics.len(), 2);
+
+        let first = &topics[0];
+        assert_eq!(first.id, "bo8jQKTaE0Y");
+        assert_eq!(first.slug, "wallpapers");
+        assert_eq!(first.title, "Wallpapers");
+        assert_eq!(first.visibility, "featured");
+        assert_eq!(first.total_photos, 1344);
+        assert_eq!(first.description.as_deref(), Some("A curated list of wallpapers."));
+
+        // `description` is `required` AND nullable in the schema, so a null must read as absent
+        // rather than failing the whole list.
+        assert!(topics[1].description.is_none());
+        assert_eq!(topics[1].slug, "3d-renders");
+    }
+
+    #[test]
+    fn a_topic_list_that_is_not_the_documented_shape_is_reported_rather_than_read_as_empty() {
+        let response = HttpResponse {
+            status: 200,
+            headers: Vec::new(),
+            body: b"{\"total\":0,\"results\":[]}".to_vec(),
+        };
+        let error = parse_topics(&response).unwrap_err();
+        assert!(error.to_string().contains("JSON"), "{error}");
+        assert!(error.to_string().contains("主题列表"), "{error}");
+    }
+
+    #[test]
+    fn a_topic_photo_feed_is_parsed_by_the_same_code_the_search_feed_uses() {
+        // `AssetFeed` is a bare array of `Asset.Basic`, which is the object the search feed returns
+        // too — so a topic result and a search result are the same shape and no second parser exists.
+        let response = HttpResponse {
+            status: 200,
+            headers: vec![("Link".to_string(), NEXT_LINK.to_string())],
+            body: serde_json::to_vec(&serde_json::json!([unsplash_body()["results"][0].clone()]))
+                .unwrap(),
+        };
+        let search = parse_topic_photos("wallpapers", &response).expect("the documented shape");
+
+        assert_eq!(search.source, ImageSource::Unsplash);
+        assert_eq!(search.query, "wallpapers", "the topic stands in for the query");
+        let usable = search.usable();
+        assert_eq!(usable.len(), 1);
+        assert_eq!(usable[0].source_id, "LBI7cgq3pbM");
+        assert!(usable[0].url.contains("ixid="), "{}", usable[0].url);
+        assert!(
+            usable[0].download_location.is_some(),
+            "the report endpoint survives, so a topic pick is still reportable"
+        );
+    }
+
+    #[test]
+    fn more_pages_are_read_from_the_link_header_because_a_topic_feed_has_no_total_pages() {
+        // The provider's own answer, as with Pexels's `next_page`: a header that advertises a `next`
+        // relation means another page exists, and a full array alone does not.
+        assert!(link_has_next(Some(NEXT_LINK)));
+
+        // A last page: `first` and `prev` but no `next`.
+        assert!(!link_has_next(Some(
+            "<https://api.unsplash.com/topics/wallpapers/photos?page=1>; rel=\"first\", \
+             <https://api.unsplash.com/topics/wallpapers/photos?page=1>; rel=\"prev\""
+        )));
+        assert!(!link_has_next(Some("")));
+
+        let response = HttpResponse {
+            status: 200,
+            headers: Vec::new(),
+            body: serde_json::to_vec(&serde_json::json!([unsplash_body()["results"][0].clone()]))
+                .unwrap(),
+        };
+        let search = parse_topic_photos("wallpapers", &response).unwrap();
+        assert!(
+            !search.has_more,
+            "with no Link header there is nothing claiming a next page"
+        );
+    }
+
+    #[test]
+    fn a_topic_request_with_no_key_is_refused_before_anything_is_sent() {
+        let client = FakeHttpClient::new();
+        let error = list_topics(&client, "  ", &TopicQuery::first_page()).unwrap_err();
+        assert_eq!(error.code(), "NOT_CONFIGURED");
+        assert!(error.hint().is_some(), "the hint says where the key goes");
+
+        let error =
+            browse_topic(&client, "  ", "wallpapers", &TopicQuery::first_page()).unwrap_err();
+        assert_eq!(error.code(), "NOT_CONFIGURED");
+        assert_eq!(client.request_count(), 0, "no request is sent without a key");
+    }
+
+    #[test]
+    fn the_topic_calls_go_through_the_client_with_the_key_in_the_header_only() {
+        let client = FakeHttpClient::new()
+            .on_json("/topics?", unsplash_topics_body())
+            .on_json("/topics/wallpapers/photos", serde_json::json!([unsplash_body()["results"][0].clone()]));
+
+        let topics = list_topics(&client, UNS_KEY, &TopicQuery::first_page()).expect("the list");
+        assert_eq!(topics.len(), 2);
+        let photos = browse_topic(&client, UNS_KEY, "wallpapers", &TopicQuery::first_page())
+            .expect("the photos");
+        assert_eq!(photos.usable().len(), 1);
+
+        assert_eq!(client.request_count(), 2);
+        for sent in client.recorded() {
+            assert!(!sent.url.contains(UNS_KEY), "{}", sent.url);
+            assert!(sent.headers.iter().any(|(name, value)| {
+                name.eq_ignore_ascii_case("authorization")
+                    && value == &format!("Client-ID {UNS_KEY}")
+            }));
+        }
+    }
+
+    #[test]
+    fn a_failed_topic_call_reports_the_provider_status_without_leaking_the_key() {
+        let client = FakeHttpClient::new()
+            .always(401, format!("{{\"errors\":[\"Invalid access token: {UNS_KEY}\"]}}"));
+        let error = list_topics(&client, UNS_KEY, &TopicQuery::first_page()).unwrap_err();
+        let message = error.to_string();
+        assert!(!message.contains(UNS_KEY), "the key leaked: {message}");
+        assert!(message.contains("401"), "{message}");
+        assert!(message.contains("Unsplash"), "{message}");
     }
 
     #[test]

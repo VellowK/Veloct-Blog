@@ -28,7 +28,9 @@ use serde::{Deserialize, Serialize};
 
 use veloct_app::CommandError;
 use veloct_attach::network::providers;
-use veloct_attach::{ImageResult, ImageSearch, ImageSource, NetworkImageChoice, SearchQuery};
+use veloct_attach::{
+    ImageResult, ImageSearch, ImageSource, NetworkImageChoice, SearchQuery, TopicQuery, TopicResult,
+};
 use veloct_core::http::{HttpClient, ReqwestHttpClient};
 use veloct_core::VeloctError;
 
@@ -222,14 +224,7 @@ fn search_with(
     api_key: Option<&str>,
     query: &SearchQuery,
 ) -> Result<ImageSearch, CommandError> {
-    let key = api_key.map(str::trim).filter(|key| !key.is_empty());
-    let Some(key) = key else {
-        return Err(VeloctError::not_configured(
-            format!("{} 的访问密钥", source.label()),
-            "在「网络图片浏览」里为这个来源填写密钥,它会存进操作系统凭据库",
-        )
-        .into());
-    };
+    let key = require_key_for(source, api_key)?;
     Ok(veloct_attach::search_images(client, source, key, query)?)
 }
 
@@ -351,6 +346,161 @@ fn choose_with(
     })
 }
 
+/// One topic as the window's strip sees it.
+///
+/// Mirrors `veloct_attach::TopicResult`. It is a separate type rather than the crate's, for the same
+/// reason [`NetworkImageSourceView`] is: the strip needs the stored spelling of the source and a
+/// label beside the raw id, and the crate has no business knowing what the window calls things.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NetworkImageTopicView {
+    /// Unsplash's stable id, which `browse_network_topic_photos` takes.
+    pub id: String,
+    /// The addressable form, which the same command also accepts.
+    pub slug: String,
+    /// What the strip shows.
+    pub title: String,
+    /// `featured`/`visible`/`hidden`/`removed`.
+    pub visibility: String,
+    /// How many photos the topic holds, as the provider reports it.
+    pub total_photos: u64,
+    pub description: Option<String>,
+}
+
+impl From<TopicResult> for NetworkImageTopicView {
+    fn from(topic: TopicResult) -> Self {
+        Self {
+            id: topic.id,
+            slug: topic.slug,
+            title: topic.title,
+            visibility: topic.visibility,
+            total_photos: topic.total_photos,
+            description: topic.description.filter(|text| !text.trim().is_empty()),
+        }
+    }
+}
+
+/// The curated topics the window's strip lists.
+///
+/// **Owner-requested enhancement, not a clause of `handoff.md` §13.14.** §13.14 prescribes keyword
+/// search; this is a second browse mode beside it, modelled on the reference implementation
+/// (`halo-sigs/plugin-unsplash`), which lists topics and then files a non-empty keyword through the
+/// SEARCH endpoint even while a topic is selected. That rule lives in the window
+/// (`src/lib/networkImageForm.ts`), because it is a choice about which command to call.
+///
+/// Unsplash only: the endpoint is Unsplash's and no other source this build offers has an equivalent,
+/// so a caller naming Pexels is told which provider has topic browsing rather than handed an empty
+/// strip — and a source this build cannot search at all keeps the reason its own terms give.
+#[tauri::command]
+pub fn network_image_topics(source: String) -> Result<Vec<NetworkImageTopicView>, CommandError> {
+    let source = parse_source(&source)?;
+    require_unsplash_topics(source)?;
+    let client = image_client()?;
+    let key = crate::credentials::get_or_none(&handle_for(source));
+    let topics = list_topics_with(&*client, key.as_deref())?;
+    Ok(topics.into_iter().map(NetworkImageTopicView::from).collect())
+}
+
+/// The topic list itself, with the client and the key passed in, so a test can drive it.
+///
+/// Takes the same two arguments as [`search_with`] and for the same reason (PROCESSING.md §5.10.2):
+/// the wrapper above is three lines and needs a live credential store, while everything that could be
+/// wrong — the refusal, the request, the parse — is below this line and reachable.
+fn list_topics_with(
+    client: &dyn HttpClient,
+    api_key: Option<&str>,
+) -> Result<Vec<TopicResult>, CommandError> {
+    veloct_attach::list_topics(
+        client,
+        require_key_for(ImageSource::Unsplash, api_key)?,
+        &TopicQuery::first_page(),
+    )
+    .map_err(CommandError::from)
+}
+
+/// Browse one topic's photos.
+///
+/// The topic is an id or a slug, exactly as Unsplash accepts in the `topicSlug` path parameter. The
+/// result is an [`ImageSearchView`] — the SAME type the keyword search returns — so the grid, the
+/// paging control, the drop count and the attribution notice are one implementation rather than two.
+#[tauri::command]
+pub fn browse_network_topic_photos(
+    source: String,
+    topic: String,
+    page: Option<u16>,
+    per_page: Option<u16>,
+) -> Result<ImageSearchView, CommandError> {
+    let source = parse_source(&source)?;
+    require_unsplash_topics(source)?;
+    let client = image_client()?;
+    let key = crate::credentials::get_or_none(&handle_for(source));
+
+    let mut query = TopicQuery::first_page();
+    if let Some(page) = page {
+        query.page = page;
+    }
+    // The ceiling is the crate's, so a page size above Unsplash's documented maximum is refused
+    // there rather than silently trimmed here.
+    if let Some(per_page) = per_page {
+        query.per_page = per_page;
+    }
+
+    let found = browse_topic_with(&*client, key.as_deref(), &topic, &query)?;
+    Ok(search_view(found))
+}
+
+/// The topic browse itself, with the client and the key passed in, so a test can drive it.
+fn browse_topic_with(
+    client: &dyn HttpClient,
+    api_key: Option<&str>,
+    topic: &str,
+    query: &TopicQuery,
+) -> Result<ImageSearch, CommandError> {
+    veloct_attach::browse_topic(
+        client,
+        require_key_for(ImageSource::Unsplash, api_key)?,
+        topic,
+        query,
+    )
+    .map_err(CommandError::from)
+}
+
+/// The key a provider call needs, or the same refusal every image command gives.
+///
+/// Shared so the search and the two topic commands cannot word the hint differently. The crate
+/// refuses a blank key too ([`veloct_attach::network::providers::list_topics`] and friends call their
+/// own guard), but deciding it HERE means a command with no key never builds an HTTP client or opens
+/// the credential store twice.
+fn require_key_for(source: ImageSource, api_key: Option<&str>) -> Result<&str, CommandError> {
+    api_key
+        .map(str::trim)
+        .filter(|key| !key.is_empty())
+        .ok_or_else(|| {
+            VeloctError::not_configured(
+                format!("{} 的访问密钥", source.label()),
+                "在「网络图片浏览」里为这个来源填写密钥,它会存进操作系统凭据库",
+            )
+            .into()
+        })
+}
+
+/// Whether a source has a topic list at all.
+///
+/// The refusal names the endpoint's owner, so a caller asking Pexels for topics is told which provider
+/// has them rather than receiving an empty strip that looks like "no topics today".
+fn require_unsplash_topics(source: ImageSource) -> Result<(), CommandError> {
+    // `facts` is asked first so a source this build cannot search at all keeps its own reason — Pixabay
+    // must be refused for the terms, not for having no topic endpoint.
+    providers::facts(source)?;
+    if source == ImageSource::Unsplash {
+        return Ok(());
+    }
+    Err(VeloctError::Unsupported(format!(
+        "主题浏览只有 Unsplash 提供;{} 没有对应的接口。",
+        source.label()
+    ))
+    .into())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -436,6 +586,192 @@ mod tests {
                 }
             }]
         })
+    }
+
+    /// An Unsplash topic list (`components.responses.TopicFeed`): a BARE ARRAY of `Topic.Basic`.
+    fn unsplash_topics_body() -> serde_json::Value {
+        serde_json::json!([
+            {
+                "id": "bo8jQKTaE0Y",
+                "slug": "wallpapers",
+                "title": "Wallpapers",
+                "description": "A curated list of wallpapers.",
+                "visibility": "featured",
+                "total_photos": 1344,
+                "links": {
+                    "self": "https://api.unsplash.com/topics/wallpapers",
+                    "html": "https://unsplash.com/t/wallpapers",
+                    "photos": "https://api.unsplash.com/topics/wallpapers/photos"
+                }
+            },
+            {
+                "id": "CDwuwXJAbEw",
+                "slug": "3d-renders",
+                "title": "3D Renders",
+                "description": "   ",
+                "visibility": "visible",
+                "total_photos": 90
+            }
+        ])
+    }
+
+    /// One topic's photos: an `AssetFeed`, i.e. a bare array of the SAME `Asset.Basic` the search
+    /// feed returns.
+    fn unsplash_topic_photos_body() -> serde_json::Value {
+        serde_json::json!([unsplash_search_body()["results"][0].clone()])
+    }
+
+    #[test]
+    fn the_topic_list_is_the_documented_fields_and_round_trips_through_the_view_type() {
+        let client = FakeHttpClient::new().on_json("/topics?", unsplash_topics_body());
+        let topics = list_topics_with(&client, Some(UNS_KEY)).unwrap();
+        assert_eq!(topics.len(), 2);
+        let views: Vec<NetworkImageTopicView> =
+            topics.into_iter().map(NetworkImageTopicView::from).collect();
+
+        assert_eq!(views[0].id, "bo8jQKTaE0Y");
+        assert_eq!(views[0].slug, "wallpapers");
+        assert_eq!(views[0].title, "Wallpapers");
+        assert_eq!(views[0].visibility, "featured");
+        assert_eq!(views[0].total_photos, 1344);
+        assert_eq!(
+            views[0].description.as_deref(),
+            Some("A curated list of wallpapers.")
+        );
+        // A description that is present but blank reads as ABSENT, so the strip does not render an
+        // empty tooltip. This is the one transformation the view type performs.
+        assert!(views[1].description.is_none());
+        assert_eq!(views[1].visibility, "visible");
+
+        let json = serde_json::to_string(&views[0]).unwrap();
+        assert_eq!(
+            serde_json::from_str::<NetworkImageTopicView>(&json).unwrap(),
+            views[0]
+        );
+
+        // §12.2 again: the key went into the header, and the request the client saw never carried it
+        // in the URL. The topics path is Unsplash's, so the version header is on this request too.
+        assert_eq!(client.request_count(), 1);
+        let recorded = client.recorded();
+        assert!(!recorded[0].url.contains(UNS_KEY), "{}", recorded[0].url);
+        assert!(recorded[0]
+            .headers
+            .iter()
+            .any(|(name, value)| name.eq_ignore_ascii_case("authorization")
+                && value == &format!("Client-ID {UNS_KEY}")));
+        assert!(recorded[0]
+            .headers
+            .iter()
+            .any(|(name, value)| name.eq_ignore_ascii_case("accept-version") && value == "v1"));
+    }
+
+    #[test]
+    fn a_topic_browse_returns_the_same_view_type_as_a_keyword_search() {
+        // The whole point of reusing `ImageSearchView`: one grid, one paging control, one drop count
+        // and one attribution notice, rather than a second implementation for the browse mode.
+        let client = FakeHttpClient::new()
+            .on_json("/topics/wallpapers/photos", unsplash_topic_photos_body());
+        let found = browse_topic_with(&client, Some(UNS_KEY), "wallpapers", &TopicQuery::first_page())
+            .unwrap();
+        let view = search_view(found);
+
+        assert_eq!(view.source, "unsplash");
+        assert_eq!(view.label, "Unsplash");
+        assert_eq!(view.query, "wallpapers", "the topic stands in for the keyword");
+        assert_eq!(view.results.len(), 1);
+        assert_eq!(view.dropped, 0);
+        assert!(
+            !view.attribution_optional,
+            "a topic pick carries the SAME credit obligation as a searched one"
+        );
+        assert_eq!(
+            view.results[0].download_location.as_deref(),
+            Some("https://api.unsplash.com/photos/LBI7cgq3pbM/download"),
+            "so the download report is still possible from a topic result"
+        );
+
+        let recorded = client.recorded();
+        assert_eq!(recorded.len(), 1);
+        assert!(
+            recorded[0].url.contains("/topics/wallpapers/photos"),
+            "{}",
+            recorded[0].url
+        );
+        assert!(!recorded[0].url.contains(UNS_KEY), "{}", recorded[0].url);
+    }
+
+    #[test]
+    fn a_topic_call_without_a_key_sends_nothing_and_says_where_the_key_goes() {
+        let client = FakeHttpClient::new();
+        for key in [None, Some("   ")] {
+            let error = list_topics_with(&client, key).unwrap_err();
+            assert_eq!(error.code, "NOT_CONFIGURED");
+            assert!(error.hint.is_some(), "the hint says where the key goes");
+
+            let error = browse_topic_with(&client, key, "wallpapers", &TopicQuery::first_page())
+                .unwrap_err();
+            assert_eq!(error.code, "NOT_CONFIGURED");
+        }
+        assert_eq!(client.request_count(), 0, "nothing is sent without a key");
+    }
+
+    #[test]
+    fn topics_belong_to_unsplash_and_another_source_is_told_so_rather_than_given_an_empty_strip() {
+        // An empty strip would read as "no topics today". Pexels has no topic endpoint and is told
+        // which provider has one.
+        let error = require_unsplash_topics(ImageSource::Pexels).unwrap_err();
+        assert!(error.message.contains("Unsplash"), "{}", error.message);
+        assert!(error.message.contains("Pexels"), "{}", error.message);
+        assert_eq!(error.code, "UNSUPPORTED");
+
+        // And a source this build cannot search AT ALL keeps its own reason — Pixabay must be refused
+        // for its terms, not for lacking a topic endpoint.
+        let error = require_unsplash_topics(ImageSource::Pixabay).unwrap_err();
+        assert!(error.message.contains("热链"), "{}", error.message);
+
+        assert!(require_unsplash_topics(ImageSource::Unsplash).is_ok());
+    }
+
+    #[test]
+    fn a_topic_page_size_above_the_providers_ceiling_is_refused_rather_than_trimmed() {
+        // The reference implementation asks for 48, which is above Unsplash's documented maximum of
+        // 30. The refusal is the crate's, and it names the number the provider allows.
+        let client = FakeHttpClient::new();
+        let mut query = TopicQuery::first_page();
+        query.per_page = 48;
+        let error = browse_topic_with(&client, Some(UNS_KEY), "wallpapers", &query).unwrap_err();
+        assert!(error.message.contains("30"), "{}", error.message);
+        assert_eq!(client.request_count(), 0, "refused before anything is sent");
+
+        query.page = 0;
+        assert!(browse_topic_with(&client, Some(UNS_KEY), "wallpapers", &query).is_err());
+        assert_eq!(client.request_count(), 0);
+    }
+
+    #[test]
+    fn an_unknown_topic_is_refused_by_the_crate_rather_than_requested() {
+        let client = FakeHttpClient::new();
+        let error =
+            browse_topic_with(&client, Some(UNS_KEY), "   ", &TopicQuery::first_page()).unwrap_err();
+        assert!(error.message.contains("主题"), "{}", error.message);
+        assert_eq!(client.request_count(), 0, "an empty topic is not a request");
+    }
+
+    #[test]
+    fn the_topic_commands_are_registered_with_the_window() {
+        // The commands are three lines each and need a live credential store, so the wrapper half is
+        // asserted by registration rather than by a call — the same limit PROCESSING.md §5.10.2
+        // records for the other state-needing wrappers, and the same assertion
+        // `attachments::the_remote_cleanup_command_is_registered_with_the_window` makes.
+        let registry = include_str!("lib.rs");
+        assert!(
+            registry.contains("images::network_image_topics"),
+            "network_image_topics must be in the invoke_handler list"
+        );
+        assert!(
+            registry.contains("images::browse_network_topic_photos"),
+            "browse_network_topic_photos must be in the invoke_handler list"
+        );
     }
 
     #[test]

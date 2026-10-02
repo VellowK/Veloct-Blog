@@ -40,16 +40,23 @@ pub use network::{
 };
 /// The provider contracts, re-exported for the command surface.
 ///
+/// The topic-browsing half (`topics_request`, `topic_photos_request`, `parse_topics`,
+/// `parse_topic_photos`, `list_topics`, `browse_topic`, `TopicQuery`, `TopicResult`) is hoisted
+/// because the command layer is its only caller and re-spelling `network::providers::` four times
+/// there would be noise rather than clarity.
+///
 /// `veloct_attach::network::providers` stays public too, so a caller that needs
 /// `providers::search_request`, `providers::parse_search`, `providers::facts` or
 /// `providers::is_implemented` reaches them by module path. Those four are deliberately NOT hoisted to
 /// the crate root: `is_implemented` and `unimplemented_reason` already exist there for
 /// `StorageKind`, and two free functions of the same name meaning different kinds would be a trap.
 pub use network::providers::{
-    attribution_markdown, download_tracking_request, report_download, search as search_images,
-    source_notice, AuthScheme, HotlinkPolicy, ProviderFacts, SearchQuery, PEXELS_API,
-    PEXELS_MAX_PER_PAGE, PEXELS_SEARCH_PATH, UNSPLASH_API, UNSPLASH_ATTRIBUTION_LINK,
-    UNSPLASH_MAX_PER_PAGE, UNSPLASH_SEARCH_PATH, UNSPLASH_UTM_SOURCE,
+    attribution_markdown, browse_topic, download_tracking_request, list_topics, parse_topics,
+    parse_topic_photos, report_download, search as search_images, source_notice, topic_photos_request,
+    topics_request, validate_paging, AuthScheme, HotlinkPolicy, ProviderFacts, SearchQuery,
+    TopicQuery, TopicResult, PEXELS_API, PEXELS_MAX_PER_PAGE, PEXELS_SEARCH_PATH,
+    UNSPLASH_API, UNSPLASH_ATTRIBUTION_LINK, UNSPLASH_MAX_PER_PAGE, UNSPLASH_SEARCH_PATH,
+    UNSPLASH_TOPICS_MAX_PER_PAGE, UNSPLASH_TOPICS_PATH, UNSPLASH_UTM_SOURCE,
 };
 pub use pool::{
     checked_cache_path, validate_original_name, Attachment, AttachmentId, CachePool, CleanupOutcome,

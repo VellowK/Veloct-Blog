@@ -786,6 +786,21 @@ export interface NetworkImageChoiceView {
   attribution: string | null;
 }
 
+/** One curated Unsplash topic, as the strip shows it (`network_image_topics`). */
+export interface NetworkImageTopicView {
+  /** Unsplash's stable id, which `browseNetworkTopicPhotos` takes. */
+  id: string;
+  /** The addressable form, which the same command also accepts. */
+  slug: string;
+  title: string;
+  /** `featured` | `visible` | `hidden` | `removed`. */
+  visibility: string;
+  /** How many photos the topic holds, as the provider reports it. */
+  total_photos: number;
+  /** `null` when the provider sent nothing, or only whitespace. */
+  description: string | null;
+}
+
 /** What a search returned. */
 export interface ImageSearchView {
   source: ImageSourceName;
@@ -1459,6 +1474,36 @@ export const api = {
     invoke<ImageSearchView>('search_network_images', {
       source: options.source,
       query: options.query,
+      page: options.page ?? null,
+      perPage: options.perPage ?? null,
+    }),
+
+  /**
+   * The curated topics the strip lists (`network_image_topics`).
+   *
+   * **An owner-requested enhancement, not §13.14's clause**, which is satisfied by the keyword search
+   * above. Unsplash only: the endpoint is Unsplash's, and another source is refused rather than given
+   * an empty strip.
+   */
+  networkImageTopics: (source: ImageSourceName) =>
+    invoke<NetworkImageTopicView[]>('network_image_topics', { source }),
+
+  /**
+   * Browse ONE topic's photos.
+   *
+   * Returns the SAME `ImageSearchView` a keyword search returns, so the grid, the paging control and
+   * the credit rule are one implementation. `topic` is an id or a slug, exactly as Unsplash accepts in
+   * its `topicSlug` path parameter.
+   */
+  browseNetworkTopicPhotos: (options: {
+    source: ImageSourceName;
+    topic: string;
+    page?: number;
+    perPage?: number;
+  }) =>
+    invoke<ImageSearchView>('browse_network_topic_photos', {
+      source: options.source,
+      topic: options.topic,
       page: options.page ?? null,
       perPage: options.perPage ?? null,
     }),
