@@ -283,3 +283,52 @@ line only.
 **The generalisable rule, and it is the mirror of §4.4's:** a vendor publishing no reference is not the same as
 a protocol that cannot be verified — sometimes the reference is INSIDE the product, in the page the vendor tells
 its own users to read. Look for that artifact before recording a gap as permanent.
+
+
+## 6. Alibaba Cloud OSS (§13.11 / §17.4) — measured against a real bucket, 2026-10-02
+
+Not a vendor whose documentation was read: these four facts came from REQUESTS to a live bucket
+(`vellow-chengdu-archieve`, region `cn-chengdu`), which is why they are worth more than a summary of a manual.
+They are recorded here because an S3-compatible provider is exactly the kind of thing this file exists for, and
+because two of them changed code.
+
+**Endpoints.** `oss-<region>.aliyuncs.com` is the public one. `oss-<region>-internal.aliyuncs.com` is reachable
+only from inside Alibaba's own network — a workstation gets no connection at all, so a target configured with
+the internal endpoint fails for a reason that looks like a network fault rather than a configuration mistake.
+The region for SigV4 is the bare form (`cn-chengdu`), not the endpoint's `oss-cn-chengdu`.
+
+**Addressing: the bucket MUST be in the hostname.** A path-style bucket request is refused in the vendor's own
+words:
+
+```
+GET https://oss-cn-chengdu.aliyuncs.com/vellow-chengdu-archieve
+403 SecondLevelDomainForbidden
+"The bucket you are attempting to access must be addressed using OSS third level domain."
+```
+
+The same LIST as `https://vellow-chengdu-archieve.oss-cn-chengdu.aliyuncs.com/` answers **200** with a
+`ListBucketResult`. This is the opposite of what ADR-0016 assumed about a user-supplied endpoint ("a self-hosted
+service almost always wants path style"), which is why an endpoint may now say `{bucket}` — see ADR-0018.
+
+**Signature: SigV4 with the service scope `s3`, NOT `oss`.** Measured with identical URLs and credentials:
+
+| scope | result |
+| --- | --- |
+| `aws:amz:cn-chengdu:oss` | **400 InvalidArgument** |
+| `aws:amz:cn-chengdu:s3` | **200**, a real listing |
+
+So a hand-rolled AWS SigV4 client works against OSS unchanged — `veroct-s3` signs `s3` and needed no signing
+change. (This is also why the second-order signing details matter: OSS refused the FIRST live request with
+`403 AccessDenied: OSS authentication requires a valid Date`, because `x-amz-date` carried sub-second digits.
+The vendor message named the field, not the bug — D174 and ADR-0018 have that story.)
+
+**Permissions.** A repository-style `permissions.admin` analogue is not needed here, but the bucket's own
+policy is what protects objects: OSS serves an object over `https://<bucket>.oss-<region>.aliyuncs.com/<key>`
+only when the bucket or object grants public read. `veroct-attach`'s public URL is BUILT from the configured
+prefix (§13.6) and never fetched, so a target can report a URL that a private bucket would refuse — which is
+the bucket's policy to set, not the client's to assume.
+
+**The generalisable rule, and it is §4.4's and §5's in a third form:** probe the vendor before writing to it,
+and read the ERROR rather than the manual. This one sentence — "must be addressed using OSS third level
+domain" — saved guessing at addressing, and the `valid Date` refusal is what found a defect that 1400+ tests
+could not see.

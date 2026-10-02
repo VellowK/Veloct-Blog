@@ -41,6 +41,13 @@ pub struct S3Object {
     pub last_modified: String,
 }
 
+/// The token a user may write in an S3 endpoint to say WHERE the bucket belongs.
+///
+/// See [`S3Config::compatible`]. It is spelled out rather than inferred from a host suffix, so the choice is
+/// the user's and an error message can teach it — a provider's addressing requirement is a fact about that
+/// provider, and guessing it from a domain name would be a rule that ages badly.
+pub const BUCKET_PLACEHOLDER: &str = "{bucket}";
+
 /// How a bucket is addressed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Addressing {
@@ -78,17 +85,54 @@ impl S3Config {
         }
     }
 
-    /// An endpoint the user supplied, addressed the way a self-hosted service expects.
+    /// An endpoint the user supplied, addressed the way the ENDPOINT says it wants to be addressed.
+    ///
+    /// The default is path style (`https://host/bucket/key`), which is what a self-hosted service almost always
+    /// wants. **A `{bucket}` placeholder in the endpoint switches to virtual-hosted addressing**
+    /// (`https://bucket.host/key`), and that is not cosmetic: Alibaba Cloud OSS refuses a path-style bucket
+    /// request in its own words — `403 SecondLevelDomainForbidden`, "The bucket you are attempting to access
+    /// must be addressed using OSS third level domain" — while AWS, Cloudflare R2 and Backblaze B2 use the same
+    /// `bucket.host` shape. So the user states which shape their provider documents:
+    ///
+    /// ```text
+    /// https://s3.example.com                        path style:     https://s3.example.com/bucket/key
+    /// https://{bucket}.oss-cn-chengdu.aliyuncs.com  virtual-hosted: https://bucket.oss-cn-chengdu.aliyuncs.com/key
+    /// ```
+    ///
+    /// The placeholder is REMOVED here, because [`S3Config::host`] puts the bucket back when the addressing is
+    /// virtual-hosted. A placeholder anywhere else is refused by [`S3Config::endpoint_parts`] BY NAME rather
+    /// than silently dropped or silently kept, so a typo cannot become a request to the wrong host.
     pub fn compatible(
         bucket: impl Into<String>,
         region: impl Into<String>,
         endpoint: impl Into<String>,
     ) -> Self {
+        let endpoint = endpoint.into();
+        // WHERE the placeholder counts: the start of the host, and nowhere else. Anything else is LEFT IN PLACE
+        // for `endpoint_parts` to refuse by name, because "it appeared somewhere" is not the same as "the user
+        // said the bucket belongs in the hostname" — an endpoint like `https://oss-{bucket}.example.com` would
+        // otherwise be silently rewritten into a host that does not exist.
+        let placeholder = format!("{BUCKET_PLACEHOLDER}.");
+        let rest = match endpoint.split_once("://") {
+            Some((_, rest)) => rest,
+            None => endpoint.as_str(),
+        };
+        let authority = rest.split('/').next().unwrap_or("");
+        let (endpoint, addressing) = if authority.starts_with(&placeholder) {
+            // Strip exactly the recognised prefix, leaving any FURTHER placeholder for the refusal.
+            let stripped = match endpoint.split_once(&placeholder) {
+                Some((before, after)) => format!("{before}{after}"),
+                None => endpoint.clone(),
+            };
+            (stripped, Addressing::VirtualHosted)
+        } else {
+            (endpoint.clone(), Addressing::PathStyle)
+        };
         Self {
             bucket: bucket.into(),
             region: region.into(),
-            endpoint: endpoint.into(),
-            addressing: Addressing::PathStyle,
+            endpoint,
+            addressing,
             public_url_prefix: String::new(),
         }
     }
@@ -111,6 +155,18 @@ impl S3Config {
             None => ("https".to_string(), trimmed.to_string()),
         };
         let rest = rest.trim_end_matches('/');
+        // A `{bucket}` that survives `S3Config::compatible` is a MISPLACED one: that function removes the single
+        // copy at the start of the host and switches to virtual-hosted addressing, so anything still here means
+        // the user wrote it where it cannot work. Refused by NAME rather than dropped or silently kept.
+        if rest.contains(BUCKET_PLACEHOLDER) {
+            return Err(VeloctError::Invalid(format!(
+                "the S3 endpoint {:?} still contains {BUCKET_PLACEHOLDER}. Write it as \
+                 https://{BUCKET_PLACEHOLDER}.<host> — once, at the start of the host — to put the bucket into \
+                 the hostname, which is what Alibaba Cloud OSS requires, or leave it out entirely for \
+                 path-style access",
+                self.endpoint
+            )));
+        }
         let (authority, base_path) = match rest.split_once('/') {
             Some((authority, path)) => (authority.to_string(), format!("/{}", path.trim_matches('/'))),
             None => (rest.to_string(), String::new()),
@@ -184,8 +240,21 @@ impl S3Config {
 }
 
 /// `YYYYMMDDTHHMMSSZ`, the `x-amz-date` format, from an RFC 3339 instant.
+///
+/// **Parsed and re-formatted, never edited in place.** Deleting `-` and `:` from
+/// `2026-10-02T03:43:16.5888216Z` leaves the sub-second digits behind — `20261002T034316.5888216Z`, twenty-four
+/// characters where SigV4 allows sixteen — and a LIVE Alibaba Cloud OSS request refused exactly that on
+/// 2026-10-02 with `403 AccessDenied: OSS authentication requires a valid Date`. Every test missed it because
+/// the fixed clocks render `...T00:00:00Z`; a real clock does not. An OFFSET is likewise CONVERTED rather than
+/// copied, which string surgery cannot do at all.
 pub fn amz_timestamp(rfc3339: &str) -> String {
-    rfc3339.replace(['-', ':'], "")
+    match veloct_core::clock::parse_rfc3339(rfc3339) {
+        Ok(instant) => veloct_core::clock::format_amz_timestamp(instant),
+        // Unparseable input keeps the tolerant behaviour: this is called on a formatted clock reading, and
+        // panicking here would take down a backup. The value is signed either way, so a vendor refuses it
+        // loudly rather than the request being sent unauthenticated.
+        Err(_) => rfc3339.replace(['-', ':'], ""),
+    }
 }
 
 /// `Hex(SHA256Hash(file))` and its length, read in bounded chunks.
@@ -709,6 +778,7 @@ fn local_name(name: &[u8]) -> String {
 mod tests {
     use super::*;
     use veloct_core::http::FakeHttpClient;
+    use veloct_core::Clock;
 
     const TIMESTAMP: &str = "20130524T000000Z";
 
@@ -722,6 +792,55 @@ mod tests {
 
     fn compatible() -> S3Config {
         S3Config::compatible("veloct-private-backups", "us-east-1", "http://127.0.0.1:9000")
+    }
+
+    #[test]
+    fn the_x_amz_date_a_live_request_carries_has_the_documented_shape() {
+        // THE defect a LIVE request found on 2026-10-02: Alibaba Cloud OSS answered
+        // `403 AccessDenied: OSS authentication requires a valid Date` to a request this client signed.
+        // `x-amz-date` must be exactly `YYYYMMDDTHHMMSSZ`, and `amz_timestamp` produced it by deleting the
+        // separators from an RFC 3339 instant — correct only while that instant ends in `Z`. A reading WITH AN
+        // OFFSET becomes `20261002T123456+0000`, which is not the documented shape at all.
+        //
+        // Nothing else could see it: the SigV4 unit tests inject an already-correct `20130524T000000Z`, and the
+        // FIXED clock in the adapter tests renders `...Z`. Only the SYSTEM clock reaches the other branch, so
+        // this test reads the real one.
+        let clock_reading = veloct_core::clock::format_rfc3339(veloct_core::SystemClock.now());
+        let timestamp = amz_timestamp(&clock_reading);
+        println!("system clock RFC 3339 = {clock_reading}");
+        println!("x-amz-date            = {timestamp}");
+
+        let fake = Arc::new(FakeHttpClient::new().always(200, ""));
+        let config = S3Config::compatible(
+            "vellow-chengdu-archieve",
+            "cn-chengdu",
+            "https://{bucket}.oss-cn-chengdu.aliyuncs.com",
+        );
+        let client = client_with(Arc::clone(&fake), config);
+        client
+            .test_connection(&timestamp)
+            .expect("a listing is signed and sent");
+        for request in fake.recorded() {
+            println!("{} {}", request.method.as_str(), request.url);
+            for (name, value) in &request.headers {
+                println!("  {name}: {value}");
+            }
+        }
+
+        // The documented shape and NOTHING else: eight digits, `T`, six digits, `Z`.
+        assert_eq!(
+            timestamp.len(),
+            16,
+            "x-amz-date must be YYYYMMDDTHHMMSSZ, and a vendor will refuse anything else: {timestamp}"
+        );
+        let (date, rest) = timestamp.split_at(8);
+        assert!(date.chars().all(|c| c.is_ascii_digit()), "{timestamp}");
+        assert!(rest.starts_with('T'), "{timestamp}");
+        assert!(rest.ends_with('Z'), "{timestamp}");
+        assert!(
+            rest[1..7].chars().all(|c| c.is_ascii_digit()),
+            "{timestamp}"
+        );
     }
 
     #[test]
@@ -781,6 +900,65 @@ mod tests {
 
         let no_host = S3Config::compatible("assets", "us-east-1", "https://");
         assert!(no_host.host().is_err());
+    }
+
+    #[test]
+    fn a_bucket_placeholder_switches_a_user_endpoint_to_virtual_hosted_addressing() {
+        // THE vendor requirement this exists for, measured on 2026-10-02: a path-style bucket request to
+        // Alibaba Cloud OSS is refused with `403 SecondLevelDomainForbidden` — "The bucket you are attempting
+        // to access must be addressed using OSS third level domain" — while the same LIST with the bucket in
+        // the hostname and SigV4's service scope reading `s3` answers 200. So the bucket has to go into the
+        // host, and the only question is who decides: the user does, by where they put `{bucket}`.
+        let oss = S3Config::compatible(
+            "vellow-chengdu-archieve",
+            "cn-chengdu",
+            "https://{bucket}.oss-cn-chengdu.aliyuncs.com",
+        );
+        assert_eq!(oss.addressing, Addressing::VirtualHosted);
+        assert_eq!(
+            oss.host().unwrap(),
+            "vellow-chengdu-archieve.oss-cn-chengdu.aliyuncs.com",
+            "the bucket goes into the hostname, once"
+        );
+        assert_eq!(oss.path_for("photos/a.jpg").unwrap(), "/photos/a.jpg");
+        assert_eq!(oss.path_for("").unwrap(), "/", "the bucket root is the host root");
+        assert_eq!(
+            oss.url_for("photos/a.jpg", "list-type=2").unwrap(),
+            "https://vellow-chengdu-archieve.oss-cn-chengdu.aliyuncs.com/photos/a.jpg?list-type=2"
+        );
+
+        // A placeholder with a base path still works, because the base path is part of the signature.
+        let with_path = S3Config::compatible("assets", "us-east-1", "https://{bucket}.gw.example.com/s3");
+        assert_eq!(with_path.host().unwrap(), "assets.gw.example.com");
+        assert_eq!(with_path.path_for("a.png").unwrap(), "/s3/a.png");
+
+        // And WITHOUT the placeholder nothing changes: path style stays the default for a user endpoint, which
+        // is what a self-hosted MinIO wants and what the tests above already cover.
+        let minio = S3Config::compatible("assets", "us-east-1", "http://127.0.0.1:9000");
+        assert_eq!(minio.addressing, Addressing::PathStyle);
+        assert_eq!(minio.path_for("a.png").unwrap(), "/assets/a.png");
+    }
+
+    #[test]
+    fn a_placeholder_anywhere_but_the_start_of_the_host_is_refused_by_name() {
+        // A typo must not become a request to the wrong host: the placeholder is either in the one documented
+        // position or it is an error that says where it belongs.
+        for endpoint in [
+            "https://oss-{bucket}.example.com",       // inside the host but not at its start
+            "https://gw.example.com/s3/{bucket}",     // in the path
+            "https://{bucket}.{bucket}.example.com",  // twice
+            "https://{bucket}",                       // no host after it
+        ] {
+            let config = S3Config::compatible("assets", "us-east-1", endpoint);
+            let error = config
+                .host()
+                .expect_err("a misplaced placeholder is refused rather than sent")
+                .to_string();
+            assert!(
+                error.contains("{bucket}") && error.contains("start of the host"),
+                "{endpoint}: {error}"
+            );
+        }
     }
 
     #[test]

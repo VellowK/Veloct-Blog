@@ -91,7 +91,7 @@ const FIELDS: Record<StorageFieldKey, StorageField> = {
   endpoint: {
     key: 'endpoint',
     label: 'Endpoint',
-    hint: '留空表示使用 AWS 官方端点(§13.11)。',
+    hint: '留空表示使用 AWS 官方端点(§13.11)。自建服务写 http://主机:端口(桶放在路径里);若厂商要求桶出现在主机名(阿里云 OSS 就是这样,它直接拒绝路径式访问),写成 https://{bucket}.oss-cn-<地区>.aliyuncs.com。',
     secret: false,
     placeholder: 'http://127.0.0.1:9000',
   },

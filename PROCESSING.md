@@ -51,13 +51,13 @@ has tests.
 |---|---|
 | Last commit these numbers describe | **`8ba4219` plus THIS round's change set**, which carries §13.12's Lsky Pro adapter (D166–D167) and is recorded in §J. `8ba4219` itself is **`585de01`** "Verify Unsplash against the LIVE service, the first real remote call in this repository" plus a documentation-only change, and all six of §3.1's checks were reproduced on it before this round began (§1.2) |
 | Working tree | **`git status --short` was EMPTY at `8ba4219`**, where the previous handover's numbers were reproduced; **this round's change set was NOT committed when its own run was taken**, so the numbers below are reproducible from the change set the commit carries rather than from a sha — §1.2 records why that distinction is written down rather than glossed. `git diff --stat 585de01 HEAD` was `PROCESSING.md` ONLY until this round; **§13.12's adapter is the first CODE change since `585de01`**, and it moves that line. Both the works and network-image rounds were FIRST measured on unclean trees, which §1.2 records rather than hides; both were then re-run on their commits, and the network-image re-run exposed two real test races (§2.13, §2.14) |
-| Rust tests | **1419 passed, 0 failed, 9 ignored** (+24 over `8ba4219`'s 1395: `veloct-attach` +20 and `veloct-desktop` +4; **the workspace is 17 members — 16 crates plus `src-tauri`** — and its 17 per-crate rows in §J sum to 1418, the 1419th being the one `live_providers` test that runs with no key and no network). The 9 ignored are the 4 real-process/live ones that must not run in an ordinary suite: the 3 real-process integration tests, 1 each in `publish_integration` and `end_to_end_release`, **2 in `crates/veloct-attach/tests/live_providers.rs`** (a vendor's uptime must never gate `cargo test`), **and 2 that were ADDED by the live GitHub verification: `crates/veloct-attach/tests/live_github.rs` and `crates/veloct-backup/tests/live_github.rs`** — each named after what it proves in §J |
+| Rust tests | **1423 passed, 0 failed, 11 ignored** (+28 over `8ba4219`'s 1395: `veloct-attach` +20, `veloct-desktop` +4, **`veloct-core` +1 and `veloct-s3` +3 from the live S3 round**; **the workspace is 17 members — 16 crates plus `src-tauri`** — and its per-crate rows in §J sum to 1422, the 1423rd being the one `live_providers` test that runs with no key and no network). The 11 ignored are the 4 real-process tests and the 7 live-vendor ones: the 3 real-process integration tests, 1 each in `publish_integration` and `end_to_end_release`, **2 in `crates/veloct-attach/tests/live_providers.rs`**, **2 in `crates/veloct-attach/tests/live_github.rs`** (attachment round trip, §17.2's refusal), **2 in `crates/veloct-backup/tests/live_github.rs`** (the backup round trip and the same privacy rule), and **2 added by the live S3 round: `crates/veloct-attach/tests/live_s3.rs` and `crates/veloct-backup/tests/live_s3.rs`** — a vendor's uptime must never gate `cargo test` |
 | Frontend tests | **157 passed** (vitest: 24 `frontmatter` + **62** `storageTargetForm` + 36 `workForm` + 35 `networkImageForm`; the five new ones are §13.12's field, request, edit round-trip and refusal rules) |
 | `clippy --workspace --all-targets` | **0 warnings** |
 | Site build verifier | **52/52 checks** — `site/` is untouched by §13.12, and the build was re-run rather than assumed; §J names the command behind every number |
-| Test matrix | **241 rows at `I`, 0 at `P`** (224 + 9 for §13.14, the two races it exposed and the live verification, + 1 for §5.12's re-verified Pexels pause, + 3 for §13.12 and the §5.10 members it closed: D166–D168, + 1 for §13.10's SSH/SFTP REMOVAL: D169, + 3 for the LIVE GitHub verification: D170–D172), out of **261** rows across tables A–G |
+| Test matrix | **245 rows at `I`, 0 at `P`** (224 + 9 for §13.14, the two races it exposed and the live verification, + 1 for §5.12's re-verified Pexels pause, + 3 for §13.12 and the §5.10 members it closed: D166–D168, + 1 for §13.10's SSH/SFTP REMOVAL: D169, + 7 for the live GitHub verifications, the OSS addressing rule, the `x-amz-date` defect a live call found, and the two live S3 round trips: D170–D176), out of **265** rows across tables A–G |
 | Shell commands registered | **87** (unchanged: §13.12 needed no new command, because the storage commands are generic over the kind) |
-| Installer | **`target/release/bundle/nsis/Veloct_0.1.0_x64-setup.exe`, 27.93 MiB (29,286,835 bytes)** — **rebuilt TWICE on 2026-10-02**: once so the package carries §13.12, and again after §13.10's SSH/SFTP target was REMOVED, because an artefact that still offers a kind the contract no longer contains would contradict the product. Each build was followed by the WHOLE §2.10 sequence: silently installed to a temp directory, listed (`veloct-desktop.exe` 16.2 MB, `veloct-astro-sidecar.exe` 2.8 MB, `veloct-node.exe` 93.6 MB, `uninstall.exe`), **the INSTALLED launcher started the real Astro dev server and `GET http://localhost:4399/` returned 200**, then tree-killed (port free, checked with `State -eq 'Listen'`) and uninstalled with the directory removed. **Still unsigned** (§5.10.4) |
+| Installer | **`target/release/bundle/nsis/Veloct_0.1.0_x64-setup.exe`, 27.94 MiB** — **rebuilt THREE times on 2026-10-02**: once so the package carries §13.12, again after §13.10's SSH/SFTP target was REMOVED, and a third time after the live-S3 fix moved `veloct-core` and therefore the committed sidecar LAUNCHER (so the packaged launcher is byte-identical to the committed one — verified by hash, §2.2). Each build was followed by the WHOLE §2.10 sequence: silently installed to a temp directory, listed (`veloct-desktop.exe` 16.2 MB, `veloct-astro-sidecar.exe` 2.8 MB, `veloct-node.exe` 93.6 MB, `uninstall.exe`), **the INSTALLED launcher started the real Astro dev server and `GET http://localhost:4399/` returned 200**, then tree-killed (port free, checked with `State -eq 'Listen'`) and uninstalled with the directory removed. **Still unsigned** (§5.10.4) |
 
 Every command above exits **0** on success. That matters and is itself a recent fix — see §2.
 
@@ -250,6 +250,32 @@ tests/storageTargetForm.test.ts                                        NEW  thos
     §17.2 privacy rule AND its backup path are each verified against the vendor (D170–D172) — the first live
     cloud verification in this repository's history, and the first time it has written to a third party.
 
+17. **S3 was verified against a real object store, and the first live call found a defect that had made every
+    S3 request this application ever built fail.** A bucket was offered (`vellow-chengdu-archieve`, Alibaba Cloud
+    OSS), which was reachable only through a chain worth recording: the rclone configuration on this machine
+    names an **AList WebDAV remote**, not an OSS bucket, and the bucket is a storage mounted INSIDE that AList —
+    so Veloct could not have used it as Veloct (there is no WebDAV target in the contract) and the bucket's own
+    S3 credentials had to be supplied. Three facts were then MEASURED before any code was written: the
+    `-internal` endpoint is unreachable from outside Alibaba's network; a path-style bucket request is refused
+    with **`403 SecondLevelDomainForbidden`**, so OSS requires the bucket in the HOSTNAME; and SigV4 with the
+    service scope `oss` is refused (`400 InvalidArgument`) while **`s3` answers 200** — which is the scope
+    `veroct-s3` already signed with, so the signing was right and only the addressing was wrong. The addressing
+    is now the user's to state, with **`{bucket}`** in the endpoint (ADR-0018, D173), and a misplaced
+    placeholder is refused by name rather than silently rewritten into a host that does not exist.
+    **Then the first live request came back `403 AccessDenied: OSS authentication requires a valid Date`** — and
+    the value Veloct had sent was `x-amz-date: 20261002T034316.5888216Z`, twenty-four characters where SigV4
+    allows sixteen, because `amz_timestamp` built it by deleting `-` and `:` from an RFC 3339 instant and a real
+    clock carries sub-second digits. **The whole suite was blind to it by construction**: the SigV4 tests inject
+    an already-correct `20130524T000000Z` and every adapter test uses a `FixedClock` with zero nanoseconds, so
+    no test input ever contained a fraction — and AWS validates the same format, so the defect was not
+    OSS-specific. Fixed by formatting instead of editing (`veroct_core::clock::format_amz_timestamp`, which
+    `format_release_stamp` now delegates to so the two shapes cannot drift), and guarded by two tests that are
+    deliberate about their input: one feeds nanoseconds and a `+8` offset, the other reads the **SYSTEM** clock
+    and prints the signed request. **Both S3 roles then round-tripped live** — the §13.11 attachment target
+    (D175) and the §17.4 backup target, whose archive is streamed and whose listing carries the BUCKET's own
+    `LastModified` (D176). §5.8's recorded gap was not merely a lack of confidence: it was hiding a total
+    failure of the feature.
+
 The paths THIS round changed:
 
 ```text
@@ -378,6 +404,14 @@ the difference is real but invisible from the outside; the new binary is the sam
 and behaves identically. **The rule is therefore "any touch to `crates/veloct-sidecar` ⇒ rebuild and
 commit the launcher"**, not "any change to its behaviour". Rebuilding is cheap; a stale launcher is
 silent.
+
+**The staleness is TRANSITIVE, which is the stronger form of the same trap** (found 2026-10-02). The
+live-S3 round changed `crates/veloct-core/src/clock.rs` — one function, `amz_timestamp`, nothing to do with
+launching a site — and `-Check` went red, because the launcher LINKS `veloct-core` and its bytes moved with
+it. So the honest rule is **"any touch to `crates/veloct-sidecar` OR to anything it depends on"**, and
+`veloct-core` is the crate most likely to be edited for an unrelated reason. The launcher was rebuilt
+(2.67 MB) and re-checked green in the same round; the installer was rebuilt with it, so the packaged launcher
+and the committed one are the same bytes.
 
 ### 2.3 `VeloctError`'s hint is not in its `Display`
 
@@ -764,6 +798,20 @@ $env:VELOCT_GITHUB_ATTACHMENT_REPO  = "owner/throwaway-repo"
 $env:VELOCT_GITHUB_BACKUP_TOKEN = "<fine-grained PAT, Contents: read and write>"
 $env:VELOCT_GITHUB_BACKUP_REPO  = "owner/throwaway-PRIVATE-repo"
 .\scripts\cargo.ps1 test -p veloct-backup --test live_github -- --ignored --nocapture
+
+# S3 / S3-compatible, in BOTH roles (§13.11's attachment target and §17.4's backup target).
+# `{bucket}` in the endpoint is how the ADDRESSING is chosen, and Alibaba Cloud OSS REQUIRES it: OSS refuses
+# path-style bucket access with 403 SecondLevelDomainForbidden. A MinIO wants the opposite, so leave it out.
+# An `-internal` endpoint will not resolve from outside Alibaba's network; use the public one.
+$env:VELOCT_S3_ACCESS_KEY_ID     = "<access key id>"
+$env:VELOCT_S3_SECRET_ACCESS_KEY = "<secret access key>"
+$env:VELOCT_S3_BUCKET            = "your-bucket"
+$env:VELOCT_S3_REGION            = "cn-chengdu"
+$env:VELOCT_S3_ENDPOINT          = "https://{bucket}.oss-cn-chengdu.aliyuncs.com"
+# the attachment test additionally needs the prefix the object's public URL is built from (§13.6)
+$env:VELOCT_S3_PUBLIC_URL_PREFIX = "https://your-bucket.oss-cn-chengdu.aliyuncs.com"
+.\scripts\cargo.ps1 test -p veloct-attach --test live_s3 -- --ignored --nocapture
+.\scripts\cargo.ps1 test -p veloct-backup --test live_s3 -- --ignored --nocapture
 ```
 
 Two things learned by running them, so nobody re-learns them: **a repository's `permissions.admin` describes
@@ -824,12 +872,15 @@ by clause, and each row names the evidence it requires.
   This is the one §5.7 claim that a `cargo build` could not have made. **Rebuilt and re-probed twice on
   2026-10-02** (so the package carries §13.12, and then so it no longer offers a kind the contract has
   removed), with the whole sequence re-run rather than assumed each time.
-- **A real vendor was WATCHED answering on 2026-10-02, in all three directions**: a live `put`/`head`/`delete`
-  round trip through §13.13's attachment target against `api.github.com` (D170), §17.2's privacy refusal
-  against a real PUBLIC repository (D171), and — once that repository was made private — the §17.4 BACKUP
-  target's own `upload`/`list`/`remove` round trip (D172). All three are `#[ignore]`d live tests that fail
-  without a credential rather than skipping, none prints the token, and together they are the first time this
-  repository has WRITTEN to a third party.
+- **A real vendor was WATCHED answering on 2026-10-02, in FIVE directions**: a live `put`/`head`/`delete` round
+  trip through §13.13's attachment target against `api.github.com` (D170), §17.2's privacy refusal against a real
+  PUBLIC repository (D171), the §17.4 BACKUP target's own `upload`/`list`/`remove` round trip once that
+  repository was private (D172), and then **both S3 roles against a real Alibaba Cloud OSS bucket** — the
+  §13.11 attachment target (D175) and the §17.4 backup target (D176). All five are `#[ignore]`d live tests that
+  fail without a credential rather than skipping, none prints a credential, and together they are the first time
+  this repository has WRITTEN to a third party. **And the S3 pair found a shipped defect on its first run**
+  (D174): `x-amz-date` carried a real clock's sub-second digits, so no S3 request this application made could
+  have succeeded anywhere — see §5.8, which is where that gap was already written down as the biggest one.
 - **A real Astro build emits the works poster**: `dist/site/work-previews/demo-counter/screenshot.webp`
   was compared BYTE FOR BYTE with the work's own `preview/screenshot.webp` (52/52 verifier checks).
 - `publish` runs a real Astro build, emits `dist/site` + `dist/works`, writes `release.json`,
@@ -858,9 +909,9 @@ believing any summary, including this one. Judged against the evidence that exis
 | H12 | One build per publish, all targets share it | **done** |
 | H13 | Failed target re-publish by original Release | **done** — `resendable_sub_targets` |
 | H14 | 1Panel manual upload of current `dist` | **done** as a manual export |
-| H15 | Attachments: cache pool, **sftp, s3, lsky**, github, remote image | **PARTIAL, and §13.14 is now DONE: the remote image browser is implemented against Unsplash and Pexels** — the two sources whose terms require or permit §13.14's flow — with keys in the OS credential store, the credit line enforced by the crate where the provider demands it, Unsplash's mandatory download report, and Pixabay refused in its own words. **Unsplash is verified against the LIVE service (D164)**; **Pexels is implemented and tested but currently unusable, because it has paused new API key issuance — the fact is recorded in `docs/spec/03-upstream-facts.md` §4.2 and matrix row **D165**, and §5.12 records it as a known and deliberate state rather than fixing it.** What is done besides: the pool, the three axes, dedup, multi-reference, §13.8's no-auto-delete rule and explicit cleanup, the local kind, the kind report, the save-path validation, GitHub and S3, and the target form (B1–B14, D16, D91–D93, D116–D123, D130–D145, D155–D164). What is STILL PARTIAL and exactly why: **(1) ~~`sftp` has NO adapter~~ — CLOSED BY REMOVAL (ADR-0017, D169): the OWNER removed §13.10's SSH/SFTP target from the contract, so it is a RETIRED kind rather than an unadapted one, §13.10 is now the local / server directory target, and a project that saved an SFTP target still loads it and is told it was removed; **(2) `lsky` is now DONE** — §5.4's protocol was read from the vendor's own artifacts (the API page the product renders, plus the routes and handlers behind it) and `veloct-attach/src/lsky.rs` implements it, D166–D167; **(3) GitHub has now contacted the live service in all THREE directions** — a real `put`/`head`/`delete` round trip through §13.13's attachment target (D170), §17.2's privacy refusal against a real PUBLIC repository (D171), and §17.4's BACKUP `upload`/`list`/`remove` round trip on a private repository (D172) — **while S3, Cloudflare and EdgeOne remain fake-client-only** (§5.8), and Pexels cannot be contacted by a new user at all (D165, §5.12) |
+| H15 | Attachments: cache pool, **sftp, s3, lsky**, github, remote image | **PARTIAL, and §13.14 is now DONE: the remote image browser is implemented against Unsplash and Pexels** — the two sources whose terms require or permit §13.14's flow — with keys in the OS credential store, the credit line enforced by the crate where the provider demands it, Unsplash's mandatory download report, and Pixabay refused in its own words. **Unsplash is verified against the LIVE service (D164)**; **Pexels is implemented and tested but currently unusable, because it has paused new API key issuance — the fact is recorded in `docs/spec/03-upstream-facts.md` §4.2 and matrix row **D165**, and §5.12 records it as a known and deliberate state rather than fixing it.** What is done besides: the pool, the three axes, dedup, multi-reference, §13.8's no-auto-delete rule and explicit cleanup, the local kind, the kind report, the save-path validation, GitHub and S3, and the target form (B1–B14, D16, D91–D93, D116–D123, D130–D145, D155–D164). What is STILL PARTIAL and exactly why: **(1) ~~`sftp` has NO adapter~~ — CLOSED BY REMOVAL (ADR-0017, D169): the OWNER removed §13.10's SSH/SFTP target from the contract, so it is a RETIRED kind rather than an unadapted one, §13.10 is now the local / server directory target, and a project that saved an SFTP target still loads it and is told it was removed; **(2) `lsky` is now DONE** — §5.4's protocol was read from the vendor's own artifacts (the API page the product renders, plus the routes and handlers behind it) and `veloct-attach/src/lsky.rs` implements it, D166–D167; **(3) GitHub and S3 have both contacted the live service** — GitHub in three directions (D170–D172) and S3 in both roles (D175–D176, after a live call found a defect no test could see: D174) — **while Cloudflare and EdgeOne remain fake-client-only** (§5.8), and Pexels cannot be contacted by a new user at all (D165, §5.12) |
 | H16 | Dedup safe, multi-reference safe, no auto remote delete | **done** |
-| H17 | Auto backup, manual backup, local export, full restore, content-only restore | **PARTIAL — all five work, and BOTH of §17.4's cloud targets are now real: GitHub (§17.2 verified against the repository on every upload) and S3 (§13.11's client, a streamed upload, the bucket's own timestamps). Targets live in SQLite's `backup_targets`, each run is recorded per target in `backups` (§22.7), and §17.3's finding blocks the upload while the local archive survives. What is still missing is NOT the target model — see §5.8: **GitHub is now verified LIVE in all three directions (D170–D172), including the backup target's own upload/list/remove round trip on a private repository, while S3 has never been contacted** |
+| H17 | Auto backup, manual backup, local export, full restore, content-only restore | **PARTIAL — all five work, and BOTH of §17.4's cloud targets are now real: GitHub (§17.2 verified against the repository on every upload) and S3 (§13.11's client, a streamed upload, the bucket's own timestamps). Targets live in SQLite's `backup_targets`, each run is recorded per target in `backups` (§22.7), and §17.3's finding blocks the upload while the local archive survives. What is still missing is NOT the target model — see §5.8: **BOTH of §17.4's cloud targets are now verified LIVE — GitHub in three directions (D170–D172) and S3 in both roles (D175–D176, after the live S3 call found and fixed the `x-amz-date` defect D174) — while Cloudflare and EdgeOne have never been contacted** |
 | H18 | No secret in config/log/backup; scan before backup | **done** — scan runs BEFORE the archive is written; and see §2.8, where wiring a feature found a leak on a path review had missed |
 | H19 | SEO, comments, logging operational | **done** — SEO push lifecycle, giscus comments (off by default), log page |
 | H20 | Key failure paths explicit, never silent | **done** — `hint()`, `anchor_error`, `unimplemented_reason()`, `capabilities().verified` |
@@ -1101,18 +1152,25 @@ installer path). Neither is a correctness problem and neither is claimed away.
 
 ### 5.8 Smaller, stated gaps
 
-- **Two services have been contacted, and GitHub was the first CLOUD TARGET this repository has ever written
-  to — in all THREE directions, on the same day.** On 2026-10-02 GitHub was verified LIVE: a `put` → `head` →
-  `delete` → `head` round trip through §13.13's attachment target (D170); **§17.2's privacy rule REFUSING a
-  backup against a real PUBLIC repository**, in the adapter's own words (D171); and then, once the repository
-  was private, **the §17.4 backup target's own `upload` → `list` → `remove` round trip**, whose listing carried
-  the size GitHub itself stored and whose name parsing recovered the instant §17.6's retention sorts by (D172).
-  **Two lessons are recorded rather than remembered:** a repository's `permissions.admin` describes the USER and
-  not the TOKEN (a fine-grained PAT needs its own **Administration** permission or `PATCH /repos/…` answers
-  **403** — which is exactly how the first attempt at making the repository private failed), and a millisecond
-  timestamp does not produce a name `archive_created_at` can read back. **What is still fake-client-only, each
-  for a stated reason:** S3 needs a bucket; Cloudflare and EdgeOne need accounts. Nothing has been sent to any
-  of them.
+- **Two services have been contacted, in FIVE directions, and the second one found a shipped defect.** On
+  2026-10-02 GitHub was verified LIVE three ways — a `put`/`head`/`delete` round trip through §13.13's
+  attachment target (D170), **§17.2's privacy rule REFUSING a backup against a real PUBLIC repository** in the
+  adapter's own words (D171), and the §17.4 backup target's own `upload`/`list`/`remove` round trip once that
+  repository was private (D172) — and then **S3 was verified in BOTH of its roles against a real Alibaba Cloud
+  OSS bucket**: the §13.11 attachment target (D175) and the §17.4 backup target (D176), whose streamed archive
+  and bucket-reported `LastModified` are the two things that make it a different path from GitHub's.
+  **The S3 pair paid for itself on its first run:** it was answered `403 AccessDenied: OSS authentication
+  requires a valid Date` because `x-amz-date` carried a real clock's sub-second digits
+  (`20261002T034316.5888216Z`), which means **no S3 request this application had ever built could succeed
+  against any provider, AWS included** (D174, ADR-0018). **That is the sentence to remember about this
+  section:** the live gap was not a matter of confidence — it was hiding a total failure of the feature, and the
+  entire suite was blind to it because every test fed a fixed clock with zero nanoseconds and an already-correct
+  timestamp. **What is still fake-client-only, each for a stated reason:** Cloudflare and EdgeOne need accounts;
+  nothing has been sent to either. Three smaller lessons are recorded rather than remembered: a repository's
+  `permissions.admin` describes the USER and not the TOKEN (a fine-grained PAT needs its own Administration
+  permission, or `PATCH /repos/…` answers 403); a millisecond timestamp does not produce a name
+  `archive_created_at` can read back; and an object store may refuse path-style bucket access outright, so the
+  ENDPOINT says where the bucket goes (`{bucket}`).
   **Unsplash is the exception and the first live vendor call this repository has made**: on 2026-10-01 a
   real `GET https://api.unsplash.com/search/photos?query=coffee` through the crate's own request builder
   and parser returned **10 results**, with the `ixid` parameter intact, the 1080 px `regular` rendition,
@@ -1429,9 +1487,12 @@ test races (§2.13, §2.14) that had been passing by luck.
    which is worth copying. **What is left:** GitHub's own BACKUP round trip needs a PRIVATE repository (the
    token supplied has Contents write but not Administration, so Veloct could not make one private and did not
    try — the honest next step is a repository the user makes private, or a token with Administration)** — and
-   that step was then taken, so **GitHub is now verified in all THREE directions (D170–D172)**, including the
-   backup target's own round trip. **What is genuinely left:** S3 needs a bucket; Cloudflare and EdgeOne need
-   accounts. Pexels has a test ready but no obtainable key (§5.12).
+   that step was then taken, so **GitHub is verified in all THREE directions (D170–D172)**; **S3 followed in
+   BOTH of its roles (D175–D176), and its first live call found a shipped defect that made every S3 request fail
+   (D174)**. **What is genuinely left:** Cloudflare and EdgeOne need accounts. Pexels has a test ready but no
+   obtainable key (§5.12). **The lesson worth carrying forward is not "live tests are nice":** the S3 defect was
+   invisible to 1400+ tests because every one of them fed a fixed clock, and only a real service could refuse
+   the value Veloct built.
    **A live test that skips silently is worth nothing, which is why a missing key FAILS
    `tests/live_providers.rs` and both `live_github.rs` files.**
 4. **The §13.12 round is DONE and the §13.10 SSH/SFTP target is GONE** — Lsky Pro is implemented against a

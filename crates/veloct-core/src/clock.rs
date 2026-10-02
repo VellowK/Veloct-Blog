@@ -77,8 +77,15 @@ pub fn parse_rfc3339(value: &str) -> crate::Result<OffsetDateTime> {
         .map_err(|e| crate::VeloctError::Invalid(format!("invalid RFC 3339 timestamp {value:?}: {e}")))
 }
 
-/// Format a timestamp for use inside a release id: `20260101T120000Z`.
-pub fn format_release_stamp(instant: OffsetDateTime) -> String {
+/// Format an instant for AWS Signature Version 4: `20260101T120000Z`.
+///
+/// **Second precision and nothing else.** A live Alibaba Cloud OSS request on 2026-10-02 was answered
+/// `403 AccessDenied: OSS authentication requires a valid Date`, because the value Veloct sent was
+/// `20261002T034316.5888216Z` — what deleting `-` and `:` from an RFC 3339 instant produces when that instant
+/// carries sub-second digits. A real system clock always carries them, and every FIXED test clock rendered
+/// `...T00:00:00Z`, so the whole test suite could not see it. SigV4 SIGNS this value, which is why it is a
+/// correctness bug rather than a cosmetic one: no S3 request this application made could have succeeded.
+pub fn format_amz_timestamp(instant: OffsetDateTime) -> String {
     let utc = instant.to_offset(time::UtcOffset::UTC);
     format!(
         "{:04}{:02}{:02}T{:02}{:02}{:02}Z",
@@ -89,6 +96,14 @@ pub fn format_release_stamp(instant: OffsetDateTime) -> String {
         utc.minute(),
         utc.second(),
     )
+}
+
+/// Format a timestamp for use inside a release id: `20260101T120000Z`.
+///
+/// The same shape as [`format_amz_timestamp`] and for the same reason — a release id must not carry sub-second
+/// digits — so it DELEGATES rather than repeating the format string, which is how the two stayed in step.
+pub fn format_release_stamp(instant: OffsetDateTime) -> String {
+    format_amz_timestamp(instant)
 }
 
 #[cfg(test)]
@@ -119,6 +134,24 @@ mod tests {
         let parsed = parse_rfc3339("2026-03-04T13:06:07+08:00").unwrap();
         assert_eq!(parsed, time::macros::datetime!(2026-03-04 05:06:07 UTC));
         assert_eq!(format_rfc3339(parsed), "2026-03-04T05:06:07Z");
+    }
+
+    #[test]
+    fn the_sigv4_stamp_is_second_precision_and_utc_even_from_a_fractional_reading() {
+        // THE defect a LIVE request found on 2026-10-02. Alibaba Cloud OSS refused a signed request with
+        // `403 AccessDenied: OSS authentication requires a valid Date`, and the value it refused was
+        // `20261002T034316.5888216Z`: the previous implementation deleted `-` and `:` from an RFC 3339 instant
+        // and left the sub-second digits behind. A fixed test clock has none, so only a REAL clock exposed it.
+        let precise = time::macros::datetime!(2026-10-02 03:43:16.5888216 UTC);
+        assert_eq!(format_amz_timestamp(precise), "20261002T034316Z");
+        assert!(format_rfc3339(precise).contains('.'), "the reading really does carry a fraction");
+
+        // An offset is CONVERTED, not copied, because SigV4's date is UTC by definition.
+        let offset = time::macros::datetime!(2026-10-02 11:43:16.5888216 +8);
+        assert_eq!(format_amz_timestamp(offset), "20261002T034316Z");
+
+        // And the release id keeps the same shape through the delegation, so the two cannot drift.
+        assert_eq!(format_release_stamp(precise), "20261002T034316Z");
     }
 
     #[test]

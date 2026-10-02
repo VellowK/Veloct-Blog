@@ -377,3 +377,99 @@ Status: **removed**, 2026-10-02, at the owner's request.
 
 
 
+
+
+## ADR-0018 — An S3 endpoint says how its bucket is addressed, and SigV4's date is second precision
+
+**Status:** accepted (2026-10-02). Both halves come from ONE live run against a real Alibaba Cloud OSS bucket,
+and the second half is a DEFECT that run found rather than a design choice. It is the first time a live vendor
+call in this repository produced a code change instead of a confirmation.
+
+### The context
+
+ADR-0016 decided that S3/S3-compatible storage is one pure-Rust client with hand-rolled SigV4, and that a
+user-supplied endpoint is addressed PATH-STYLE (`https://host/bucket/key`) because "that is what a self-hosted
+service almost always wants". Every S3 test asserted against `FakeHttpClient`, so no part of that decision had
+ever met a real service (PROCESSING.md §5.8).
+
+A bucket was then offered to verify against (`vellow-chengdu-archieve`, region `cn-chengdu`), and FOUR facts
+were measured rather than assumed:
+
+* the `-internal` endpoint (`oss-cn-chengdu-internal.aliyuncs.com`) is **unreachable** from outside Alibaba's
+  network — a workstation must use the public one;
+* a path-style bucket request is refused: **`403 SecondLevelDomainForbidden`**, "The bucket you are attempting
+  to access must be addressed using OSS third level domain";
+* SigV4 with the service scope **`oss`** is refused: **`400 InvalidArgument`**;
+* the SAME request with the scope **`s3`** answers **200** and a real `ListBucketResult`.
+
+So Veloct's SIGNING was already correct (it signs `s3`) and only its ADDRESSING was wrong — but the request that
+reached OSS through Veloct failed for a THIRD reason, which is the defect below.
+
+### The decision
+
+**1. The endpoint states the addressing, with `{bucket}`.** A `{bucket}.` immediately before the host switches
+to virtual-hosted addressing; the placeholder is removed at construction and `host()` puts the bucket back:
+
+```text
+https://s3.example.com                        path style:     https://s3.example.com/bucket/key
+https://{bucket}.oss-cn-chengdu.aliyuncs.com  virtual-hosted: https://bucket.oss-cn-chengdu.aliyuncs.com/key
+```
+
+A placeholder anywhere else — inside the host but not at its start, in the path, or twice — is **refused by
+name**. That is not decoration either: an endpoint like `https://oss-{bucket}.example.com` would otherwise be
+silently rewritten into a host that does not exist, and a wrong host is a wrong signature rather than a visible
+error.
+
+**Why the user decides, and the code does not guess.** A suffix rule ("if the host ends in `aliyuncs.com`, go
+virtual-hosted") would put a vendor's addressing requirement inside the client, where it cannot be corrected
+without a release, and it would age badly the moment a provider changed. The endpoint is configuration the user
+already writes, so the placeholder costs no new field and no new UI — and the error message can teach it.
+
+**2. SigV4's date is formatted, never assembled by deleting characters.** `amz_timestamp` builds `x-amz-date` by
+parsing the RFC 3339 instant and formatting it as `YYYYMMDDTHHMMSSZ` in UTC
+(`veroct_core::clock::format_amz_timestamp`). `format_release_stamp` — which needed exactly the same shape for
+release ids — now DELEGATES to it, so the two cannot drift apart.
+
+### The defect the live run found
+
+The first live request through this client was answered:
+
+```
+HTTP 403, AccessDenied: OSS authentication requires a valid Date.
+```
+
+Not a clock problem: a `curl` probe signed from the same machine seconds earlier was accepted. The value Veloct
+sent was:
+
+```
+x-amz-date: 20261002T034316.5888216Z        <- twenty-four characters
+```
+
+`amz_timestamp` had been `rfc3339.replace(['-', ':'], "")`, which is correct for the string a FIXED test clock
+produces (`2013-05-24T00:00:00Z` → `20130524T000000Z`) and wrong for every real one: a system clock carries
+sub-second digits, and deleting the separators keeps them. `format_rfc3339` does end in `Z` (so the first
+suspicion — a `+00:00` offset — was wrong), which is exactly why the malformed value looked plausible.
+
+**Every test in the workspace missed it, and that is the part worth keeping:** the SigV4 unit tests inject an
+already-correct `20130524T000000Z`, and the adapter tests use a `FixedClock` whose instant has zero nanoseconds,
+so no test input ever contained a fraction. **No S3 request this application made could have succeeded against
+any provider**, AWS included, because AWS validates the same format. It was found in the first minute of the
+first live S3 call this repository ever made — §5.8's recorded gap was not merely about confidence; it was
+hiding a total failure of the feature.
+
+Two tests now stand where the blind spot was, and both are deliberate about their input: a unit test in
+`veroct-core` that feeds an instant WITH nanoseconds and a non-UTC offset, and one in `veroct-s3` that reads the
+SYSTEM clock — because a fixed clock is what hid the bug.
+
+### The consequences
+
+* A MinIO user types `https://127.0.0.1:9000` and gets exactly the behaviour ADR-0016 described. An OSS user
+  types `https://{bucket}.oss-cn-chengdu.aliyuncs.com` and gets the addressing OSS demands. Neither needs a code
+  change, which is the point.
+* `Addressing` and `BUCKET_PLACEHOLDER` are public, so both adapters (attachment and backup) inherit the
+  behaviour from the one client they share (ADR-0015) instead of choosing it separately.
+* Both rules are verified against the live service in BOTH roles: `crates/veloct-attach/tests/live_s3.rs` and
+  `crates/veloct-backup/tests/live_s3.rs` write, read and remove a real object under a dedicated prefix, and
+  neither prints the credential.
+* **A live test found a shipped defect that the whole suite could not.** That is the strongest argument this
+  repository has produced for §5.8's claim that the live gap is the biggest honesty gap.
