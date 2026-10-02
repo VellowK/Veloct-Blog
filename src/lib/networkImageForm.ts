@@ -110,13 +110,21 @@ export function searchReadiness(options: {
   return { ready: true, reason: null, needsKey: false };
 }
 
-/** Why a key cannot be saved, or `null` when it can. */
+/**
+ * Why a TYPED key cannot be sent, or `null` when it can.
+ *
+ * **This is a UI AFFORDANCE, not a transcription of a crate rule** (PROCESSING.md §5.10.1). A key is pasted
+ * more often than typed, and catching an internal space or newline before a round trip is what this is for;
+ * the crate states no rule about internal whitespace.
+ *
+ * The BLANK case is deliberately NOT decided here any more: `save_image_source_key` refuses an empty key in
+ * its own words and points at the delete command, and a second copy of that message in the window would be
+ * exactly the duplication this round removed. The panel sends the key and shows the command's refusal.
+ */
 export function validateKeyInput(key: string): string | null {
-  if (key.trim() === '') {
-    return '密钥不能为空;要去掉已保存的密钥请用「删除密钥」。';
-  }
-  // A key is pasted more often than typed, and a trailing newline from a copy is the common mistake.
-  if (/\s/.test(key.trim())) {
+  const trimmed = key.trim();
+  if (trimmed === '') return null;
+  if (/\s/.test(trimmed)) {
     return '密钥中不能包含空格或换行,请检查是否复制了多余字符。';
   }
   return null;

@@ -11,6 +11,15 @@
  * 2. **The window never decides whether a credit line is optional.** It reads `attribution_optional`,
  *    which the crate derives from the provider's own terms. A second implementation of "does Unsplash
  *    require credit" would be a second chance to publish a page that violates them.
+ *
+ * **What the window DOES still decide is listed here rather than implied** (`PROCESSING.md` §5.10.1 asked for
+ * exactly this list): which source is selected and whether a keyword or a topic is what a click sends
+ * (`browseIntent`/`browseAction`), whether a search may be sent yet and why not (`searchReadiness`,
+ * `topicsReadiness` — the disabled-button-with-a-reason affordance §13.2.2 requires), and the INTERNAL
+ * whitespace a pasted key may not contain (`validateKeyInput`, which the crate states no rule about). None of
+ * these is a transcription of a crate rule: the crate has no counterpart to transcribe. The paging rule and the
+ * blank-key refusal ARE the crate's, and are no longer restated here — `pageSizeFor` clamps with the ceiling
+ * the command reported, and a blank key is left to `save_image_source_key`.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -103,6 +112,11 @@ function topic(overrides: Partial<NetworkImageTopicView> = {}): NetworkImageTopi
  * The reference implementation's browse decisions, transcribed from
  * `halo-sigs/plugin-unsplash` (`console/src/components/UnsplashSelectorProvider.vue`).
  *
+ * **Not a crate rule and not a two-language copy**: this is the window's own decision about WHICH command a
+ * click sends, and its authority is a third-party reference implementation rather than `veloct-attach`. It is
+ * kept, and listed as one of the remaining honest window rules (`PROCESSING.md` §5.10.1), because deleting it
+ * would delete a UI affordance rather than a transcription.
+ *
  * Its query function is a three-branch rule, and the precedence in it is the one thing that is easy to
  * get wrong: **a keyword wins over a selected topic**. Every row was read from that source, and the
  * `mode` column is what the window must decide.
@@ -143,20 +157,6 @@ const PLUGIN_BROWSE_RULE: ReadonlyArray<{
     mode: 'idle',
     why: 'the plugin returns [] with neither, and sends nothing',
   },
-];
-
-/** The crate's paging rule, transcribed from `providers::validate_paging`. */
-const CRATE_PAGE_RULE: ReadonlyArray<{
-  page: number;
-  perPage: number;
-  accepted: boolean;
-  why: string;
-}> = [
-  { page: 1, perPage: 30, accepted: true, why: 'exactly the documented ceiling' },
-  { page: 1, perPage: 48, accepted: false, why: 'above the documented ceiling of 30' },
-  { page: 1, perPage: 0, accepted: false, why: 'a page of nothing is not a page' },
-  { page: 0, perPage: 30, accepted: false, why: 'pages start at 1' },
-  { page: 2, perPage: 10, accepted: true, why: 'the provider default' },
 ];
 
 function result(overrides: Partial<ImageResultView> = {}): ImageResultView {
@@ -288,9 +288,13 @@ describe('validateKeyInput', () => {
     expect(validateKeyInput('a-real-looking-key-0123456789')).toBeNull();
   });
 
-  it('refuses an empty or whitespace-only key and points at the delete command', () => {
-    expect(validateKeyInput('')).toContain('删除密钥');
-    expect(validateKeyInput('    ')).toContain('删除密钥');
+  it('leaves the blank-key refusal to the command, which owns that rule AND its message', () => {
+    // `save_image_source_key` refuses an empty key in its own words and points at the delete command; a second
+    // copy of that sentence in the window is exactly the duplication PROCESSING.md §5.10.1 removed. The panel
+    // sends the key and shows the command's refusal, so a blank one is not a window rule at all.
+    expect(validateKeyInput('')).toBeNull();
+    expect(validateKeyInput('    ')).toBeNull();
+    expect(validateKeyInput('\n\t')).toBeNull();
   });
 
   it('refuses a key with INTERNAL whitespace, which a sloppy copy produces', () => {
@@ -630,17 +634,24 @@ describe('topic browsing, which is added BESIDE the keyword search', () => {
     expect(browseIntent({ topic: '   ', query: '', page: 1, perPage: 30 }).mode).toBe('idle');
   });
 
-  it('transcribes the crate\'s paging rule, so the browse mode cannot ask for 48', () => {
-    // `providers::validate_paging` refuses `per_page` above the source's ceiling with "Unsplash 每页最多
-    // 返回 30 条。" The reference implementation asks for 48. If the window ever passed 48 through, the
-    // crate would refuse the request — which is a failure the user would see as "the strip does not
-    // work", so the transcription is asserted here rather than trusted.
-    for (const rule of CRATE_PAGE_RULE) {
-      const accepted = rule.page >= 1 && rule.perPage >= 1 && rule.perPage <= UNSPLASH.max_per_page;
-      expect(accepted, `page=${rule.page} perPage=${rule.perPage}: ${rule.why}`).toBe(rule.accepted);
+  it('asks for a page size the provider cannot refuse, from the ceiling the COMMAND reported', () => {
+    // The window holds no copy of `providers::validate_paging` (PROCESSING.md §5.10.1). A transcription table
+    // used to sit here, re-implementing the crate's rule in TypeScript and comparing it against itself; the
+    // rule is asserted in Rust (`veloct-attach`'s network tests, and `veloct-desktop`'s
+    // `a_topic_page_size_above_the_providers_ceiling_is_refused_rather_than_trimmed`), and what the window
+    // does is CLAMP using `default_per_page` / `max_per_page`, which `network_image_sources` fills from the
+    // crate's own facts. That is why the reference implementation's 48 must not become a refused request.
+    for (const source of [UNSPLASH, PEXELS]) {
+      for (const requested of [0, 1, 7, source.default_per_page, source.max_per_page, 48, 500, Number.NaN]) {
+        const clamped = pageSizeFor(source, requested);
+        expect(clamped, `${source.source} asked for ${requested}`).toBeGreaterThanOrEqual(1);
+        expect(clamped, `${source.source} asked for ${requested}`).toBeLessThanOrEqual(source.max_per_page);
+      }
     }
-    // And the clamp the window actually applies turns a requested 48 into the ceiling.
-    expect(pageSizeFor(UNSPLASH, 48)).toBe(30);
+
+    expect(pageSizeFor(UNSPLASH, 48)).toBe(UNSPLASH.max_per_page);
+    // A source with no paging at all asks for nothing rather than guessing a number the crate would refuse.
+    expect(pageSizeFor(PIXABAY, 20)).toBe(0);
   });
 
   it('names a topic chip with the provider\'s own photo count', () => {

@@ -161,35 +161,35 @@ impl WorkMetadata {
     /// import would appear to succeed while creating something unreachable.
     pub fn validate(&self) -> std::result::Result<(), String> {
         if self.id.trim().is_empty() {
-            return Err("id must not be empty".into());
+            return Err("稳定 ID 不能为空。".into());
         }
         if self.id.parse::<StableId>().is_err() {
             return Err(format!(
-                "id {:?} is not a stable id; it is the directory name, so it must be one",
+                "稳定 ID {:?} 不是合法的稳定 ID:它就是作品目录名,所以必须是稳定 ID。",
                 self.id
             ));
         }
         if self.slug.trim().is_empty() {
-            return Err("slug must not be empty".into());
+            return Err("地址片段不能为空。".into());
         }
         // A slug must not contain path separators, or it would escape the works root when used to
         // build a URL or a path.
         if self.slug.contains('/') || self.slug.contains('\\') {
-            return Err(format!("slug {:?} must not contain a path separator", self.slug));
+            return Err(format!("地址片段 {:?} 不能包含路径分隔符(/ 或 \\)。", self.slug));
         }
         if self.title.trim().is_empty() {
-            return Err("title must not be empty".into());
+            return Err("作品名称不能为空。".into());
         }
         if self.entry.contains("..") {
-            return Err(format!("entry {:?} must not escape the work directory", self.entry));
+            return Err(format!("入口文件 {:?} 不能包含 ..,否则会跳出作品目录。", self.entry));
         }
         if self.entry.starts_with('/') || self.entry.contains(':') {
-            return Err(format!("entry {:?} must be a relative path", self.entry));
+            return Err(format!("入口文件 {:?} 必须是相对路径,例如 index.html。", self.entry));
         }
         for (field, value) in [("cover", &self.cover), ("screenshot", &self.screenshot)] {
             if let Some(value) = value {
                 if value.contains("..") {
-                    return Err(format!("{field} {:?} must not escape the work directory", value));
+                    return Err(format!("{field} {:?} 不能包含 ..,否则会跳出作品目录。", value));
                 }
             }
         }
@@ -361,7 +361,7 @@ mod tests {
         let mut meta = metadata(3);
         meta.id = "demo-counter".to_string();
         let problem = meta.validate().unwrap_err();
-        assert!(problem.contains("not a stable id"), "{problem}");
+        assert!(problem.contains("稳定 ID"), "{problem}");
     }
 
     #[test]
@@ -369,41 +369,41 @@ mod tests {
         // It would escape the works root when turned into a URL or a path.
         let mut meta = metadata(4);
         meta.slug = "../escape".to_string();
-        assert!(meta.validate().unwrap_err().contains("path separator"));
+        assert!(meta.validate().unwrap_err().contains("路径分隔符"));
 
         meta.slug = "a/b".to_string();
-        assert!(meta.validate().unwrap_err().contains("path separator"));
+        assert!(meta.validate().unwrap_err().contains("路径分隔符"));
     }
 
     #[test]
     fn an_entry_that_escapes_the_work_directory_is_rejected() {
         let mut meta = metadata(5);
         meta.entry = "../../etc/passwd".to_string();
-        assert!(meta.validate().unwrap_err().contains("escape"));
+        assert!(meta.validate().unwrap_err().contains("跳出作品目录"));
 
         meta.entry = "/etc/passwd".to_string();
-        assert!(meta.validate().unwrap_err().contains("relative"));
+        assert!(meta.validate().unwrap_err().contains("相对路径"));
 
         meta.entry = "C:/windows".to_string();
-        assert!(meta.validate().unwrap_err().contains("relative"));
+        assert!(meta.validate().unwrap_err().contains("相对路径"));
     }
 
     #[test]
     fn a_cover_that_escapes_the_work_directory_is_rejected() {
         let mut meta = metadata(6);
         meta.cover = Some("../../secret.png".to_string());
-        assert!(meta.validate().unwrap_err().contains("escape"));
+        assert!(meta.validate().unwrap_err().contains("跳出作品目录"));
     }
 
     #[test]
     fn an_empty_title_or_slug_is_rejected() {
         let mut meta = metadata(7);
         meta.title = "  ".to_string();
-        assert!(meta.validate().unwrap_err().contains("title"));
+        assert!(meta.validate().unwrap_err().contains("作品名称"));
 
         let mut meta = metadata(8);
         meta.slug = String::new();
-        assert!(meta.validate().unwrap_err().contains("slug"));
+        assert!(meta.validate().unwrap_err().contains("地址片段"));
     }
 
     #[test]

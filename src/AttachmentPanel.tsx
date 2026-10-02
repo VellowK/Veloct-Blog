@@ -129,6 +129,14 @@ export default function AttachmentPanel({
   const [draft, setDraft] = useState<StorageTargetDraft>(() => emptyDraft());
   const [editingId, setEditingId] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
+  /**
+   * The CRATE's ruling on the current draft, or `null` when it can be saved.
+   *
+   * It arrives from the `validate_storage_target` command rather than from a copy of the rules in the window
+   * (PROCESSING.md §5.10.1). The effect below asks on every change, debounced, so the feedback is still
+   * immediate in practice; the save path asks again, because a debounce is a delay and not a guarantee.
+   */
+  const [saveReason, setSaveReason] = useState<string | null>(null);
   /** Filled values a kind switch kept in the form but will not submit. Never silently dropped. */
   const [hiddenFilled, setHiddenFilled] = useState<StorageFieldKey[]>([]);
   /** The target whose deletion is being confirmed. An inline step, so it cannot be dismissed by accident. */
@@ -233,8 +241,31 @@ export default function AttachmentPanel({
   /** §5.3/§5.4's gaps, stated before the first save rather than after a target that cannot exist. */
   const gapSummary = kindGapSummary(kindOptions);
   const formFields = fieldsForKind(draft.kind);
-  const saveReason = validateDraft(draft);
   const hiddenNote = hiddenFieldsNote(hiddenFilled, draft.kind);
+
+  /**
+   * Ask the crate whether this draft may be saved, WITHOUT saving it.
+   *
+   * This is what replaced the window's copy of `StorageConfig::validate`. It is debounced rather than
+   * synchronous because the answer comes from Rust, which is the whole point: one authority, one message, no
+   * table comparing two hand-written copies. The trade is stated in `storageTargetForm.ts::validateDraft`.
+   *
+   * The reason is cleared first, so a stale refusal cannot keep blocking a field the user has just fixed; the
+   * save path re-asks before writing anything, so a save is never sent on an unvalidated draft.
+   */
+  useEffect(() => {
+    let live = true;
+    setSaveReason(null);
+    const handle = window.setTimeout(() => {
+      void validateDraft(draft, api.validateStorageTarget).then((reason) => {
+        if (live) setSaveReason(reason);
+      });
+    }, 250);
+    return () => {
+      live = false;
+      window.clearTimeout(handle);
+    };
+  }, [draft]);
 
   const setField = (key: StorageFieldKey, value: string) => {
     setDirty(true);
@@ -258,7 +289,9 @@ export default function AttachmentPanel({
 
   const saveTarget = () =>
     run(async () => {
-      const reason = validateDraft(draft);
+      // Asked AGAIN here, and not merely trusted from the debounced hint above: a save must never be sent on a
+      // draft the crate has not accepted, and the crate's message is what the user sees either way.
+      const reason = await validateDraft(draft, api.validateStorageTarget);
       if (reason) throw new Error(reason);
       // `buildSaveRequest` omits every blank field, so an untouched credential field leaves the stored one
       // alone (§12.2) and a value typed for another kind is not written into this target.

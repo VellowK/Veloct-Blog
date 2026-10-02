@@ -281,10 +281,13 @@ impl StorageConfig {
     /// vendor's own artifacts: its `instance` is required where the user saves it, not at the first upload.
     pub fn validate(&self) -> std::result::Result<(), String> {
         if self.id.as_str().trim().is_empty() {
-            return Err("a storage target needs an id".into());
+            return Err(
+                "请填写目标标识:它会写进附件的去重键,保存后再改会让同一个文件看起来像新的(§13.5)。"
+                    .into(),
+            );
         }
         if self.name.trim().is_empty() {
-            return Err("a storage target needs a name".into());
+            return Err("请填写一个便于识别的名称。".into());
         }
         match self.kind {
             // A retired kind cannot be made valid by filling anything in, so the arm says so instead of asking
@@ -299,7 +302,7 @@ impl StorageConfig {
             }
             StorageKind::S3 => {
                 if self.bucket.as_deref().unwrap_or("").trim().is_empty() {
-                    return Err("S3 needs a bucket".into());
+                    return Err("S3 目标必须填写 Bucket(§13.11)。".into());
                 }
                 // ADR-0018: an endpoint may put the bucket into the HOSTNAME with `{bucket}`, and only in one
                 // position. The rule is the CLIENT's (`veroct_s3::bucket_placeholder_problem`), because that is
@@ -314,13 +317,15 @@ impl StorageConfig {
             }
             StorageKind::GitHub => {
                 if self.repository.as_deref().unwrap_or("").trim().is_empty() {
-                    return Err("GitHub needs a repository".into());
+                    return Err("GitHub 目标必须填写仓库,写成 owner/repo(§13.13)。".into());
                 }
             }
             StorageKind::LskyPro => {
                 let instance = self.instance.as_deref().unwrap_or("").trim();
                 if instance.is_empty() {
-                    return Err("Lsky Pro needs an instance address".into());
+                    return Err(
+                        "Lsky Pro 目标必须填写实例地址(§13.12),例如 https://img.example.com。".into(),
+                    );
                 }
                 // §13.12's "实例地址 / API 地址": the endpoint is built by appending `/api/v1` to this value, so
                 // a relative one produces something no client can resolve. It is refused HERE because the crate
@@ -329,8 +334,8 @@ impl StorageConfig {
                 // this rule or is built without the save path.
                 if !instance.starts_with("http://") && !instance.starts_with("https://") {
                     return Err(format!(
-                        "the Lsky Pro instance {instance:?} must be an absolute http(s) URL, because the \
-                         endpoint is built by appending /api/v1 to it"
+                        "实例地址 {instance:?} 必须以 http:// 或 https:// 开头:上传地址是在它后面拼 \
+                         /api/v1 得到的。"
                     ));
                 }
             }
@@ -343,8 +348,8 @@ impl StorageConfig {
                 if let Some(prefix) = &self.key_prefix {
                     if prefix.contains(':') || prefix.starts_with('\\') {
                         return Err(format!(
-                            "the directory prefix {prefix:?} must be a relative path inside the \
-                             target's own directory"
+                            "目录前缀 {prefix:?} 必须是目标目录内的相对路径:含冒号会被当成盘符,以 \\ \
+                             开头则是 UNC 路径,都会把文件写到目标目录之外(§13.10)。"
                         ));
                     }
                 }
@@ -353,7 +358,7 @@ impl StorageConfig {
         if let Some(prefix) = &self.key_prefix {
             if prefix.contains("..") || prefix.starts_with('/') {
                 return Err(format!(
-                    "the path prefix {prefix:?} must be a relative path without .."
+                    "路径前缀 {prefix:?} 必须是相对路径:不能以 / 开头,也不能包含 ..。"
                 ));
             }
         }
@@ -364,7 +369,8 @@ impl StorageConfig {
             && !self.public_url_prefix.starts_with("https://")
         {
             return Err(format!(
-                "the public URL prefix {:?} must start with http:// or https://",
+                "公开 URL 前缀 {:?} 必须以 http:// 或 https:// 开头:它要和对象路径拼接起来才是浏览器\
+                 打开的地址(§13.6),相对地址拼出来的 URL 无法解析。",
                 self.public_url_prefix
             ));
         }
@@ -1125,22 +1131,22 @@ mod tests {
         assert!(refusal.contains("13.10"), "{refusal}");
 
         let mut config = StorageConfig::new("s3", "S", StorageKind::S3);
-        assert!(config.validate().unwrap_err().contains("bucket"));
+        assert!(config.validate().unwrap_err().contains("Bucket"));
         config.bucket = Some("b".to_string());
         assert!(config.validate().is_ok());
 
         let mut config = StorageConfig::new("gh", "G", StorageKind::GitHub);
-        assert!(config.validate().unwrap_err().contains("repository"));
+        assert!(config.validate().unwrap_err().contains("仓库"));
         config.repository = Some("r".to_string());
         assert!(config.validate().is_ok());
 
         let mut config = StorageConfig::new("l", "L", StorageKind::LskyPro);
-        assert!(config.validate().unwrap_err().contains("instance"));
+        assert!(config.validate().unwrap_err().contains("实例地址"));
         // A RELATIVE address is refused by the crate, not only by the window: the endpoint is this value plus
         // `/api/v1`, so a relative one cannot resolve. Both spellings §13.12 allows are accepted.
         config.instance = Some("lsky.example.com".to_string());
         assert!(
-            config.validate().unwrap_err().contains("absolute http(s) URL"),
+            config.validate().unwrap_err().contains("http:// 或 https://"),
             "{:?}",
             config.validate()
         );
@@ -1162,13 +1168,13 @@ mod tests {
         let mut config = StorageConfig::new("on-this-machine", "Local", StorageKind::Local);
         config.key_prefix = Some("C:\\Windows\\Temp".to_string());
         assert!(
-            config.validate().unwrap_err().contains("relative path"),
+            config.validate().unwrap_err().contains("相对路径"),
             "{:?}",
             config.validate()
         );
 
         config.key_prefix = Some("\\\\server\\share".to_string());
-        assert!(config.validate().unwrap_err().contains("relative path"));
+        assert!(config.validate().unwrap_err().contains("相对路径"));
 
         // A nested relative prefix is exactly what the field is for.
         config.key_prefix = Some("uploads/2026".to_string());
@@ -1179,10 +1185,10 @@ mod tests {
     fn validation_rejects_a_prefix_that_escapes_the_target() {
         let mut config = s3();
         config.key_prefix = Some("../outside".to_string());
-        assert!(config.validate().unwrap_err().contains("without .."));
+        assert!(config.validate().unwrap_err().contains("相对路径"));
 
         config.key_prefix = Some("/absolute".to_string());
-        assert!(config.validate().unwrap_err().contains("without .."));
+        assert!(config.validate().unwrap_err().contains("相对路径"));
     }
 
     #[test]

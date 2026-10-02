@@ -4,16 +4,19 @@
 // repository has no React test renderer, so every decision the panel makes is here instead and is
 // covered by `tests/workForm.test.ts`.
 //
-// Two of these rules have a second implementation in Rust, and that duplication is deliberate rather
-// than accidental:
+// **The metadata RULES are not here any more** (`PROCESSING.md` §5.10.1). `validateWorkDraft` used to restate
+// `WorkMetadata::validate` (crates/veloct-content/src/works/metadata.rs) and `CRATE_RULE` was a ten-shape
+// transcription that held the two hand-written copies together. A transcription only DETECTS drift, so both
+// are gone: `validateWorkDraft` now ASKS the `validate_work_metadata` command — the same call the save path
+// runs through `write_work` — and shows the crate's own message verbatim.
 //
-//  * `validateWorkDraft` restates `WorkMetadata::validate` (crates/veloct-content/src/works/metadata.rs).
-//    The crate is the authority and refuses an invalid draft whatever the window does; the copy exists
-//    so the user is told in the field they typed rather than by an error after a save that could never
-//    have succeeded. `CRATE_RULE` below is the transcription that keeps the two honest, in the same
-//    spirit as `storageTargetForm.ts::CRATE_RULE` (PROCESSING.md section 5.10.1).
-//  * `slugify` restates `veloct_core::paths::slugify` for the same reason. The import itself sends
-//    only a title, so the crate does the real work; this is a PREVIEW of the address the work will get.
+// What is left is the draft MAPPING (`metadataFromDraft`, which is now also the save path's mapping, so the
+// validated object and the written one cannot differ) and `slugify`, which is still a stated PREVIEW of
+// `veloct_core::paths::slugify`: the import itself sends only a title, so the crate does the real work and the
+// plan's slug overrides the preview the moment there is one.
+
+import { describeError } from './api';
+import type { WorkMetadataView } from './api';
 
 /** The fields a user may edit, in the shape the form holds them. */
 export interface WorkDraft {
@@ -48,24 +51,35 @@ export interface WorkLike {
 }
 
 /**
- * A shape's verdict, transcribed from the crate.
+ * A validator the window can ask, injected so this module stays pure and a test can drive it.
  *
- * Every entry was produced by CALLING `WorkMetadata::validate` with that shape, not by reading it
- * and reasoning. A future rule must be added on both sides and here, or the test that exists to
- * catch a one-sided change will not catch it.
+ * The real one is `api.validateWorkMetadata`, which invokes the `validate_work_metadata` command; a test
+ * supplies its own and asserts what the window does with the answer.
  */
-export const CRATE_RULE: ReadonlyArray<{ shape: string; accepted: boolean; why: string }> = [
-  { shape: 'a plain title and slug', accepted: true, why: 'nothing to refuse' },
-  { shape: 'an empty title', accepted: false, why: 'title must not be empty' },
-  { shape: 'a whitespace-only title', accepted: false, why: 'title must not be empty' },
-  { shape: 'an empty slug', accepted: false, why: 'slug must not be empty' },
-  { shape: 'a slug with a forward slash', accepted: false, why: 'it would escape the works root' },
-  { shape: 'a slug with a backslash', accepted: false, why: 'it would escape the works root' },
-  { shape: 'an entry containing ..', accepted: false, why: 'it would escape the work directory' },
-  { shape: 'an entry starting with /', accepted: false, why: 'the entry must be relative' },
-  { shape: 'an entry containing a drive colon', accepted: false, why: 'the entry must be relative' },
-  { shape: 'a cover or screenshot containing ..', accepted: false, why: 'it would escape the work directory' },
-];
+export type WorkMetadataValidator = (metadata: WorkMetadataView) => Promise<void>;
+
+/**
+ * The metadata a save writes, built from the draft and the work it came from.
+ *
+ * Extracted from `WorksPanel` so the VALIDATED object and the WRITTEN object are the same expression: a form
+ * that validated one shape and saved another would make the crate's answer meaningless. The base is spread
+ * first, so a field the form does not show (the id, the import provenance, the poster path, the size) keeps
+ * its value — the same round trip `updateWork` documents.
+ */
+export function metadataFromDraft(draft: WorkDraft, base: WorkMetadataView): WorkMetadataView {
+  return {
+    ...base,
+    title: draft.title.trim(),
+    author: draft.author.trim(),
+    slug: draft.slug.trim(),
+    summary: draft.summary,
+    entry: draft.entry.trim(),
+    tags: parseTags(draft.tags),
+    notes: draft.notes,
+    completed_at: draft.completedAt.trim() === '' ? null : draft.completedAt.trim(),
+    cover: draft.cover.trim() === '' ? null : draft.cover.trim(),
+  };
+}
 
 /** Comment or blank lines in a tags textarea are not tags. */
 export function parseTags(text: string): string[] {
@@ -128,38 +142,31 @@ export function draftIsDirty(draft: WorkDraft, work: WorkLike): boolean {
 }
 
 /**
- * Why a draft cannot be saved, or `null` when it can.
+ * Why a draft cannot be saved, in the CRATE's words, or `null` when it can.
  *
- * The messages are the window's, in the field the user typed. The crate's own message arrives if
- * anything slips through, which is the behaviour `f29dcda` established for storage targets.
+ * **There is no rule text in this function, deliberately** (`PROCESSING.md` §5.10.1 — this was the second of
+ * the two-language members the storage form's rules were listed beside). It used to restate
+ * `WorkMetadata::validate` field by field, in Chinese, and `tests/workForm.test.ts` held the two copies
+ * together with a ten-shape transcription table. Now the panel asks the `validate_work_metadata` command for
+ * the object it would WRITE (`metadataFromDraft`, so the validated shape and the saved one are one
+ * expression) and shows whatever comes back.
+ *
+ * **The UX trade, stated rather than hidden:** this is asynchronous, so the panel cannot refuse a keystroke in
+ * the same tick. `WorksPanel` asks the command as the user types (debounced) and again before the save, so the
+ * hint under the form is still immediate in practice; what the async call buys is that no rule lives in two
+ * places, where the transcription could only ever have DETECTED the drift.
  */
-export function validateWorkDraft(draft: WorkDraft): string | null {
-  if (draft.title.trim() === '') {
-    return '作品名称不能为空。';
+export async function validateWorkDraft(
+  draft: WorkDraft,
+  base: WorkMetadataView,
+  validate: WorkMetadataValidator,
+): Promise<string | null> {
+  try {
+    await validate(metadataFromDraft(draft, base));
+    return null;
+  } catch (error) {
+    return describeError(error);
   }
-  if (draft.slug.trim() === '') {
-    return '地址片段不能为空。';
-  }
-  if (draft.slug.includes('/') || draft.slug.includes('\\')) {
-    return '地址片段不能包含路径分隔符(/ 或 \\)。';
-  }
-  if (draft.entry.trim() === '') {
-    return '入口文件不能为空,例如 index.html。';
-  }
-  if (draft.entry.includes('..')) {
-    return '入口文件不能包含 ..,否则会跳出作品目录。';
-  }
-  if (draft.entry.startsWith('/') || draft.entry.includes(':')) {
-    return '入口文件必须是相对路径,例如 index.html。';
-  }
-  for (const [label, value] of [
-    ['封面', draft.cover],
-  ] as Array<[string, string]>) {
-    if (value.includes('..')) {
-      return `${label}路径不能包含 ..。`;
-    }
-  }
-  return null;
 }
 
 /**

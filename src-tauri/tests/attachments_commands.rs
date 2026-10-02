@@ -178,7 +178,7 @@ fn the_save_command_stores_neither_a_refused_target_nor_its_credential() {
 
     let error = save_storage_target(app.state::<AppState>(), request)
         .expect_err("the crate refuses an S3 target with no bucket");
-    assert!(error.to_string().contains("bucket"), "{error}");
+    assert!(error.to_string().contains("Bucket"), "{error}");
 
     // 1. No row, and the file was never created — not merely "the list is empty after an edit".
     assert!(

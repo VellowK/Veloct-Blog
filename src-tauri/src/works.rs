@@ -114,6 +114,26 @@ pub fn export_work(
     Ok(written)
 }
 
+/// Validate a work's metadata DRAFT, writing nothing and touching no project state.
+///
+/// **This is the ONE authority for the works form's rules** (`PROCESSING.md` §5.10.1). The window used to
+/// restate `WorkMetadata::validate` in `src/lib/workForm.ts::validateWorkDraft` and hold the two copies
+/// together with a ten-shape transcription table in `tests/workForm.test.ts`. A transcription only DETECTS
+/// drift, so the copy and the table are gone: the panel asks THIS command and shows the message verbatim.
+///
+/// It takes no `AppState` (`WorkMetadata` is the draft), so a test drives it directly — and it calls the same
+/// `WorkMetadata::validate` the SAVE path runs, through `write_work`, so a draft the form accepts cannot be one
+/// the write refuses.
+#[tauri::command]
+pub fn validate_work_metadata(metadata: WorkMetadata) -> Result<(), CommandError> {
+    validate_work_metadata_draft(&metadata)
+}
+
+/// The command's body, so a test can drive it without a command runtime.
+fn validate_work_metadata_draft(metadata: &WorkMetadata) -> Result<(), CommandError> {
+    metadata.validate().map_err(command_invalid)
+}
+
 /// Replace a work's editable metadata.
 #[tauri::command]
 pub fn update_work(
@@ -290,5 +310,128 @@ mod tests {
     fn the_poster_limit_is_the_crates_own_number() {
         // The window reads it before an attempt, so it must be the same number the crate enforces.
         assert_eq!(work_screenshot_limit(), veloct_app::MAX_SCREENSHOT_BYTES);
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // The metadata FORM's validation, which is now the crate's (`PROCESSING.md` §5.10.1). The window
+    // keeps no rule text at all, so these tests are where every shape it used to restate is still
+    // refused — and the messages asserted are the crate's, because those are what the user is shown.
+    // ---------------------------------------------------------------------------------------------
+
+    /// One valid work's metadata, so a refusal below can only come from the field the test changes.
+    fn metadata() -> WorkMetadata {
+        let mut meta = WorkMetadata::new(
+            veloct_core::ids::StableId::from_parts(1_700_000_000_000, 42),
+            "Demo Counter",
+            "vellow",
+            veloct_content::works::WorkSource::zip("demo-counter.zip"),
+            "2026-01-01T12:00:00Z",
+        );
+        meta.title = "Demo Counter".to_string();
+        meta.slug = "demo-counter".to_string();
+        meta
+    }
+
+    #[test]
+    fn a_form_draft_is_refused_by_the_crates_rule_for_the_field_it_is_missing() {
+        // Every shape `validateWorkDraft` used to restate, still refused — by the one authority now.
+        let mut case = metadata();
+        case.title = "   ".to_string();
+        let error = validate_work_metadata_draft(&case).expect_err("a blank title is refused");
+        assert!(error.message.contains("作品名称"), "{}", error.message);
+
+        let mut case = metadata();
+        case.slug = String::new();
+        let error = validate_work_metadata_draft(&case).expect_err("a blank slug is refused");
+        assert!(error.message.contains("地址片段"), "{}", error.message);
+
+        for slug in ["a/b", "a\\b"] {
+            let mut case = metadata();
+            case.slug = slug.to_string();
+            let error = validate_work_metadata_draft(&case).expect_err("a path separator is refused");
+            assert!(error.message.contains("路径分隔符"), "{slug}: {}", error.message);
+        }
+
+        let mut case = metadata();
+        case.entry = "../index.html".to_string();
+        let error = validate_work_metadata_draft(&case).expect_err("an escaping entry is refused");
+        assert!(error.message.contains("跳出作品目录"), "{}", error.message);
+
+        for entry in ["/index.html", "C:index.html"] {
+            let mut case = metadata();
+            case.entry = entry.to_string();
+            let error = validate_work_metadata_draft(&case).expect_err("a non-relative entry");
+            assert!(error.message.contains("相对路径"), "{entry}: {}", error.message);
+        }
+
+        let mut case = metadata();
+        case.cover = Some("../cover.webp".to_string());
+        let error = validate_work_metadata_draft(&case).expect_err("an escaping cover is refused");
+        assert!(error.message.contains("cover"), "{}", error.message);
+
+        let mut case = metadata();
+        case.screenshot = Some("../shot.webp".to_string());
+        let error = validate_work_metadata_draft(&case).expect_err("an escaping screenshot is refused");
+        assert!(error.message.contains("screenshot"), "{}", error.message);
+
+        // The id IS the directory name, so a non-stable-id is refused rather than creating something
+        // unaddressable.
+        let mut case = metadata();
+        case.id = "demo-counter".to_string();
+        let error = validate_work_metadata_draft(&case).expect_err("a non-id is refused");
+        assert!(error.message.contains("稳定 ID"), "{}", error.message);
+    }
+
+    #[test]
+    fn unusual_but_valid_metadata_is_not_over_refused() {
+        // The positive control: over-refusing is the failure mode the window's copy had, and the crate's rule
+        // is the one that decides. A nested entry and a CJK title are exactly the shapes it accepts.
+        let mut case = metadata();
+        case.title = "带空格 的 名称".to_string();
+        case.entry = "sub/dir/page.html".to_string();
+        validate_work_metadata_draft(&case).expect("the crate accepts these");
+    }
+
+    #[test]
+    fn the_form_and_the_save_path_accept_exactly_the_same_metadata() {
+        // THE anti-drift test, and the reason the transcription table could be deleted: the form's ruling is
+        // the same `validate` the WRITE path runs. `write_work` is that path, so the two are compared directly.
+        let dir = TempDir::new().unwrap();
+        let mut cases = vec![metadata()];
+        for (field, value) in [
+            ("title", "  "),
+            ("slug", "a/b"),
+            ("entry", "../escape"),
+            ("entry", "/abs"),
+            ("cover", "../cover.webp"),
+        ] {
+            let mut case = metadata();
+            match field {
+                "title" => case.title = value.to_string(),
+                "slug" => case.slug = value.to_string(),
+                "entry" => case.entry = value.to_string(),
+                "cover" => case.cover = Some(value.to_string()),
+                other => panic!("unhandled field {other}"),
+            }
+            cases.push(case);
+        }
+
+        for (index, case) in cases.iter().enumerate() {
+            let form = validate_work_metadata_draft(case);
+            let save = veloct_content::works::write_work(&dir.path().join(format!("w{index}")), case);
+            assert_eq!(
+                form.is_ok(),
+                save.is_ok(),
+                "case {index} is ruled on differently by the form and the save path"
+            );
+        }
+    }
+
+    #[test]
+    fn the_work_metadata_validate_command_is_registered_with_the_window() {
+        assert!(
+            include_str!("lib.rs").contains("works::validate_work_metadata"),
+            "validate_work_metadata must be in the invoke_handler list"
+        );
     }
 }

@@ -7,8 +7,8 @@
  * put the interesting parts — which fields a kind needs, what a blank credential means, when an upload may be
  * attempted — where no test can reach them, and this repository has no React test renderer (deliberately).
  *
- * So the component renders and this module decides. Every rule below is a rule the Rust side also holds, and
- * the two are kept deliberately parallel:
+ * So the component renders and this module decides. What is left here is PRESENTATION and MAPPING, and the
+ * distinction is worth stating because it used to be the opposite:
  *
  *  * **A blank credential is OMITTED, not sent as an empty string.** `save_storage_target` treats an omitted or
  *    empty credential as "leave the stored one alone" (§12.2), and the honest request is one that does not
@@ -25,8 +25,16 @@
  *    a form that answered it from a list of its own would disagree with the build the moment either changed.
  *  * **An upload's eligibility is read before the attempt.** §13.2.2's reason exists so the window can say WHY
  *    the button is disabled instead of offering an action that will fail.
+ *
+ * **The RULES are not here any more** (`PROCESSING.md` §5.10.1). `validateDraft` used to restate
+ * `veloct_attach::StorageConfig::validate` — the S3 bucket, §13.11's endpoint, §13.12's instance address,
+ * §13.10's prefix rules, §13.6's public URL prefix — and `tests/storageTargetForm.test.ts` held the two copies
+ * together with two transcription tables. A transcription only DETECTS drift, so the copy and both tables are
+ * gone: `validateDraft` now ASKS the `validate_storage_target` command, which builds the configuration with
+ * the save path's own `config_from_request` and calls the crate's `validate`, and shows whatever it answers.
  */
 
+import { describeError } from './api';
 import type {
   AttachmentView,
   ObjectView,
@@ -441,107 +449,41 @@ export function buildSaveRequest(draft: StorageTargetDraft): StorageTargetSaveRe
 }
 
 /**
- * Why the draft cannot be saved, in the user's terms, or `null` when it can.
+ * A validator the window can ask, injected so this module stays pure and a test can drive it.
  *
- * Mirrors `veloct_attach::StorageConfig::validate` for the fields the window owns, so a configuration mistake
- * is reported as one here, in the field that was typed, instead of as a confusing failure at the first upload.
- *
- * Deliberately NOT a copy of the whole ruleset: the crate's SFTP arm demands a host and a username, while this
- * form asks SFTP for no field at all. That divergence stays open because SFTP is the one kind still exempt from
- * `validate()` on the save path — it is the only kind with no adapter — so demanding those fields here would
- * block configuring a target this build cannot upload to anyway. EVERY other arm is mirrored, Lsky Pro's
- * included: that kind has an adapter now, so the crate refuses a target with no instance at the save.
+ * The real one is `api.validateStorageTarget`, which invokes the `validate_storage_target` command; a test
+ * supplies its own and asserts what the window does with the answer.
  */
-export function validateDraft(draft: StorageTargetDraft): string | null {
-  const kind = normaliseKind(draft.kind);
+export type StorageTargetValidator = (
+  request: StorageTargetSaveRequest,
+) => Promise<void>;
 
-  if (draft.id.trim() === '') {
-    return '请填写目标标识:它会写进附件的去重键,保存后再改会让同一个文件看起来像新的(§13.5)。';
+/**
+ * Why the draft cannot be saved, in the CRATE's words, or `null` when it can.
+ *
+ * **There is no rule text in this function, deliberately** (`PROCESSING.md` §5.10.1 — this was the last
+ * two-language member of the storage rules). It used to restate `StorageConfig::validate` for the fields the
+ * window owns, and a transcription table compared the two hand-written copies. Now it sends exactly the
+ * request the SAVE path would send — `buildSaveRequest`, so a blank is omitted and a field the kind does not
+ * render is never submitted, which is what keeps D152's over-refusal fixed without a second, kind-aware copy
+ * of the rule — to the crate, and returns the crate's own message verbatim.
+ *
+ * **The UX trade, stated rather than hidden:** this is asynchronous, so the form can no longer refuse a draft
+ * in the same tick the user types. `AttachmentPanel` asks this command as the user types (debounced) AND again
+ * before the save, so the feedback is still immediate in practice; what the async call buys is that no rule
+ * exists in two places. A window that answered from a copy of its own would agree with the crate until the day
+ * one side changed, which is exactly the drift the tables could only DETECT.
+ */
+export async function validateDraft(
+  draft: StorageTargetDraft,
+  validate: StorageTargetValidator,
+): Promise<string | null> {
+  try {
+    await validate(buildSaveRequest(draft));
+    return null;
+  } catch (error) {
+    return describeError(error);
   }
-  if (draft.name.trim() === '') {
-    return '请填写一个便于识别的名称。';
-  }
-
-  if (kind === 's3' && draft.bucket.trim() === '') {
-    return 'S3 目标必须填写 Bucket(§13.11);Endpoint 留空表示使用 AWS。';
-  }
-  if (kind === 's3') {
-    // ADR-0018: `{bucket}.` puts the bucket into the HOSTNAME, and only ONCE at the START of the host — what
-    // Alibaba Cloud OSS requires, and what a path-style endpoint (a MinIO) must not have. The rule belongs to
-    // the crate (`veroct_s3::bucket_placeholder_problem`, which enforces it while a request is built AND asks it
-    // on the save path); this is the transcription of it, so a typo is refused here rather than at the first
-    // upload (§2.9, the pattern D168 established for §13.12's instance address).
-    const endpoint = draft.endpoint.trim();
-    if (endpoint !== '') {
-      const rest = (endpoint.includes('://') ? endpoint.slice(endpoint.indexOf('://') + 3) : endpoint).replace(
-        /\/+$/,
-        '',
-      );
-      const authority = rest.split('/')[0] ?? '';
-      const occurrences = rest.split('{bucket}').length - 1;
-      const usable =
-        occurrences === 1 &&
-        authority.startsWith('{bucket}.') &&
-        authority.length > '{bucket}.'.length;
-      if (occurrences > 0 && !usable) {
-        return `Endpoint ${endpoint} 里的 {bucket} 位置不能工作:只能写成 https://{bucket}.<主机>,而且只出现一次——那是把桶放进主机名(阿里云 OSS 就是这样要求的);自建服务请完全省略它(§13.11 / ADR-0018)。`;
-      }
-    }
-  }
-  if (kind === 'github' && draft.repository.trim() === '') {
-    return 'GitHub 目标必须填写仓库,写成 owner/repo(§13.13)。';
-  }
-  if (kind === 'lsky') {
-    const instance = draft.instance.trim();
-    if (instance === '') {
-      return 'Lsky Pro 目标必须填写实例地址(§13.12),例如 https://img.example.com;API 令牌填在凭据里。';
-    }
-    if (!/^https?:\/\//i.test(instance)) {
-      return `实例地址 ${instance} 必须以 http:// 或 https:// 开头:上传地址是在它后面拼 /api/v1 得到的。`;
-    }
-  }
-
-  const prefix = draft.pathPrefix.trim();
-  // Only a kind that SUBMITS this field is checked, mirroring `buildSaveRequest` and the public-URL rule
-  // below. `fieldKeysForKind` renders `pathPrefix` for `s3`/`github`/`local` only, so a value left over
-  // from a kind switch used to keep blocking a save for SFTP or Lsky Pro — a field those kinds do not
-  // render, which the user could not clear without switching back to the kind that showed it. That
-  // OVER-refused rather than under-refused, and it is the last member of the two-language pair that
-  // PROCESSING.md §5.10.1 recorded.
-  if (fieldKeysForKind(kind).includes('pathPrefix') && prefix !== '') {
-    if (kind === 'local' && prefix.includes(':')) {
-      return `目录前缀 ${prefix} 不能包含冒号:它会被当成盘符,把文件写到目标目录之外(§13.10)。`;
-    }
-    if (kind === 'local' && prefix.startsWith('\\')) {
-      return `目录前缀 ${prefix} 不能以 \\ 开头:那是 UNC 路径,会写到目标目录之外(§13.10)。`;
-    }
-    if (prefix.startsWith('/')) {
-      return `路径前缀 ${prefix} 必须以相对路径书写,不能以 / 开头。`;
-    }
-    if (prefix.includes('..')) {
-      return `路径前缀 ${prefix} 不能包含 ..,否则会把文件写到目标目录之外。`;
-    }
-  }
-
-  // §13.6 keeps the public URL prefix apart from the object's actual path, and the Markdown address is the two
-  // put together. A relative prefix (or a protocol-relative one) therefore produces a URL no browser can
-  // resolve. `StorageConfig::validate` refuses it; saying so HERE means the user reads the reason under the
-  // field they typed instead of seeing a backend message after a save that could never have succeeded.
-  //
-  // Two boundaries, both deliberate:
-  //  * Empty stays ALLOWED. The crate treats that as "no URL can be derived yet" and refuses later, at
-  //    `public_url`, when an address is actually needed — a target the user is still configuring is a
-  //    legitimate state, and requiring the field would block saving one before its URL is known.
-  //  * Only a kind that SUBMITS this field is checked, mirroring `buildSaveRequest`. Otherwise a value hidden by
-  //    a kind switch could block a save whose cause the user cannot even see.
-  if (fieldKeysForKind(kind).includes('publicUrlPrefix')) {
-    const publicUrl = draft.publicUrlPrefix.trim();
-    if (publicUrl !== '' && !publicUrl.startsWith('http://') && !publicUrl.startsWith('https://')) {
-      return `公开 URL 前缀 ${publicUrl} 必须是以 http:// 或 https:// 开头的完整地址:它要和对象路径拼接起来才是浏览器打开的地址(§13.6),相对地址拼出来的 URL 无法解析。`;
-    }
-  }
-
-  return null;
 }
 
 /** The result of switching a kind: the new draft, and the filled values the new kind will NOT submit. */

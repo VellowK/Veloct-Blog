@@ -1,11 +1,18 @@
 /**
- * The storage-target form's decisions (`PROCESSING.md` §5.5).
+ * The storage-target form's decisions (`PROCESSING.md` §5.5, and §5.10.1 for what left this file).
  *
  * `handoff.md` §13 is a locked section, and this repository has no React test renderer — deliberately. So the
- * form's rules live in `src/lib/storageTargetForm.ts` and are asserted here, the way `frontmatter.test.ts`
+ * form's decisions live in `src/lib/storageTargetForm.ts` and are asserted here, the way `frontmatter.test.ts`
  * asserts a pure function: which fields a kind asks for, what a blank credential means to the command surface,
- * why a draft cannot be saved, and why an upload button is disabled. The last one is §13.2.2's whole point —
- * the reason exists so the window can say WHY instead of offering an action that will fail.
+ * why an upload button is disabled, and what the window does with the crate's ruling on a draft.
+ *
+ * **What is deliberately NOT here any more is a second copy of any rule.** Two transcription tables used to
+ * live in this file — nine public-URL shapes and nine `{bucket}` endpoint shapes, each row carrying a
+ * hand-written copy of the crate's verdict — and they could only ever DETECT that the window's copy of
+ * `StorageConfig::validate` had drifted from the crate. The copy is gone and so are they: the RULES are
+ * asserted in Rust, against the authority (`src-tauri/src/attachments.rs` drives the `validate_storage_target`
+ * command's own body), and this file asserts that the window SENDS the save path's request and SURFACES the
+ * crate's message unchanged.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -36,6 +43,7 @@ import {
   uploadControl,
   validateDraft,
   type StorageTargetDraft,
+  type StorageTargetSaveRequest,
 } from '../src/lib/storageTargetForm';
 
 /** One target view, with every field `StorageTargetView` carries and only the interesting ones overridden. */
@@ -511,267 +519,116 @@ describe('switching a kind', () => {
   });
 });
 
-describe('why a draft cannot be saved', () => {
-  it('requires an id and a name', () => {
-    expect(validateDraft({ ...s3Draft(), id: '  ' })).toContain('目标标识');
-    expect(validateDraft({ ...s3Draft(), name: '' })).toContain('名称');
-  });
-
-  it('refuses an S3 target with no bucket, with the §13.11 reason', () => {
-    expect(validateDraft({ ...s3Draft(), bucket: '  ' })).toContain('Bucket');
-  });
-
-  it('refuses a GitHub target with no repository, with the §13.13 reason', () => {
-    expect(
-      validateDraft({ ...emptyDraft('github'), id: 'gh', name: 'GitHub 附件', repository: '' }),
-    ).toContain('仓库');
-  });
-
-  it('refuses a local directory prefix that names a drive or a UNC root', () => {
-    // `Path::join` replaces the base with an absolute argument, so a prefix like `D:` would put the bytes outside
-    // the directory the target owns. The crate refuses it; the window says so before the call.
-    const drive = validateDraft({
-      ...emptyDraft('local'),
-      id: 'on-this-machine',
-      name: '本机目录',
-      pathPrefix: 'D:/images',
-    });
-    expect(drive).toContain('盘符');
-
-    const unc = validateDraft({
-      ...emptyDraft('local'),
-      id: 'on-this-machine',
-      name: '本机目录',
-      pathPrefix: '\\\\server\\share',
-    });
-    expect(unc).toContain('UNC');
-  });
-
-  it('refuses a prefix that escapes the target directory', () => {
-    expect(
-      validateDraft({ ...s3Draft(), pathPrefix: '../outside' }),
-    ).toContain('..');
-    expect(validateDraft({ ...s3Draft(), pathPrefix: '/absolute' })).toContain('相对路径');
-  });
-
-  it('does not check a prefix for a kind that will not submit it', () => {
-    // PROCESSING.md §5.10.1's last two-language divergence. `buildSaveRequest` submits `pathPrefix` only
-    // for s3/github/local, but the rule used to run for every kind — so a value left over from a kind
-    // switch kept blocking the save for a kind whose form does not even render the field, and the user
-    // could not clear it without switching back. Over-refusing rather than under-refusing, and this is
-    // the fix.
-    // Each kind that does NOT submit the prefix is given the fields it DOES require, so the only reason that
-    // could come back is the leftover prefix. For Lsky Pro that means an instance address, because §13.12's arm
-    // stopped being exempt when the kind gained an adapter.
-    const carried: Record<string, Partial<StorageTargetDraft>> = {
-      sftp: {},
-      lsky: { instance: 'https://img.example.com' },
+/**
+ * The form's ruling is the CRATE's, and this is where that is asserted.
+ *
+ * `PROCESSING.md` §5.10.1: the window used to restate `StorageConfig::validate` — the S3 bucket, §13.11's
+ * endpoint, §13.12's instance address, §13.10's prefix rules, §13.6's public URL — and two transcription
+ * tables here compared the two hand-written copies. There is no copy left, so what these tests prove is the
+ * SHAPE of what replaced it: the exact request the save path would send goes out, and whatever the crate
+ * answers comes back unchanged. The RULES themselves are asserted in Rust, where the authority is
+ * (`src-tauri/src/attachments.rs`).
+ */
+describe('asking the crate about a draft', () => {
+  /** A validator that refuses exactly what the fake "crate" is told to refuse. */
+  function crate(says: (request: StorageTargetSaveRequest) => string | null) {
+    return async (request: StorageTargetSaveRequest) => {
+      const problem = says(request);
+      if (problem !== null) {
+        // The shape a rejected `invoke` produces, so the window's own error handling is what is exercised.
+        throw { code: 'INVALID', message: problem, actionable: false, hint: null };
+      }
     };
-    for (const kind of ['sftp', 'lsky']) {
-      const draft = {
-        ...emptyDraft(kind),
-        id: 'x',
-        name: 'X',
-        ...carried[kind],
-        pathPrefix: '../outside',
+  }
+
+  /** A crate that accepts everything, which is what makes the "no rule text here" assertion meaningful. */
+  const acceptsEverything = crate(() => null);
+
+  it('accepts a draft the crate accepts, and holds no opinion of its own', async () => {
+    expect(await validateDraft(s3Draft(), acceptsEverything)).toBeNull();
+    // A draft the CRATE would refuse is accepted here, because the window has no rule to refuse it with. This
+    // is the assertion that a copy of the rules cannot come back without a test noticing.
+    const wouldBeRefused = { ...emptyDraft('s3'), id: 'x', name: 'X' };
+    expect(await validateDraft(wouldBeRefused, acceptsEverything)).toBeNull();
+  });
+
+  it("shows the crate's own message, word for word", async () => {
+    // An English arm and a Chinese one, because the crate's `validate` speaks both and the window must not
+    // reword either: the message IS the authority's answer.
+    const english = 'S3 needs a bucket';
+    expect(await validateDraft({ ...emptyDraft('s3'), id: 'x', name: 'X' }, crate(() => english))).toBe(
+      english,
+    );
+
+    const chinese =
+      'SFTP 已从 §13.10 移除(ADR-0017):这个目标无法再使用,请删除它并改用本机 / 服务器目录、S3、兰空图床或 GitHub 目标。';
+    expect(await validateDraft({ ...emptyDraft('sftp'), id: 's', name: 'S' }, crate(() => chinese))).toBe(
+      chinese,
+    );
+  });
+
+  it("carries the crate's hint when there is one, and invents none when there is not", async () => {
+    const withHint = await validateDraft(s3Draft(), async () => {
+      throw {
+        code: 'INVALID',
+        message: 'the path prefix ".." must be a relative path without ..',
+        actionable: true,
+        hint: '见 §13.5:改它会形成新的命名空间。',
       };
-      expect(fieldKeysForKind(kind)).not.toContain('pathPrefix');
-      expect(validateDraft(draft), `${kind} still checks a field it does not submit`).toBeNull();
-      // And the request really does drop it, which is what makes the rule above the right one.
-      expect(buildSaveRequest(draft).pathPrefix).toBeUndefined();
-    }
+    });
+    expect(withHint).toContain('must be a relative path without ..');
+    expect(withHint).toContain('见 §13.5');
 
-    // The kinds that DO submit it are still checked, so the fix cannot be read as "this rule is gone".
-    // Each is given the fields it requires, so the reason that comes back is the PREFIX's and not a
-    // missing bucket or repository.
-    const complete: Record<string, Partial<StorageTargetDraft>> = {
-      s3: { bucket: 'assets' },
-      github: { repository: 'owner/repo' },
-      local: {},
+    const withoutHint = await validateDraft(s3Draft(), crate(() => 'GitHub needs a repository'));
+    expect(withoutHint).toBe('GitHub needs a repository');
+  });
+
+  it('reports a failed call rather than treating it as an acceptance', async () => {
+    // A transport failure must never read as "the draft is fine": the form would then offer a save whose
+    // refusal the user never saw.
+    const reason = await validateDraft(s3Draft(), async () => {
+      throw new Error('窗口与后端之间的连接已断开。');
+    });
+    expect(reason).toBe('窗口与后端之间的连接已断开。');
+  });
+
+  it('asks about exactly the request the save path would send', async () => {
+    // The other half of one authority: the object judged and the object written are one expression. A field
+    // the kind does not render is NOT in the request, which is what keeps §5.10.1's D152 over-refusal fixed
+    // without a kind-aware copy of the rule in the window.
+    const seen: StorageTargetSaveRequest[] = [];
+    const record = async (request: StorageTargetSaveRequest) => {
+      seen.push(request);
     };
-    for (const kind of ['s3', 'github', 'local']) {
-      expect(fieldKeysForKind(kind)).toContain('pathPrefix');
-      const reason = validateDraft({
-        ...emptyDraft(kind),
-        id: 'x',
-        name: 'X',
-        ...complete[kind],
-        pathPrefix: '../outside',
-      });
-      expect(reason, `${kind} accepted a prefix that escapes the target directory`).toContain('..');
-    }
+
+    // An S3 draft switched to Lsky Pro: the S3 fields are still in the FORM (a switch never discards what was
+    // typed) and must not be submitted, and the credential field is untouched.
+    const switched: StorageTargetDraft = {
+      ...s3Draft(),
+      kind: 'lsky',
+      instance: 'https://img.example.com',
+      credential: '',
+    };
+    expect(await validateDraft(switched, record)).toBeNull();
+
+    expect(seen).toHaveLength(1);
+    const request = seen[0];
+    if (request === undefined) throw new Error('the validator was not asked about the draft');
+    expect(request).toEqual(buildSaveRequest(switched));
+    expect('pathPrefix' in request).toBe(false);
+    expect('bucket' in request).toBe(false);
+    expect('credential' in request).toBe(false);
+    expect(request.instance).toBe('https://img.example.com');
   });
 
-  it('accepts a complete draft, so a reason is only shown when there is one', () => {
-    expect(validateDraft(s3Draft())).toBeNull();
-    expect(
-      validateDraft({ ...emptyDraft('local'), id: 'local-assets', name: '本机目录' }),
-    ).toBeNull();
-  });
-});
-
-/**
- * The public URL prefix is the one crate rule the form now states as well.
- *
- * It is not tidiness. Without it the window accepted `cdn.example.com/assets`, attempted the save, and the
- * crate refused it — so the user met `the public URL prefix "…" must start with http:// or https://`, an
- * English backend message after a save that could never succeed, where the in-form reason belongs.
- */
-describe('the public URL prefix must be an absolute URL (§13.6)', () => {
-  const draftWith = (publicUrlPrefix: string) => ({ ...s3Draft(), publicUrlPrefix });
-
-  it('accepts an http:// prefix', () => {
-    expect(validateDraft(draftWith('http://cdn.example.com/assets'))).toBeNull();
-  });
-
-  it('accepts an https:// prefix', () => {
-    expect(validateDraft(draftWith('https://cdn.example.com/assets'))).toBeNull();
-  });
-
-  it('refuses a bare host with a path, and says the concatenated address cannot be resolved', () => {
-    const reason = validateDraft(draftWith('cdn.example.com/x'));
-    expect(reason).toContain('cdn.example.com/x');
-    // The reason has to say WHY rather than only that the value is wrong: §13.6 keeps the public URL prefix apart
-    // from the object's own path, and the address written into the Markdown is the two concatenated.
-    expect(reason).toContain('拼接');
-    expect(reason).toContain('无法解析');
-    expect(reason).toContain('13.6');
-  });
-
-  it('refuses a protocol-relative prefix, which borrows the scheme from wherever it is pasted', () => {
-    expect(validateDraft(draftWith('//cdn.example.com'))).toContain('http:// 或 https://');
-  });
-
-  it('refuses a root-relative prefix, which would resolve against the site instead of the storage', () => {
-    expect(validateDraft(draftWith('/assets'))).toContain('http:// 或 https://');
-  });
-
-  it('refuses a bare host', () => {
-    expect(validateDraft(draftWith('example.com'))).toContain('http:// 或 https://');
-  });
-
-  it('still allows an empty prefix, because a target may not know its URL yet', () => {
-    // The crate reads an empty prefix as "no URL can be derived yet" and refuses later, at `public_url`, at the
-    // point an address is actually needed. Requiring the field here would block saving a target the user is
-    // still configuring, which is why this rule has that boundary.
-    expect(validateDraft(draftWith(''))).toBeNull();
-  });
-});
-
-/**
- * The window and the crate agree about the public URL prefix, and this table is where the agreement is recorded.
- *
- * The other side is `StorageConfig::validate` in `crates/veloct-attach/src/storage.rs`:
- *
- * ```rust
- * if !self.public_url_prefix.trim().is_empty()
- *     && !self.public_url_prefix.starts_with("http://")
- *     && !self.public_url_prefix.starts_with("https://")
- * {
- *     return Err(format!(
- *         "the public URL prefix {:?} must start with http:// or https://",
- *         self.public_url_prefix
- *     ));
- * }
- * ```
- *
- * A vitest file cannot call Rust, so `crateAccepts` is TRANSCRIBED from that rule — it is the crate's verdict,
- * not a second copy of `validateDraft`'s. That is the point: if the Rust rule changes, this table and the
- * window's rule have to be edited together, and either side changed alone turns into a red test here instead of
- * into an unexplained backend message in the window. Changing one side without the other should be a visible,
- * deliberate act with a reason, never an oversight.
- *
- * The shapes are what the FORM can send. `buildSaveRequest` trims every field, so the crate receives the trimmed
- * text and the window judges the trimmed text too — which is why the whitespace row agrees on `true`.
- */
-describe('the window and the crate say the same thing about a public URL prefix', () => {
-  const CRATE_RULE: ReadonlyArray<{ shape: string; prefix: string; crateAccepts: boolean }> = [
-    { shape: 'absolute http', prefix: 'http://cdn.example.com', crateAccepts: true },
-    { shape: 'absolute https with a path', prefix: 'https://cdn.example.com/assets', crateAccepts: true },
-    { shape: 'empty (no URL derivable yet)', prefix: '', crateAccepts: true },
-    { shape: 'bare host with a path', prefix: 'cdn.example.com/x', crateAccepts: false },
-    { shape: 'protocol-relative', prefix: '//cdn.example.com', crateAccepts: false },
-    { shape: 'root-relative', prefix: '/assets', crateAccepts: false },
-    { shape: 'bare host', prefix: 'example.com', crateAccepts: false },
-    // The crate's `starts_with` is case-sensitive, so an uppercase scheme is refused on both sides.
-    { shape: 'uppercase scheme', prefix: 'HTTPS://cdn.example.com', crateAccepts: false },
-    // Trimmed before it is sent, so both sides see `https://cdn.example.com`.
-    { shape: 'surrounding whitespace', prefix: '  https://cdn.example.com  ', crateAccepts: true },
-  ];
-
-  it('matches the crate rule for every shape the form can send', () => {
-    for (const { shape, prefix, crateAccepts } of CRATE_RULE) {
-      const reason = validateDraft({ ...s3Draft(), publicUrlPrefix: prefix });
-      expect(
-        reason === null,
-        `${shape}: ${JSON.stringify(prefix)} — the crate ${crateAccepts ? 'accepts' : 'refuses'} it`,
-      ).toBe(crateAccepts);
-    }
-  });
-
-  it('covers every boundary shape, so deleting a row is a failing test rather than a silent gap', () => {
-    const shapes = CRATE_RULE.map((entry) => entry.prefix);
-    for (const required of [
-      '',
-      'http://cdn.example.com',
-      'https://cdn.example.com/assets',
-      'cdn.example.com/x',
-      '//cdn.example.com',
-      '/assets',
-      'example.com',
-    ]) {
-      expect(shapes).toContain(required);
-    }
-    // Both verdicts have to be represented, or the loop above could agree by accepting everything.
-    expect(CRATE_RULE.some((entry) => entry.crateAccepts)).toBe(true);
-    expect(CRATE_RULE.some((entry) => !entry.crateAccepts)).toBe(true);
-  });
-});
-
-describe('the window and the crate say the same thing about the {bucket} placeholder', () => {
-  // The crate's verdicts are asserted in `veroct-s3`
-  // (`a_bucket_placeholder_switches_a_user_endpoint_to_virtual_hosted_addressing` and
-  // `a_placeholder_anywhere_but_the_start_of_the_host_is_refused_by_name`) and on the SAVE path in
-  // `veroct-attach`; this is the window's transcription of the same rule, so a one-sided change is a failing
-  // test rather than an oversight (PROCESSING.md §5.10.1). The rule exists because a misplaced placeholder
-  // that only fails at the first upload is a late and confusing failure — D173 is the measurement, ADR-0018
-  // the decision.
-  const CRATE_RULE: ReadonlyArray<{ shape: string; endpoint: string; crateAccepts: boolean }> = [
-    { shape: 'empty, meaning the AWS endpoint', endpoint: '', crateAccepts: true },
-    { shape: 'no placeholder (path style, a MinIO)', endpoint: 'http://127.0.0.1:9000', crateAccepts: true },
-    {
-      shape: 'placeholder at the start of the host',
-      endpoint: 'https://{bucket}.oss-cn-chengdu.aliyuncs.com',
-      crateAccepts: true,
-    },
-    { shape: 'placeholder with a base path', endpoint: 'https://{bucket}.gw.example.com/s3', crateAccepts: true },
-    {
-      shape: 'inside the host but not at its start',
-      endpoint: 'https://oss-{bucket}.example.com',
-      crateAccepts: false,
-    },
-    { shape: 'in the path', endpoint: 'https://gw.example.com/s3/{bucket}', crateAccepts: false },
-    { shape: 'twice', endpoint: 'https://{bucket}.{bucket}.example.com', crateAccepts: false },
-    { shape: 'with no host after it', endpoint: 'https://{bucket}', crateAccepts: false },
-    { shape: 'with nothing after the dot', endpoint: 'https://{bucket}.', crateAccepts: false },
-  ];
-
-  it('matches the crate rule for every shape the form can send', () => {
-    for (const { shape, endpoint, crateAccepts } of CRATE_RULE) {
-      const reason = validateDraft({ ...s3Draft(), endpoint });
-      expect(reason === null, `${shape}: ${JSON.stringify(endpoint)}`).toBe(crateAccepts);
-    }
-  });
-
-  it('covers both verdicts, so the loop cannot agree by accepting everything', () => {
-    expect(CRATE_RULE.some((entry) => entry.crateAccepts)).toBe(true);
-    expect(CRATE_RULE.some((entry) => !entry.crateAccepts)).toBe(true);
-  });
-
-  it('names the placeholder AND where it belongs, so the message can teach the rule', () => {
-    const reason = validateDraft({ ...s3Draft(), endpoint: 'https://oss-{bucket}.example.com' });
-    expect(reason).toContain('{bucket}');
-    expect(reason).toContain('ADR-0018');
+  it('is asked on every call, so the answer cannot come from a cache of an older draft', async () => {
+    let calls = 0;
+    const counting = async () => {
+      calls += 1;
+    };
+    await validateDraft(s3Draft(), counting);
+    await validateDraft({ ...s3Draft(), bucket: '' }, counting);
+    expect(calls).toBe(2);
   });
 });
 
@@ -941,24 +798,33 @@ describe('the Lsky Pro target (§13.12)', () => {
     expect(request.credential).toBeUndefined();
   });
 
-  it('refuses a draft with no instance, in the field the user typed', () => {
-    const draft = { ...emptyDraft('lsky'), id: 'img', name: '兰空图床' };
-    expect(validateDraft(draft)).toContain('实例地址');
-  });
-
-  it('refuses an instance that is not an absolute http(s) URL, mirroring the crate', () => {
-    const draft = {
-      ...emptyDraft('lsky'),
+  it('asks the crate about the instance the view carried, and keeps the token out of it', async () => {
+    // §13.12's instance rule is the CRATE's now (D168 moved it in, and `StorageConfig::validate` enforces it on
+    // this path). What the window must still prove is that the instance survives the edit and reaches the
+    // validator, and that the credential does not: a form that could not SEE the instance would submit none,
+    // store `None`, and silently break a working target — the §5.5 defect.
+    const saved = view({
       id: 'img',
       name: '兰空图床',
-      instance: 'img.example.com',
-    };
-    // The crate refuses this on the save path because the endpoint is built by appending /api/v1, so the form
-    // says so before the backend has to.
-    expect(validateDraft(draft)).toContain('http://');
-    expect(validateDraft({ ...draft, instance: 'ftp://img.example.com' })).toContain('http://');
-    expect(validateDraft({ ...draft, instance: 'https://img.example.com' })).toBeNull();
-    // §13.12's "API 地址" spelling is accepted too.
-    expect(validateDraft({ ...draft, instance: 'https://img.example.com/api/v1' })).toBeNull();
+      kind: 'lsky',
+      instance: 'https://img.example.com',
+      has_credential: true,
+    });
+    const draft = { ...draftFromTarget(saved), credential: '1|a-secret-token' };
+
+    const seen: StorageTargetSaveRequest[] = [];
+    const reason = await validateDraft(draft, async (request) => {
+      seen.push(request);
+    });
+
+    expect(reason).toBeNull();
+    expect(seen).toHaveLength(1);
+    const request = seen[0];
+    if (request === undefined) throw new Error('the validator was not asked about the draft');
+    expect(request.instance).toBe('https://img.example.com');
+    // §12.2: a credential the user TYPED is sent (so it can be stored), and it is the only field that carries
+    // a secret — the view's own `has_credential` boolean never becomes a value.
+    expect(request.credential).toBe('1|a-secret-token');
+    expect(JSON.stringify(request)).not.toContain('credential_ref');
   });
 });

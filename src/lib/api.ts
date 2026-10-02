@@ -830,6 +830,51 @@ export interface NetworkImageChoiceResultView {
   download_note: string | null;
 }
 
+/**
+ * What a storage target MAY be saved with, as the form holds it.
+ *
+ * One type for both `saveStorageTarget` and `validateStorageTarget`, because the two must be asked the same
+ * question: a validation that judged a different object than the save would be a rule about nothing.
+ */
+export interface StorageTargetRequestOptions {
+  id: string;
+  name: string;
+  kind: string;
+  pathPrefix?: string | undefined;
+  publicUrlPrefix?: string | undefined;
+  repository?: string | undefined;
+  branch?: string | undefined;
+  /** S3: Endpoint, Region and Bucket (section 13.11). Blank endpoint means AWS. */
+  endpoint?: string | undefined;
+  region?: string | undefined;
+  bucket?: string | undefined;
+  /** S3: the access key ID, which is an identifier rather than a secret. */
+  accessKey?: string | undefined;
+  /** Lsky Pro: the instance address — its host, or the full API address (section 13.12). */
+  instance?: string | undefined;
+  /** Written to the OS store; omitted or empty leaves the stored one alone. */
+  credential?: string | undefined;
+}
+
+/** The wire shape of one storage-target request, built ONCE for the validate and the save commands. */
+function storageTargetRequest(options: StorageTargetRequestOptions) {
+  return {
+    id: options.id,
+    name: options.name,
+    kind: options.kind,
+    path_prefix: options.pathPrefix ?? null,
+    public_url_prefix: options.publicUrlPrefix ?? null,
+    repository: options.repository ?? null,
+    branch: options.branch ?? null,
+    endpoint: options.endpoint ?? null,
+    region: options.region ?? null,
+    bucket: options.bucket ?? null,
+    access_key: options.accessKey ?? null,
+    instance: options.instance ?? null,
+    credential: options.credential ?? null,
+  };
+}
+
 export const api = {
   appInfo: () => invoke<AppInfo>('app_info'),
 
@@ -1188,42 +1233,22 @@ export const api = {
    */
   storageKinds: () => invoke<StorageKindView[]>('storage_kinds'),
 
-  saveStorageTarget: (options: {
-    id: string;
-    name: string;
-    kind: string;
-    pathPrefix?: string | undefined;
-    publicUrlPrefix?: string | undefined;
-    repository?: string | undefined;
-    branch?: string | undefined;
-    /** S3: Endpoint, Region and Bucket (section 13.11). Blank endpoint means AWS. */
-    endpoint?: string | undefined;
-    region?: string | undefined;
-    bucket?: string | undefined;
-    /** S3: the access key ID, which is an identifier rather than a secret. */
-    accessKey?: string | undefined;
-    /** Lsky Pro: the instance address — its host, or the full API address (section 13.12). */
-    instance?: string | undefined;
-    /** Written to the OS store; omitted or empty leaves the stored one alone. */
-    credential?: string | undefined;
-  }) =>
-    invoke<void>('save_storage_target', {
-      request: {
-        id: options.id,
-        name: options.name,
-        kind: options.kind,
-        path_prefix: options.pathPrefix ?? null,
-        public_url_prefix: options.publicUrlPrefix ?? null,
-        repository: options.repository ?? null,
-        branch: options.branch ?? null,
-        endpoint: options.endpoint ?? null,
-        region: options.region ?? null,
-        bucket: options.bucket ?? null,
-        access_key: options.accessKey ?? null,
-        instance: options.instance ?? null,
-        credential: options.credential ?? null,
-      },
-    }),
+  /**
+   * Ask the crate whether a storage target may be saved, WITHOUT saving it (PROCESSING.md section 5.10.1).
+   *
+   * This is the window's only source of storage-form rules. The form used to carry a hand-written copy of
+   * `StorageConfig::validate` and held it to the crate with a transcription table; both are gone, and the
+   * message this rejects with is the crate's own, shown verbatim. It sends exactly what `saveStorageTarget`
+   * would send, so the two cannot disagree about what is being judged.
+   *
+   * Takes no project state on the Rust side, and writes nothing: a draft that fails here leaves the target
+   * list and the OS credential store untouched.
+   */
+  validateStorageTarget: (options: StorageTargetRequestOptions) =>
+    invoke<void>('validate_storage_target', { request: storageTargetRequest(options) }),
+
+  saveStorageTarget: (options: StorageTargetRequestOptions) =>
+    invoke<void>('save_storage_target', { request: storageTargetRequest(options) }),
 
   /**
    * Remove a storage target.
@@ -1418,6 +1443,16 @@ export const api = {
   /** Export a work's body as an archive that re-imports identically (section 10.5). */
   exportWork: (id: string, destination: string) =>
     invoke<number>('export_work', { id, destination }),
+
+  /**
+   * Ask the crate whether a work's metadata may be written, WITHOUT writing it (PROCESSING.md section 5.10.1).
+   *
+   * The window's `validateWorkDraft` used to restate `WorkMetadata::validate` and held the copy to the crate
+   * with a transcription table of ten shapes; both are gone, and what this rejects with is the crate's own
+   * message, shown verbatim. It is asked the object `updateWork` would be sent, so the two cannot disagree.
+   */
+  validateWorkMetadata: (metadata: WorkMetadataView) =>
+    invoke<void>('validate_work_metadata', { metadata }),
 
   /**
    * Replace a work's editable metadata.

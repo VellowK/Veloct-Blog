@@ -3,26 +3,27 @@
  *
  * `handoff.md` §10 is a locked section, and this repository has no React test renderer — deliberately.
  * So the panel's rules live in `src/lib/workForm.ts` and are asserted here: which fields a work's
- * metadata edit may change, why a draft cannot be saved, why a work will not be served, and whether an
- * import or a poster may be sent at all.
+ * metadata edit may change, why a work will not be served, and whether an import or a poster may be sent.
  *
- * The `CRATE_RULE` transcription is the same device `storageTargetForm.test.ts` uses for §13: the
- * crate is the authority, the window has its own copy so the user is told in the field they typed, and
- * the pair is held together by shapes whose verdicts were copied from the crate. A one-sided change is
- * a failing test rather than an oversight.
+ * **What is deliberately NOT here any more is a second copy of any rule.** A ten-shape `CRATE_RULE` table used
+ * to live in this file, carrying a hand-written copy of `WorkMetadata::validate`'s verdict in every row, and it
+ * could only ever DETECT that the window's restatement had drifted from the crate. Both are gone: the RULES are
+ * asserted in Rust, against the authority (`src-tauri/src/works.rs` drives the `validate_work_metadata`
+ * command's own body), and this file asserts that the window sends the object the save would write and surfaces
+ * the crate's message unchanged.
  */
 
 import { describe, expect, it } from 'vitest';
 
-import type { WorkImportPlanView, WorkView } from '../src/lib/api';
+import type { WorkImportPlanView, WorkMetadataView, WorkView } from '../src/lib/api';
 import {
-  CRATE_RULE,
   DEFAULT_SCREENSHOT_LIMIT,
   draftFromWork,
   draftIsDirty,
   formatBytes,
   formatTags,
   importReadiness,
+  metadataFromDraft,
   parseTags,
   planKey,
   posterReadiness,
@@ -131,60 +132,149 @@ describe('tags', () => {
   });
 });
 
-describe('validateWorkDraft, against the shapes the crate refuses', () => {
-  it('accepts a plain draft', () => {
-    expect(validateWorkDraft(draft())).toBeNull();
-  });
+/**
+ * The form's ruling is the CRATE's, and this is where that is asserted.
+ *
+ * `PROCESSING.md` §5.10.1: the window used to restate `WorkMetadata::validate` field by field, and a
+ * ten-shape transcription table compared the two hand-written copies. There is no copy left, so what these
+ * tests prove is the SHAPE of what replaced it: the object the save would write goes out, and whatever the
+ * crate answers comes back unchanged. The RULES themselves are asserted in Rust
+ * (`src-tauri/src/works.rs`), where the authority is.
+ */
+describe('asking the crate about a draft', () => {
+  /** A validator that refuses exactly what the fake "crate" is told to refuse. */
+  function crate(says: (metadata: WorkMetadataView) => string | null) {
+    return async (metadata: WorkMetadataView) => {
+      const problem = says(metadata);
+      if (problem !== null) {
+        // The shape a rejected `invoke` produces, so the window's own error handling is what is exercised.
+        throw { code: 'INVALID', message: problem, actionable: false, hint: null };
+      }
+    };
+  }
 
-  it('refuses each transcribed shape the crate refuses', () => {
-    const shapes: Array<[string, Partial<WorkDraft>]> = [
-      ['an empty title', { title: '' }],
-      ['a whitespace-only title', { title: '   ' }],
-      ['an empty slug', { slug: '' }],
-      ['a slug with a forward slash', { slug: 'a/b' }],
-      ['a slug with a backslash', { slug: 'a\\b' }],
-      ['an entry containing ..', { entry: '../index.html' }],
-      ['an entry starting with /', { entry: '/index.html' }],
-      ['an entry containing a drive colon', { entry: 'C:index.html' }],
-      ['a cover containing ..', { cover: '../cover.webp' }],
+  /** A crate that accepts everything, which is what makes the "no rule text here" assertion meaningful. */
+  const acceptsEverything = crate(() => null);
+
+  it('accepts a draft the crate accepts, and holds no opinion of its own', async () => {
+    expect(await validateWorkDraft(draft(), work().metadata, acceptsEverything)).toBeNull();
+
+    // Every shape the deleted copy refused is accepted here, because the window has no rule to refuse it with.
+    // This is the assertion that a copy of the rules cannot come back without a test noticing.
+    const wouldBeRefused: Array<Partial<WorkDraft>> = [
+      { title: '   ' },
+      { slug: 'a/b' },
+      { slug: 'a\\b' },
+      { entry: '../index.html' },
+      { entry: '/index.html' },
+      { entry: 'C:index.html' },
+      { cover: '../cover.webp' },
     ];
-
-    for (const [label, change] of shapes) {
-      const problem = validateWorkDraft({ ...draft(), ...change });
-      expect(problem, `${label} was accepted`).not.toBeNull();
-      expect(problem).toMatch(/[\u4e00-\u9fff]/u);
+    for (const change of wouldBeRefused) {
+      expect(
+        await validateWorkDraft({ ...draft(), ...change }, work().metadata, acceptsEverything),
+        `${JSON.stringify(change)} was refused by the window`,
+      ).toBeNull();
     }
   });
 
-  it('agrees with the transcribed crate rule for every shape', () => {
-    // The transcription's `accepted` column is the crate's verdict. A shape the crate accepts must
-    // not be refused here, or the window would block a save the crate would have allowed.
-    const byShape: Record<string, Partial<WorkDraft>> = {
-      'a plain title and slug': {},
-      'an empty title': { title: '' },
-      'a whitespace-only title': { title: '  ' },
-      'an empty slug': { slug: '' },
-      'a slug with a forward slash': { slug: 'a/b' },
-      'a slug with a backslash': { slug: 'a\\b' },
-      'an entry containing ..': { entry: '..' },
-      'an entry starting with /': { entry: '/x.html' },
-      'an entry containing a drive colon': { entry: 'D:x.html' },
-      'a cover or screenshot containing ..': { cover: '..' },
+  it("shows the crate's own message, word for word", async () => {
+    const message = 'title must not be empty';
+    expect(await validateWorkDraft(draft({ title: '' }), work().metadata, crate(() => message))).toBe(message);
+
+    const escaping = 'entry "../index.html" must not escape the work directory';
+    expect(await validateWorkDraft(draft({ entry: '..' }), work().metadata, crate(() => escaping))).toBe(
+      escaping,
+    );
+  });
+
+  it("carries the crate's hint when there is one, and invents none when there is not", async () => {
+    const withHint = await validateWorkDraft(draft({ slug: 'a/b' }), work().metadata, async () => {
+      throw {
+        code: 'INVALID',
+        message: 'slug "a/b" must not contain a path separator',
+        actionable: true,
+        hint: '地址片段会成为 URL 的一部分。',
+      };
+    });
+    expect(withHint).toContain('must not contain a path separator');
+    expect(withHint).toContain('地址片段');
+
+    expect(await validateWorkDraft(draft(), work().metadata, crate(() => 'slug must not be empty'))).toBe(
+      'slug must not be empty',
+    );
+  });
+
+  it('reports a failed call rather than treating it as an acceptance', async () => {
+    const reason = await validateWorkDraft(draft(), work().metadata, async () => {
+      throw new Error('窗口与后端之间的连接已断开。');
+    });
+    expect(reason).toBe('窗口与后端之间的连接已断开。');
+  });
+
+  it('asks about exactly the object the save would write', async () => {
+    // The other half of one authority: the object judged and the object written are one expression, built by
+    // `metadataFromDraft`. A form that validated one shape and saved another would make the answer meaningless.
+    const changed: WorkDraft = {
+      ...draft(),
+      title: '  新名字  ',
+      tags: 'demo, #ui',
+      cover: '',
+      completedAt: '   ',
+    };
+    const seen: WorkMetadataView[] = [];
+    const record = async (metadata: WorkMetadataView) => {
+      seen.push(metadata);
     };
 
-    for (const rule of CRATE_RULE) {
-      const change = byShape[rule.shape];
-      expect(change, `no draft shape is transcribed for ${rule.shape}`).toBeDefined();
-      const problem = validateWorkDraft({ ...draft(), ...change });
-      expect(problem === null, `${rule.shape}: the crate says ${rule.why}`).toBe(rule.accepted);
-    }
+    expect(await validateWorkDraft(changed, work().metadata, record)).toBeNull();
+    expect(seen).toHaveLength(1);
+    const asked = seen[0];
+    if (asked === undefined) throw new Error('the validator was not asked about the draft');
+    expect(asked).toEqual(metadataFromDraft(changed, work().metadata));
+    expect(asked.title).toBe('新名字');
+    expect(asked.tags).toEqual(['demo', 'ui']);
+    expect(asked.cover).toBeNull();
+    expect(asked.completed_at).toBeNull();
+    // A field the form does not show keeps its value, because the base metadata is spread first.
+    expect(asked.id).toBe(work().metadata.id);
+    expect(asked.imported_at).toBe(work().metadata.imported_at);
+    expect(asked.screenshot).toBe(work().metadata.screenshot);
+    expect(asked.size_bytes).toBe(work().metadata.size_bytes);
+  });
+});
+
+describe('metadataFromDraft, which is both the validated and the written object', () => {
+  it('trims the fields the crate trims and blanks what the user emptied', () => {
+    const result = metadataFromDraft(
+      { ...draft(), title: '  T  ', author: ' A ', slug: ' s ', entry: ' main.html ', cover: '  ' },
+      work().metadata,
+    );
+    expect(result.title).toBe('T');
+    expect(result.author).toBe('A');
+    expect(result.slug).toBe('s');
+    expect(result.entry).toBe('main.html');
+    expect(result.cover).toBeNull();
   });
 
-  it('does not refuse a slug or entry that is merely unusual', () => {
-    // Over-refusing is the failure mode this test exists for: the crate accepts these, so the window
-    // must not block them.
-    expect(validateWorkDraft(draft({ slug: 'demo-2', entry: 'sub/dir/page.html' }))).toBeNull();
-    expect(validateWorkDraft(draft({ title: '带空格 的 名称', slug: 'demo-counter-2' }))).toBeNull();
+  it('leaves the identity, the provenance and the poster to the work it came from', () => {
+    // §3.2: the id is the directory name, so a form that could change it would move the body. And §10.1's
+    // poster is set by its own command, not by this form.
+    const base = work({ cover: null, screenshot: 'preview/screenshot.webp' }).metadata;
+    const result = metadataFromDraft(draftFromWork(work()), base);
+    expect(result.id).toBe(base.id);
+    expect(result.slug).toBe(base.slug);
+    expect(result.imported_at).toBe(base.imported_at);
+    expect(result.source).toEqual(base.source);
+    expect(result.size_bytes).toBe(base.size_bytes);
+    expect(result.screenshot).toBe('preview/screenshot.webp');
+  });
+
+  it('round trips the textarea form of the tags, so the panel does no parsing of its own', () => {
+    expect(metadataFromDraft({ ...draft(), tags: formatTags(['a', 'b']) }, work().metadata).tags).toEqual([
+      'a',
+      'b',
+    ]);
   });
 });
 

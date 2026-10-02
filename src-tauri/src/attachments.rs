@@ -347,6 +347,41 @@ pub fn storage_kinds() -> Vec<StorageKindView> {
         .collect()
 }
 
+/// Validate a storage-target DRAFT, writing nothing and touching no project state.
+///
+/// **This is the ONE authority for the storage form's rules** (`PROCESSING.md` §5.10.1). The window used to
+/// carry a hand-written copy of them (`src/lib/storageTargetForm.ts::validateDraft`) held against the crate by
+/// two transcription tables in `tests/storageTargetForm.test.ts`. A transcription only DETECTS drift, so the
+/// copy and both tables are gone: the form asks THIS command and shows the message below verbatim.
+///
+/// It takes NO `AppState` — it is a fact about a draft rather than about a project, like [`storage_kinds`] — so
+/// a test drives it directly (the shape `images.rs`'s no-state commands established, and the reason
+/// `resolve_stored_target` was extracted for §5.10.2). And it is deliberately the SAME pair the SAVE path
+/// uses, `parse_storage_kind` → [`config_from_request`] → `StorageConfig::validate`, so a rule cannot be
+/// enforced on one path and missed on the other.
+///
+/// The `credential` in the request is IGNORED, exactly as the save path ignores it for its validation step:
+/// asking whether a draft is valid must never write a secret to the OS credential store. Only
+/// `save_storage_target` does that, and only after this call would have succeeded.
+#[tauri::command]
+pub fn validate_storage_target(request: SaveStorageTargetRequest) -> Result<(), CommandError> {
+    validate_storage_target_draft(&request)
+}
+
+/// The command's body, so a test can drive it without a command runtime.
+///
+/// Deliberately NOT a second implementation of anything: it maps the request the window would save with
+/// [`config_from_request`] and asks the crate. If it ever grew a rule of its own, the window would be back to
+/// having a rule the crate does not, which is the defect this command removes.
+fn validate_storage_target_draft(
+    request: &SaveStorageTargetRequest,
+) -> Result<(), CommandError> {
+    let kind = parse_storage_kind(&request.kind)?;
+    config_from_request(request, kind)
+        .validate()
+        .map_err(command_invalid)
+}
+
 /// Add or update a storage target.
 #[tauri::command]
 pub fn save_storage_target(
@@ -998,7 +1033,7 @@ mod tests {
         let missing = config_from_request(&without, veloct_attach::StorageKind::LskyPro);
         assert!(missing.instance.is_none());
         assert!(
-            missing.validate().unwrap_err().contains("instance"),
+            missing.validate().unwrap_err().contains("实例地址"),
             "{:?}",
             missing.validate()
         );
@@ -1167,7 +1202,7 @@ mod tests {
             None,
         )
         .expect_err("a UNC prefix must be refused");
-        assert!(error.to_string().contains("relative path"), "{error}");
+        assert!(error.to_string().contains("相对路径"), "{error}");
 
         // NOTHING was written by either refusal — the rule runs before the list is touched.
         assert!(
@@ -1233,8 +1268,8 @@ mod tests {
         let mut config =
             veloct_attach::StorageConfig::new("assets", "S3 附件", veloct_attach::StorageKind::S3);
         let error = save_target_config(project.path(), config.clone(), None)
-            .expect_err("S3 needs a bucket");
-        assert!(error.to_string().contains("bucket"), "{error}");
+            .expect_err("S3 目标必须填写 Bucket");
+        assert!(error.to_string().contains("Bucket"), "{error}");
         assert!(!project.path().join(STORAGE_TARGETS_FILE).exists());
 
         config.bucket = Some("veloct-assets".to_string());
@@ -1330,7 +1365,7 @@ mod tests {
 
         let error = save_target_config(project.path(), config.clone(), Some(SECRET.to_string()))
             .expect_err("a target with no bucket is refused");
-        assert!(error.to_string().contains("bucket"), "{error}");
+        assert!(error.to_string().contains("Bucket"), "{error}");
 
         // 1. No row, and the file was never created — not merely "the list is empty after an edit".
         assert!(
@@ -1414,5 +1449,261 @@ mod tests {
         let reporting = resolve_stored_target(&retired, "server", root, |_| None).expect("it builds");
         assert!(!reporting.capabilities().verified);
         assert!(!reporting.capabilities().can_delete_remotely);
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // The FORM's validation, which is now the crate's (`PROCESSING.md` §5.10.1). The window keeps no
+    // rule text at all, so these tests are where every shape it used to restate is still refused — and
+    // the messages asserted are the crate's, because those are what the user is shown.
+    // ---------------------------------------------------------------------------------------------
+
+    /// A save request built the way the WINDOW builds it.
+    ///
+    /// `buildSaveRequest` (TypeScript) sends only the chosen kind's fields and OMITS every blank one, so this
+    /// is what the command actually receives: a leftover value from a kind switch never reaches it, which is
+    /// what keeps the D152 over-refusal fixed without a second, kind-aware copy of the rule.
+    fn draft(kind: &str, id: &str, name: &str) -> SaveStorageTargetRequest {
+        SaveStorageTargetRequest {
+            id: id.to_string(),
+            name: name.to_string(),
+            kind: kind.to_string(),
+            path_prefix: None,
+            public_url_prefix: None,
+            repository: None,
+            branch: None,
+            endpoint: None,
+            region: None,
+            bucket: None,
+            access_key: None,
+            instance: None,
+            credential: None,
+        }
+    }
+
+    #[test]
+    fn a_form_draft_is_refused_by_the_crates_rule_for_the_field_it_is_missing() {
+        // §13.11, §13.13 and §13.12's required fields, each named by the crate's own message. These are the
+        // shapes the window's deleted `validateDraft` refused, still refused — by the one authority now.
+        let error = validate_storage_target_draft(&draft("s3", "assets", "S3 附件"))
+            .expect_err("S3 目标必须填写 Bucket");
+        assert!(error.message.contains("Bucket"), "{}", error.message);
+
+        let error = validate_storage_target_draft(&draft("github", "gh", "GitHub 附件"))
+            .expect_err("GitHub 目标必须填写仓库");
+        assert!(error.message.contains("仓库"), "{}", error.message);
+
+        let error = validate_storage_target_draft(&draft("lsky", "img", "兰空图床"))
+            .expect_err("Lsky Pro 目标必须填写实例地址");
+        assert!(error.message.contains("实例地址"), "{}", error.message);
+
+        // A blank id or name is refused too, which the window also stated and no longer does.
+        let error = validate_storage_target_draft(&draft("local", "   ", "本机目录"))
+            .expect_err("请填写目标标识");
+        assert!(error.message.contains("标识"), "{}", error.message);
+        let error = validate_storage_target_draft(&draft("local", "local", ""))
+            .expect_err("请填写名称");
+        assert!(error.message.contains("名称"), "{}", error.message);
+    }
+
+    #[test]
+    fn every_kind_the_form_offers_is_accepted_when_it_is_complete() {
+        // The positive control for the test above: the refusals are rules rather than a blanket no.
+        let mut s3 = draft("s3", "assets", "S3 附件");
+        s3.bucket = Some("veloct-assets".to_string());
+        validate_storage_target_draft(&s3).expect("a complete S3 draft");
+
+        let mut github = draft("github", "gh", "GitHub 附件");
+        github.repository = Some("vellow/assets".to_string());
+        validate_storage_target_draft(&github).expect("a complete GitHub draft");
+
+        let mut lsky = draft("lsky", "img", "兰空图床");
+        lsky.instance = Some("https://img.example.com".to_string());
+        validate_storage_target_draft(&lsky).expect("a complete Lsky Pro draft");
+        // §13.12's other spelling: the full API address.
+        lsky.instance = Some("https://img.example.com/api/v1".to_string());
+        validate_storage_target_draft(&lsky).expect("the API address is accepted too");
+        // A RELATIVE one is refused: the endpoint is this value plus `/api/v1` (D168).
+        lsky.instance = Some("img.example.com".to_string());
+        let error = validate_storage_target_draft(&lsky).expect_err("a relative instance cannot resolve");
+        assert!(error.message.contains("http"), "{}", error.message);
+
+        validate_storage_target_draft(&draft("local", "on-this-machine", "本机目录"))
+            .expect("a bare local target needs nothing");
+
+        // The RETIRED kind cannot be configured at all, so the form is told that rather than being asked for a
+        // host and a username no adapter reads (ADR-0017).
+        let error = validate_storage_target_draft(&draft("sftp", "server", "my server"))
+            .expect_err("a retired kind cannot be saved");
+        assert!(error.message.contains("unknown storage kind"), "{}", error.message);
+    }
+
+    #[test]
+    fn a_misplaced_bucket_placeholder_is_refused_at_the_form_by_the_crate() {
+        // ADR-0018's rule, asserted here because the window no longer restates it: the crate asks
+        // `veloct_s3::bucket_placeholder_problem` on the save path, and this command is that same path.
+        let mut s3 = draft("s3", "assets", "S3 附件");
+        s3.bucket = Some("veloct-assets".to_string());
+
+        for refused in [
+            "https://oss-{bucket}.example.com",
+            "https://gw.example.com/s3/{bucket}",
+            "https://{bucket}.{bucket}.example.com",
+            "https://{bucket}",
+            "https://{bucket}.",
+        ] {
+            s3.endpoint = Some(refused.to_string());
+            let error = validate_storage_target_draft(&s3)
+                .expect_err("this endpoint must be refused");
+            assert!(error.message.contains("{bucket}"), "{refused}: {}", error.message);
+        }
+        for accepted in [
+            "",
+            "http://127.0.0.1:9000",
+            "https://{bucket}.oss-cn-chengdu.aliyuncs.com",
+            "https://{bucket}.gw.example.com/s3",
+        ] {
+            s3.endpoint = if accepted.is_empty() {
+                None
+            } else {
+                Some(accepted.to_string())
+            };
+            validate_storage_target_draft(&s3)
+                .unwrap_or_else(|error| panic!("{accepted} must be accepted: {}", error.message));
+        }
+    }
+
+    #[test]
+    fn a_prefix_or_public_url_the_crate_refuses_is_refused_at_the_form_too() {
+        // §13.10's local prefix rule (a drive letter or a UNC root would put the bytes outside the target),
+        // and the shared `..` / leading-`/` prefix rule with §13.6's absolute public URL.
+        let mut local = draft("local", "on-this-machine", "本机目录");
+        for refused in ["D:/images", "\\\\server\\share"] {
+            local.path_prefix = Some(refused.to_string());
+            let error = validate_storage_target_draft(&local).expect_err("it must be refused");
+            assert!(error.message.contains("相对路径"), "{refused}: {}", error.message);
+        }
+        local.path_prefix = Some("uploads/2026".to_string());
+        validate_storage_target_draft(&local).expect("a nested relative prefix is what the field is for");
+
+        let mut s3 = draft("s3", "assets", "S3 附件");
+        s3.bucket = Some("veloct-assets".to_string());
+        for refused in ["../outside", "/absolute"] {
+            s3.path_prefix = Some(refused.to_string());
+            let error = validate_storage_target_draft(&s3).expect_err("it must be refused");
+            assert!(error.message.contains(".."), "{refused}: {}", error.message);
+        }
+
+        s3.path_prefix = None;
+        s3.public_url_prefix = Some("cdn.example.com".to_string());
+        let error = validate_storage_target_draft(&s3).expect_err("a relative public URL cannot resolve");
+        assert!(error.message.contains("http://"), "{}", error.message);
+        // Empty stays allowed: the crate reads that as "no URL can be derived yet" (§13.6).
+        s3.public_url_prefix = None;
+        validate_storage_target_draft(&s3).expect("an unknown public URL is a legitimate state");
+        s3.public_url_prefix = Some("https://cdn.example.com/assets".to_string());
+        validate_storage_target_draft(&s3).expect("an absolute public URL is accepted");
+    }
+
+    #[test]
+    fn the_form_and_the_save_path_accept_exactly_the_same_drafts() {
+        // THE anti-drift test, and the reason the transcription tables could be deleted: the form's ruling and
+        // the save path's ruling are the same call on the same configuration. A rule added to one and not the
+        // other is impossible rather than merely detected.
+        let project = tempfile::TempDir::new().unwrap();
+
+        let mut cases = vec![
+            draft("s3", "assets", "S3 附件"),
+            draft("github", "gh", "GitHub 附件"),
+            draft("lsky", "img", "兰空图床"),
+            draft("local", "on-this-machine", "本机目录"),
+            draft("sftp", "server", "my server"),
+        ];
+        let mut complete_s3 = draft("s3", "assets", "S3 附件");
+        complete_s3.bucket = Some("veloct-assets".to_string());
+        complete_s3.public_url_prefix = Some("https://cdn.example.com".to_string());
+        complete_s3.path_prefix = Some("blog".to_string());
+        cases.push(complete_s3.clone());
+
+        let mut bad_endpoint = complete_s3.clone();
+        bad_endpoint.endpoint = Some("https://oss-{bucket}.example.com".to_string());
+        cases.push(bad_endpoint);
+
+        let mut bad_prefix = complete_s3.clone();
+        bad_prefix.path_prefix = Some("../outside".to_string());
+        cases.push(bad_prefix);
+
+        let mut relative_url = complete_s3.clone();
+        relative_url.public_url_prefix = Some("//cdn.example.com".to_string());
+        cases.push(relative_url);
+
+        let mut complete_lsky = draft("lsky", "img", "兰空图床");
+        complete_lsky.instance = Some("https://img.example.com".to_string());
+        cases.push(complete_lsky);
+
+        for case in cases {
+            let form = validate_storage_target_draft(&case);
+            // A retired kind has no spelling `parse_storage_kind` accepts, so there is no save path to compare
+            // against: the IMPORT side refuses it too, and this is that half.
+            let Ok(kind) = parse_storage_kind(&case.kind) else {
+                assert!(form.is_err(), "{:?} names no parseable kind", case.id);
+                continue;
+            };
+            let save = save_target_config(project.path(), config_from_request(&case, kind), None);
+            assert_eq!(
+                form.is_ok(),
+                save.is_ok(),
+                "{:?} is ruled on differently by the form and the save path",
+                case.id
+            );
+            if let (Err(from_form), Err(from_save)) = (&form, &save) {
+                assert_eq!(
+                    from_form.message, from_save.message,
+                    "the two paths must word the same refusal the same way"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn validating_a_draft_writes_no_credential_and_no_target_list() {
+        // The command takes no `AppState` and writes nothing. The credential VALUE rides in the request (that
+        // is how the window sends it), so this is the assertion that it is ignored here: §12.2's rule is that
+        // only a SAVE writes a secret, and only after its validation succeeded.
+        let _store = crate::credentials::store_guard();
+        let handle = crate::credentials::handle_for("storage:assets-validate");
+        let _ = crate::credentials::remove(&handle);
+
+        let mut s3 = draft("s3", "assets-validate", "S3 附件");
+        s3.bucket = Some("veloct-assets".to_string());
+        s3.credential = Some("a-secret-that-must-not-be-stored".to_string());
+        // `config_from_request` derives the handle from the id, and this is it — so the assertion below is
+        // about the handle the SAVE path would use.
+        assert_eq!(
+            config_from_request(&s3, veloct_attach::StorageKind::S3)
+                .credential_ref
+                .as_deref(),
+            Some(handle.as_str())
+        );
+        validate_storage_target_draft(&s3).expect("a complete draft");
+
+        assert!(
+            !crate::credentials::exists(&handle),
+            "asking whether a draft is valid must not store its credential"
+        );
+
+        // And the refusal path is the same: nothing is stored for a draft the crate refuses either.
+        s3.bucket = None;
+        assert!(validate_storage_target_draft(&s3).is_err());
+        assert!(!crate::credentials::exists(&handle));
+    }
+
+    #[test]
+    fn the_storage_target_validate_command_is_registered_with_the_window() {
+        // A command the window cannot invoke is the gap this task exists to close, so the registration is
+        // asserted where the shell declares it — the same assertion `storage_kinds` and the image commands get.
+        assert!(
+            include_str!("lib.rs").contains("attachments::validate_storage_target"),
+            "validate_storage_target must be in the invoke_handler list"
+        );
     }
 }

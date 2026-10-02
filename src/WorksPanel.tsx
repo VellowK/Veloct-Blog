@@ -35,7 +35,7 @@ import {
   draftIsDirty,
   formatBytes,
   importReadiness,
-  parseTags,
+  metadataFromDraft,
   planKey,
   posterReadiness,
   servableReason,
@@ -73,6 +73,14 @@ export default function WorksPanel({ enabled }: Props) {
 
   // ---- Metadata editing -----------------------------------------------------------------------
   const [editing, setEditing] = useState<{ id: string; draft: WorkDraft } | null>(null);
+  /**
+   * The CRATE's ruling on the draft, or `null` when it can be saved.
+   *
+   * It arrives from the `validate_work_metadata` command rather than from a copy of the rules in the window
+   * (PROCESSING.md §5.10.1). The effect below asks on every change, debounced; the save path asks again,
+   * because a debounce is a delay and not a guarantee.
+   */
+  const [saveReason, setSaveReason] = useState<string | null>(null);
 
   // ---- Poster image (section 10.1's `preview/`) ------------------------------------------------
   const [posterTarget, setPosterTarget] = useState<string | null>(null);
@@ -251,28 +259,49 @@ export default function WorksPanel({ enabled }: Props) {
     () => (editing ? works.find((work) => work.metadata.id === editing.id) ?? null : null),
     [editing, works],
   );
-  const saveReason = editing ? validateWorkDraft(editing.draft) : null;
   const dirty = editing && currentWork ? draftIsDirty(editing.draft, currentWork) : false;
+
+  /**
+   * Ask the crate whether this draft may be saved, WITHOUT saving it.
+   *
+   * This is what replaced the window's copy of `WorkMetadata::validate`. The object asked about is exactly the
+   * object the save would write (`metadataFromDraft`), so the answer cannot be about a different shape.
+   */
+  useEffect(() => {
+    if (!editing || !currentWork) {
+      setSaveReason(null);
+      return;
+    }
+    let live = true;
+    setSaveReason(null);
+    const handle = window.setTimeout(() => {
+      void validateWorkDraft(editing.draft, currentWork.metadata, api.validateWorkMetadata).then(
+        (reason) => {
+          if (live) setSaveReason(reason);
+        },
+      );
+    }, 250);
+    return () => {
+      live = false;
+      window.clearTimeout(handle);
+    };
+  }, [editing, currentWork]);
 
   const saveMetadata = () =>
     run(async () => {
       if (!editing) return;
-      const reason = validateWorkDraft(editing.draft);
-      if (reason) throw new Error(reason);
       if (!currentWork) throw new Error('这个作品已经不在列表里了,请刷新后重试。');
-      await api.updateWork(editing.id, {
-        // The whole metadata object is sent back, so a field this form does not show keeps its value.
-        ...currentWork.metadata,
-        title: editing.draft.title.trim(),
-        author: editing.draft.author.trim(),
-        slug: editing.draft.slug.trim(),
-        summary: editing.draft.summary,
-        entry: editing.draft.entry.trim(),
-        tags: parseTags(editing.draft.tags),
-        notes: editing.draft.notes,
-        completed_at: editing.draft.completedAt.trim() === '' ? null : editing.draft.completedAt.trim(),
-        cover: editing.draft.cover.trim() === '' ? null : editing.draft.cover.trim(),
-      });
+      // Asked AGAIN here, rather than trusting the debounced hint: a save must never be sent on a draft the
+      // crate has not accepted, and the crate's message is what the user sees either way.
+      const reason = await validateWorkDraft(
+        editing.draft,
+        currentWork.metadata,
+        api.validateWorkMetadata,
+      );
+      if (reason) throw new Error(reason);
+      // The whole metadata object is sent back, so a field this form does not show keeps its value — and it is
+      // built by the SAME function the validation above used, so the two cannot judge different objects.
+      await api.updateWork(editing.id, metadataFromDraft(editing.draft, currentWork.metadata));
       setEditing(null);
     }, '作品元数据已保存。稳定 ID 与导入来源不会被改动。');
 
