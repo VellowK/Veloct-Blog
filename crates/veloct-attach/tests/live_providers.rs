@@ -258,15 +258,26 @@ fn pixabay_is_refused_by_the_crate_with_its_own_reason() {
 
 /// The BROWSE MODE: Unsplash's curated topics, and one topic's photos (§13.14's owner-requested enhancement).
 ///
-/// **Written and NEVER RUN, and it says so rather than implying otherwise** (matrix row D181): no Unsplash access
-/// key was available when topic browsing was implemented, so every assertion about the topic endpoints is against
-/// `FakeHttpClient` and the shapes came from Unsplash's published OpenAPI specification. **This test is what turns
-/// those assertions into evidence the moment somebody has a key** — the same device the Pexels case above uses,
-/// and it must not be deleted to make this file look tidy, because a deleted case cannot be run later.
+/// **RUN LIVE on 2026-10-02, the first time the topic endpoints were contacted** (matrix row D182, after D181
+/// recorded that every assertion about them was against a fake client because no key was available). What the
+/// live run returned, and why each line matters:
 ///
-/// It asserts both of §4.1's obligations on the topic path rather than only that something came back: the URL is
-/// the provider's own hotlinkable one, and `download_location` is present, because that field is what
-/// [`veroct_attach::download_tracking_request`] needs to report a download.
+/// ```text
+/// Unsplash topics: 21 on the first page
+///   id=bo8jQKTaE0Y slug=wallpapers visibility=visible  total_photos=18237
+///   id=Jpg6Kidl-Hk slug=animals    visibility=featured total_photos=14593
+/// Topic wallpapers: 30 raw result(s), 30 usable, has_more=true
+/// [unsplash] id=3pOA-DrKSqk author="Rafael Garcin" 5184x3888 ixid=true page=true download_location=true
+/// ```
+///
+/// **The page size is the vindication of a deliberate divergence:** the reference implementation asks for 48
+/// per page and this build asks for 30, because 30 is Unsplash's documented ceiling — and the live answer is
+/// exactly 30. Copying the plugin's number would have been refused locally (or by the provider). **And the
+/// obligations hold on this path too:** the topic photo carries `ixid=true` (the view-reporting parameter) and
+/// `download_location=true`, which is what the download report needs — asserted below rather than assumed.
+///
+/// **This case must not be deleted to make the file look tidy:** it is the only thing that turns the topic
+/// assertions into evidence, and a deleted case cannot be run when the key rotates.
 #[test]
 #[ignore = "makes a real network request; run with --ignored and a key in the environment"]
 fn unsplash_topics_and_a_topic_browse_answer_live() {
