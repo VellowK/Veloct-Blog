@@ -1627,3 +1627,54 @@ test races (§2.13, §2.14) that had been passing by luck.
   The identical habit had already found §5.3's and §5.4's gaps.
 - **"It builds" and "it works" are different claims** (§2.10). A green `cargo build` shipped an installer
   with no Node runtime and a launcher that could not find it. Install the artefact and run it.
+
+
+### 2.15 Releasing this application: the order that matters, and the two steps that bite
+
+Written while preparing the 1.0.0 build, from facts measured on 2026-10-02 rather than from a template. Every
+step below was run at least once; the two marked BITES were discovered by running them.
+
+**1. Bump the version in FOUR places, and check for others.** `Cargo.toml`'s `[workspace.package]` (every crate
+inherits it, so it is one line), `src-tauri/tauri.conf.json`, `package.json` and `site/package.json`. Verify
+afterwards that `0.1.0` appears nowhere, and read `git diff` rather than trusting the script: the change must be
+four single lines.
+
+**2. The committed sidecar launcher, BEFORE packaging.** If anything the launcher links changed —
+`crates/veloct-core` is the trap, because it is edited for unrelated reasons — `scripts/build-sidecar.ps1 -Check`
+goes red and the launcher must be rebuilt and committed (§2.2). `-Check` is the assertion; run it as a step, not as
+a hope.
+
+**3. `scripts/build-installer.ps1`.** It signs if a certificate is present: it takes `-SignThumbprint`, then
+`VELOCT_SIGN_THUMBPRINT`, then the store by subject, writes a MERGED `--config` for Tauri's own
+`bundle.windows.certificateThumbprint` with `sha256` and a timestamp server, and lets the BUNDLER sign during the
+build. The committed `tauri.conf.json` therefore never records a machine's thumbprint. With no certificate it
+warns and builds UNSIGNED rather than pretending.
+
+**BITES — a signed build is not allowed to dirty the tree.** Tauri signs the COMMITTED external binary
+(`src-tauri/binaries/veloct-astro-sidecar-<triple>.exe`) **in place**, and the first signed build therefore broke
+`build-sidecar.ps1 -Check` permanently (exit 1) — the §2.2 breakage, caused by the signature rather than by a
+stale launcher. The script now photographs the external binaries before the build and restores them afterwards,
+printing the line it restores, so the PACKAGE keeps the signed copy and the REPOSITORY keeps the unsigned one that
+`-Check` compares against. **Re-run `build-sidecar.ps1 -Check` after every signed build** to prove it.
+
+**BITES — signing `target/release/<app>.exe` on its own does nothing durable.** Signing it and then rebuilding
+leaves the INSTALLED app `NotSigned`, because the build copies the unsigned file back (`target/release/<name>.exe`
+is a hard link to `target/release/deps/<name>-<hash>.exe`). Signing must happen through the bundler, which is why
+step 3 passes a config rather than signing a file.
+
+**4. Do not trust the build; INSTALL it (§2.10).** Silently install to a temp directory, list what landed, check
+each binary's `Get-AuthenticodeSignature` status, start the installed launcher and require
+`GET http://localhost:<port>/` to answer **200**, tree-kill and confirm the port is free with
+`State -eq 'Listen'`, then uninstall and remove the directory. A green build is not evidence that a package runs;
+that probe is.
+
+**5. The artefacts are what step 4 proved.** `target/release/bundle/nsis/Veloct_<version>_x64-setup.exe`, whose
+signature depends on whether a certificate was found — and the release notes must say which, because a
+self-signed certificate proves integrity and gives a publisher name only on a machine that has installed
+`src-tauri/signing/veloct-codesign.cer`. On a fresh machine it is an unknown publisher, and the fix for that is a
+purchased certificate, not code.
+
+**6. Say in the release notes what is NOT done.** A version number is a claim. The honest notes for 1.0.0 name
+§5.9's screenshot (a file the user chooses; §10.3's "screenshot or placeholder" is met), Pexels's vendor pause
+(§5.12), Lsky Pro's missing live verification (§5.8), and the deploy targets' live state. The matrix's H table and
+§1 are where the numbers come from, and they are the ones to read before writing a sentence about coverage.

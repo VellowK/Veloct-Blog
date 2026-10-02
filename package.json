@@ -1,7 +1,7 @@
 {
   "name": "veloct-desktop",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.0.0",
   "type": "module",
   "description": "Veloct desktop workbench (React + TypeScript + Vite), rendered by the Tauri shell",
   "scripts": {
