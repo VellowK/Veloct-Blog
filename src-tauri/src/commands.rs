@@ -1202,6 +1202,52 @@ pub fn list_releases(state: State<'_, AppState>) -> Result<Vec<ReleaseView>, Com
     Ok(releases)
 }
 
+// ---------------------------------------------------------------------------------------------
+// The site's dependencies: the one-click install that answers "no Astro CLI in site/".
+//
+// Every command here is `#[tauri::command(async)]` rather than the plain sync form. A sync command
+// runs on the MAIN thread (Tauri's `command(async)` moves a sync body to the async runtime's thread
+// pool), and an `npm install` is minutes long: on the main thread it would freeze the whole window —
+// including the `site_install_status` poll the panel needs to show progress at all. None of the
+// three bodies blocks for more than the spawn or a `taskkill`, but they are the commands whose cost
+// grows with the project, so they are the ones that must not be on that thread.
+// ---------------------------------------------------------------------------------------------
+
+/// Start the one-click dependency install for the open project's `site/`.
+///
+/// This is what the user meets instead of the error the build reports today ("no Astro CLI in
+/// `<project>/site/node_modules/astro`; run the site's dependency install first"). The behaviour
+/// that matters is documented where it is implemented: `AppState::start_site_install` says what
+/// running it twice does, what an absent network looks like, and what cancelling leaves behind.
+#[tauri::command(async)]
+pub fn install_site_dependencies(
+    state: State<'_, AppState>,
+) -> Result<crate::state::SiteInstallView, CommandError> {
+    state.start_site_install()
+}
+
+/// Report the install's state, its output tail and whether the build can find its Astro CLI.
+///
+/// Reading is the poll: a run whose process has exited is judged here, once, so the panel's timer
+/// both shows progress and discovers the outcome without a second command.
+#[tauri::command(async)]
+pub fn site_install_status(
+    state: State<'_, AppState>,
+) -> Result<crate::state::SiteInstallView, CommandError> {
+    state.site_install_view()
+}
+
+/// Cancel the running install, killing npm and its children.
+///
+/// Cancelling nothing is not an error — it reports the state it found — so a double click cannot
+/// fail with a message about an install the user can see is not running.
+#[tauri::command(async)]
+pub fn cancel_site_install(
+    state: State<'_, AppState>,
+) -> Result<crate::state::SiteInstallView, CommandError> {
+    state.cancel_site_install()
+}
+
 /// One log page.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogPage {

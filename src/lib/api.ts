@@ -300,6 +300,43 @@ export interface PublishView {
   build_log: string;
 }
 
+/**
+ * How the one-click `npm install` for the project's `site/` is going.
+ *
+ * Mirrors `SiteInstallState` on the Rust side (`src-tauri/src/state.rs`), tagged by `state` so the
+ * window switches on one field rather than on a set of booleans that could disagree.
+ */
+export type SiteInstallState =
+  | { state: 'idle' }
+  | { state: 'running'; pid: number; started_at: string }
+  | { state: 'succeeded'; exit_code: number; finished_at: string }
+  | {
+      state: 'failed';
+      /** `null` when the code was not reportable, which is NOT the same as 0. */
+      exit_code: number | null;
+      finished_at: string;
+      reason: string;
+    }
+  | { state: 'cancelled'; finished_at: string };
+
+/** The install's state plus everything the panel needs to show it. */
+export interface SiteInstallView {
+  state: SiteInstallState;
+  /** The installer's output tail. This is what keeps a minutes-long install from being a frozen UI. */
+  output_tail: string;
+  /**
+   * The npm the install uses, or `null` when this machine has none.
+   *
+   * `null` is why the panel can explain instead of offering a button that cannot work: npm is NOT
+   * bundled (Veloct bundles the Node runtime, not npm), so the one-click install needs a system npm.
+   */
+  npm: string | null;
+  /** Where the install runs: the same `<project>/site` the build looks in. */
+  site_dir: string;
+  /** Whether `site/node_modules/astro` exists — the exact check the build makes. */
+  astro_ready: boolean;
+}
+
 /** One release on disk. */
 export interface ReleaseView {
   release_id: string;
@@ -1110,6 +1147,29 @@ export const api = {
     invoke<PublishView>('publish_project', {
       createdFromReleaseId: createdFromReleaseId ?? null,
     }),
+
+  /**
+   * Install the project's `site/` dependencies — the one-click answer to "no Astro CLI in site/".
+   *
+   * `npm install` is run by the Rust side through the same spawner the previews use, so its output,
+   * its process tree and its failures are all supervised. It runs in the background: this call
+   * returns as soon as the installer has started, and `siteInstallStatus` reports the progress and
+   * the outcome. **Calling it while one is already running does not start a second npm** — it returns
+   * the running state, which is what the panel renders.
+   */
+  installSiteDependencies: () => invoke<SiteInstallView>('install_site_dependencies'),
+
+  /** The install's state, its output tail and whether the build can find its Astro CLI. */
+  siteInstallStatus: () => invoke<SiteInstallView>('site_install_status'),
+
+  /**
+   * Cancel a running install, killing npm and its children.
+   *
+   * The state that comes back is `cancelled`, which the panel shows with the honest warning: a
+   * cancelled install can leave `node_modules` half written, and running the install again is the
+   * repair.
+   */
+  cancelSiteInstall: () => invoke<SiteInstallView>('cancel_site_install'),
 
   /** Add a file to the attachment pool. Writes no Markdown; the caller applies it (section 13.3). */
   addAttachment: (options: {

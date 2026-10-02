@@ -15,17 +15,48 @@
  *
  * The publish button is deliberately NOT optimistic. It shows the running state, then whatever the Rust side
  * reports, because a publish that silently half-succeeded would be worse than one that failed loudly.
+ *
+ * ## The site's dependencies, and why they are on THIS page
+ *
+ * A build of a project whose `site/` has no dependencies fails with "no Astro CLI in
+ * `<project>/site/node_modules/astro`; run the site's dependency install first (npm install in site/)".
+ * The message is correct and actionable and still leaves the user to do it in a console, so the ONE-CLICK
+ * install is rendered HERE — directly under the publish control, in the same column, where the error
+ * appears — rather than in a settings page nobody would look at.
+ *
+ * The install's rules are in `src/lib/siteInstall.ts` (pure, and covered by
+ * `tests/siteInstallForm.test.ts`); this file renders them, polls while an install runs, and offers the
+ * cancel that kills npm's whole tree.
  */
 
 import { useCallback, useEffect, useState } from 'react';
 
-import { api, describeError, type PublishView, type ReleaseView } from './lib/api';
+import { api, describeError, type PublishView, type ReleaseView, type SiteInstallView } from './lib/api';
+import { StateBlock } from './components/ui';
+import {
+  describeSiteInstall,
+  npmSourceLabel,
+  publishBlockedReason,
+  siteInstallStateLabel,
+} from './lib/siteInstall';
+
+/** How often the panel asks about a running install. Fast enough to look alive, slow enough to be free. */
+const INSTALL_POLL_MS = 800;
 
 export default function PublishPanel({
   enabled,
+  projectPath,
   onPublished,
 }: {
   enabled: boolean;
+  /**
+   * The open project's path, or `null`.
+   *
+   * Only used to know when the project CHANGED: the Rust side stops and forgets an install when
+   * another project replaces this one, so a panel that only watched `enabled` would keep showing the
+   * closed project's install, its output and its `site_dir`.
+   */
+  projectPath: string | null;
   onPublished?: () => void;
 }) {
   const [releases, setReleases] = useState<ReleaseView[]>([]);
@@ -34,6 +65,10 @@ export default function PublishPanel({
   const [error, setError] = useState<string | null>(null);
   const [showLog, setShowLog] = useState(false);
 
+  const [install, setInstall] = useState<SiteInstallView | null>(null);
+  const [installError, setInstallError] = useState<string | null>(null);
+  const [installBusy, setInstallBusy] = useState(false);
+
   const reload = useCallback(async () => {
     if (!enabled) return;
     try {
@@ -41,11 +76,47 @@ export default function PublishPanel({
     } catch (caught) {
       setError(describeError(caught));
     }
-  }, [enabled]);
+  }, [enabled, projectPath]);
+
+  /**
+   * Read the install's state.
+   *
+   * Reading IS the poll: the Rust side judges an installer whose process has exited while answering this,
+   * so a finished install cannot be reported as running — and the answer carries the output tail, which is
+   * what keeps a minutes-long install from being a frozen UI.
+   */
+  const loadInstall = useCallback(async () => {
+    if (!enabled) return;
+    try {
+      setInstall(await api.siteInstallStatus());
+      setInstallError(null);
+    } catch (caught) {
+      setInstallError(describeError(caught));
+    }
+  }, [enabled, projectPath]);
 
   useEffect(() => {
     void reload();
   }, [reload]);
+
+  useEffect(() => {
+    // A different project invalidates what is on screen before the new answer arrives, so the panel
+    // never shows the previous project's installer as if it were this one's.
+    setInstall(null);
+    setInstallError(null);
+    void loadInstall();
+  }, [loadInstall]);
+
+  const installing = install?.state.state === 'running';
+
+  useEffect(() => {
+    // Polled only while something is running, so an idle panel asks for nothing.
+    if (!installing) return undefined;
+    const timer = setInterval(() => {
+      void loadInstall();
+    }, INSTALL_POLL_MS);
+    return () => clearInterval(timer);
+  }, [installing, loadInstall]);
 
   const publish = useCallback(
     async (createdFrom?: string) => {
@@ -57,6 +128,9 @@ export default function PublishPanel({
         setResult(view);
         setShowLog(!view.anchored);
         await reload();
+        // A publish that got as far as building proves the CLI is on disk, and an install run outside
+        // this panel would otherwise stay invisible until the page was reopened.
+        await loadInstall();
         onPublished?.();
       } catch (caught) {
         setError(describeError(caught));
@@ -64,8 +138,38 @@ export default function PublishPanel({
         setBusy(false);
       }
     },
-    [reload, onPublished],
+    [reload, loadInstall, onPublished],
   );
+
+  const startInstall = useCallback(async () => {
+    setInstallBusy(true);
+    setInstallError(null);
+    try {
+      // Returns as soon as npm has STARTED, so the window stays responsive and the polling effect above
+      // takes over. Asking while one is already running does not start a second npm: the Rust side
+      // refuses and answers with the running state, which is what this renders.
+      setInstall(await api.installSiteDependencies());
+    } catch (caught) {
+      // A refusal is a real answer — no system npm, or a project with no site/ — and it carries the
+      // hint. The state is NOT re-read here, so the refusal's own message is not wiped by a successful
+      // refresh.
+      setInstallError(describeError(caught));
+    } finally {
+      setInstallBusy(false);
+    }
+  }, []);
+
+  const cancelInstall = useCallback(async () => {
+    setInstallBusy(true);
+    try {
+      setInstall(await api.cancelSiteInstall());
+      setInstallError(null);
+    } catch (caught) {
+      setInstallError(describeError(caught));
+    } finally {
+      setInstallBusy(false);
+    }
+  }, []);
 
   if (!enabled) {
     return (
@@ -75,11 +179,22 @@ export default function PublishPanel({
     );
   }
 
+  const display = install ? describeSiteInstall(install) : null;
+  // Why a publish would fail right now, or `null` when the build can find its Astro CLI. It is the same
+  // `astro_ready` the build's own check produces, so the tooltip cannot disagree with the build.
+  const blocked = install ? publishBlockedReason(install) : null;
+
   return (
     <div className="publish-panel">
       <header className="publish-header">
         <strong>发布</strong>
-        <button type="button" className="primary" onClick={() => void publish()} disabled={busy}>
+        <button
+          type="button"
+          className="primary"
+          onClick={() => void publish()}
+          disabled={busy}
+          title={blocked ?? '检查改动、构建一次并打标签(handoff.md 第 19.3 节)'}
+        >
           {busy ? '构建中…' : '发布'}
         </button>
         <button type="button" onClick={() => void reload()} disabled={busy}>
@@ -88,9 +203,76 @@ export default function PublishPanel({
       </header>
 
       {error && (
-        <p className="publish-error" role="alert">
-          {error}
-        </p>
+        <StateBlock
+          tone="error"
+          title="发布没有完成"
+          description={error}
+          onDismiss={() => setError(null)}
+        />
+      )}
+
+      {/* The site's dependencies, where the build error appears. The one-click install lives here. */}
+      {installError && (
+        <StateBlock
+          tone="error"
+          title="依赖安装没有开始"
+          description={installError}
+          onDismiss={() => setInstallError(null)}
+        />
+      )}
+
+      {!install && !installError && (
+        <StateBlock tone="loading" title="正在读取站点依赖状态…" />
+      )}
+
+      {install && display && (
+        <>
+          <h3>站点依赖 · {siteInstallStateLabel(install)}</h3>
+          <StateBlock
+            tone={display.tone}
+            title={display.title}
+            description={
+              <>
+                <p>{display.detail}</p>
+                <p className="muted">
+                  {npmSourceLabel(install)} · {install.site_dir}
+                </p>
+                {display.showOutput && (
+                  <>
+                    <p className="muted">安装器输出(最后几行):</p>
+                    <pre className="build-log">{install.output_tail}</pre>
+                  </>
+                )}
+              </>
+            }
+            actions={
+              <>
+                {display.canCancel && (
+                  <button
+                    type="button"
+                    onClick={() => void cancelInstall()}
+                    disabled={installBusy}
+                    title="终止 npm 及其子进程;node_modules 可能停在半安装状态,再安装一次即可修复"
+                  >
+                    取消安装
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className={display.canStart ? 'primary' : ''}
+                  onClick={() => void startInstall()}
+                  disabled={installBusy || !display.canStart}
+                  title="在 site/ 里运行 npm install(使用系统的 npm;Veloct 不自带 npm)"
+                >
+                  {display.actionLabel}
+                </button>
+                <button type="button" onClick={() => void loadInstall()} disabled={installBusy}>
+                  刷新状态
+                </button>
+              </>
+            }
+          />
+        </>
       )}
 
       {result && (

@@ -174,6 +174,26 @@ pub trait ChildHandle: Send + Sync {
 
     /// Any output the child produced, for the process log.
     fn output_tail(&self) -> String;
+
+    /// The code the child exited with, once its exit has been observed.
+    ///
+    /// Added for the one child that is not a preview: the one-click `npm install` in
+    /// `src-tauri/src/state.rs`. A preview is judged by its port answering, so "it is no longer
+    /// alive" is the only question the supervisor ever asks; an installer is judged by whether it
+    /// SUCCEEDED, and liveness cannot tell success from failure.
+    ///
+    /// A defaulted method rather than a new required one, because every existing implementor is
+    /// already correct with `None` — no preview asks this question — and a trait that had to be
+    /// updated everywhere to say "I do not know" would be a worse trade than one that says it here.
+    ///
+    /// **The answer is only meaningful AFTER [`ChildHandle::is_alive`] has reported `false`**: that
+    /// call is what reaps the child, and a child that has not been reaped yet has no status to read.
+    /// `None` therefore means "not observed, or not reportable" — a Unix signal death has no exit
+    /// code — and NEVER "exited 0". A caller that treats the two as the same would report a killed
+    /// installer as a successful one.
+    fn exit_code(&self) -> Option<i32> {
+        None
+    }
 }
 
 /// A child that was successfully launched.
@@ -1022,6 +1042,15 @@ mod tests {
         assert_eq!(failures.len(), 1);
         assert_eq!(failures[0].0, PreviewRole::Works);
         assert!(!status.is_ready());
+    }
+
+    #[test]
+    fn a_handle_that_never_saw_an_exit_code_says_none_rather_than_zero() {
+        // "Unknown" and "exited 0" must not be the same answer: the dependency install
+        // (`src-tauri/src/state.rs`) reports SUCCESS only for a code it actually saw, and a handle
+        // that reported 0 by default would turn "the installer was killed" into "it worked".
+        let handle = FakeHandle::new(1);
+        assert_eq!(handle.exit_code(), None);
     }
 
     #[test]

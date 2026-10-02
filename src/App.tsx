@@ -742,7 +742,14 @@ export default function App() {
             </div>
           ) : view === 'publish' ? (
             <div className="page page--legacy">
-              <PublishPanel enabled={project !== null} onPublished={() => void refresh()} />
+              {/* `projectPath` is passed so the panel re-reads the install state when a DIFFERENT
+                  project is opened: the Rust side clears it with the project, and a panel that only
+                  watched `enabled` would keep showing the closed project's install. */}
+              <PublishPanel
+                enabled={project !== null}
+                projectPath={project?.path ?? null}
+                onPublished={() => void refresh()}
+              />
             </div>
           ) : view === 'logs' ? (
             <div className="page page--legacy">

@@ -29,7 +29,10 @@ pub mod state;
 pub mod works;
 
 pub use commands::{AppInfo, DocumentView, PreviewView, ProjectView, SaveView};
-pub use state::{resolve_launcher, AppState, NullSpawner, OpenProject, OsSpawner, ShellSpawner};
+pub use state::{
+    resolve_launcher, resolve_npm, AppState, NullSpawner, OpenProject, OsSpawner, ShellSpawner,
+    SiteInstallState, SiteInstallView, NPM_ENV,
+};
 
 use std::sync::Arc;
 
@@ -94,6 +97,9 @@ pub fn run() {
             commands::create_page_from_draft,
             commands::publish_project,
             commands::list_releases,
+            commands::install_site_dependencies,
+            commands::site_install_status,
+            commands::cancel_site_install,
             attachments::add_attachment,
             attachments::list_attachments,
             attachments::attachment_orphans,
