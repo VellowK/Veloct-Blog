@@ -332,3 +332,25 @@ the bucket's policy to set, not the client's to assume.
 and read the ERROR rather than the manual. This one sentence — "must be addressed using OSS third level
 domain" — saved guessing at addressing, and the `valid Date` refusal is what found a defect that 1400+ tests
 could not see.
+
+## 7. Unsplash's keyless routes are DEAD, and the plugin cited as proof is not keyless either
+
+Read this before replacing a working, terms-compliant integration because a remembered workaround sounds
+cheaper. Measured on 2026-10-02, because the belief keeps circulating. Four requests, four answers:
+
+| What people remember as keyless | Measured |
+| --- | --- |
+| `https://unsplash.com/napi/search/photos?query=…` (the site's own internal API) | **307** to `https://unsplash.com/.within.website?redir=…` — an **Anubis proof-of-work bot gate** ("Making sure you're not a bot!") — and the challenge page is what a plain HTTP client gets. Not usable without running JavaScript. |
+| `https://source.unsplash.com/random` (the endpoint that WAS keyless) | **503 Application Error**, with `-L` and a browser User-Agent. Retired. |
+| `https://api.unsplash.com/search/photos?…` with no credential | **401** `{"errors":["OAuth error: The access token is invalid"]}` — the documented API wanting a key, exactly as §4.1 says. |
+| `halo-sigs/plugin-unsplash` (cited as proof that a key is unnecessary) | **It requires one.** `settings.yaml` declares an `accessKey` field labelled "Access Key" whose help points at `unsplash.com/developers`; the console does `const unsplash = createApi({ accessKey: accessKey.value })` — the official `unsplash-js` SDK — and every query is `enabled: computed(() => !!accessKey.value)`. Nothing in it fetches without a key. |
+
+**So there is nothing here to adopt, and no availability problem to solve.** Unsplash's key is free and issued
+immediately, which is the opposite of Pexels's pause (§4.2) — the reason this project needs a key is not a gate,
+and the integration that uses one also honours the two obligations §4.1 verified (hotlinking the returned URL
+and reporting the download). A keyless route, if one existed, would break the second of those, because the
+download report is an API call.
+
+**The generalisable rule, and it is the third form of §4.4's and §5's:** a remembered workaround is a fact to
+MEASURE, not to inherit. The endpoint that made the belief true was retired; the page that replaced it is a bot
+check; and the project cited as proof asks for a key in its own settings file.

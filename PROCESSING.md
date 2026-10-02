@@ -55,7 +55,7 @@ has tests.
 | Frontend tests | **160 passed** (vitest: 24 `frontmatter` + **65** `storageTargetForm` + 36 `workForm` + 35 `networkImageForm`; the three new ones are the `{bucket}` transcription block, which compares the window's verdicts against the crate's for nine endpoint shapes and asserts the refusal names both the placeholder and where it belongs) |
 | `clippy --workspace --all-targets` | **0 warnings** |
 | Site build verifier | **52/52 checks** — `site/` is untouched by §13.12, and the build was re-run rather than assumed; §J names the command behind every number |
-| Test matrix | **247 rows at `I`, 0 at `P`** (224 + 9 for §13.14, the two races it exposed and the live verification, + 1 for §5.12's re-verified Pexels pause, + 3 for §13.12 and the §5.10 members it closed: D166–D168, + 1 for §13.10's SSH/SFTP REMOVAL: D169, + 9 for the live GitHub verifications, the OSS addressing rule and its save-path half, the `x-amz-date` defect a live call found, the two live S3 round trips, and the signing round: D170–D178), out of **267** rows across tables A–G |
+| Test matrix | **248 rows at `I`, 0 at `P`** (224 + 9 for §13.14, the two races it exposed and the live verification, + 1 for §5.12's re-verified Pexels pause, + 3 for §13.12 and the §5.10 members it closed: D166–D168, + 1 for §13.10's SSH/SFTP REMOVAL: D169, + 10 for the live GitHub verifications, the OSS addressing rule and its save-path half, the `x-amz-date` defect a live call found, the two live S3 round trips, the signing round, and the measured death of Unsplash's keyless routes: D170–D179), out of **268** rows across tables A–G |
 | Shell commands registered | **87** (unchanged: §13.12 needed no new command, because the storage commands are generic over the kind) |
 | Installer | **`target/release/bundle/nsis/Veloct_0.1.0_x64-setup.exe`, 27.94 MiB (29,305,464 bytes), SIGNED** (`Valid`, `CN=VellowChire Code Signing, O=Veloct`, SHA-256, timestamped — a LOCAL self-signed certificate; §5.10.4 states exactly what that does and does not buy, and D178 records the experiment that showed the app INSIDE it still comes out `NotSigned`). **Rebuilt and re-probed FOUR times on 2026-10-02**: so the package carries §13.12, again after §13.10's SSH/SFTP target was REMOVED, a third time after the live-S3 fix moved `veloct-core` and therefore the committed sidecar LAUNCHER (so the packaged launcher is byte-identical to the committed one — verified by hash, §2.2), and a fourth for the signing round. Each build was followed by the WHOLE §2.10 sequence: silently installed to a temp directory, listed, **the INSTALLED launcher started the real Astro dev server and `GET http://localhost:4399/` returned 200**, then tree-killed (port free, checked with `State -eq 'Listen'`), uninstalled and the directory removed. **Still unsigned inside: `veloct-desktop.exe`, `veloct-astro-sidecar.exe` and `uninstall.exe`** — D178 explains why, and names Tauri's `certificateThumbprint` as the supported fix |
 
@@ -1349,6 +1349,13 @@ What REMAINS, each still a **stated limit** in the matrix row that covers it:
 This section began as a gap found by *verifying* rather than by guessing, written as a decision because
 the two things in conflict were both authoritative. **The decision has been taken, and the option chosen
 is the one that keeps the locked clause rather than the one that keeps the sample source.**
+
+**A keyless alternative was raised on 2026-10-02 and MEASURED rather than debated** — `docs/spec/03-upstream-facts.md`
+§7 and matrix row **D179**: the site's internal `napi` route now sits behind an Anubis bot gate, `source.unsplash.com`
+(the endpoint that really was keyless) answers 503, and `halo-sigs/plugin-unsplash` — cited as proof that a key is
+unnecessary — declares an `accessKey` setting and disables every query without one. **So nothing changed here, and the
+reason is not inertia:** Unsplash issues keys free and immediately, and the download report §4.1 verified is an API
+call that a keyless route could not make.
 
 **What was verified, live, on 2026-10-01** (full contracts in `docs/spec/03-upstream-facts.md` §4):
 
