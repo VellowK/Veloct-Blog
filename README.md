@@ -67,7 +67,7 @@ handoff.md           the locked product contract
 Three environment quirks are handled by `scripts/cargo.ps1`. Use it; a bare `cargo` will fail.
 
 ```powershell
-# Rust — the recorded total INCLUDES veloct-desktop: 1395 passed, 0 failed, 7 ignored.
+# Rust — the recorded total INCLUDES veloct-desktop: 1425 passed, 0 failed, 11 ignored.
 # The checklist is PROCESSING.md section 3.1; the runs behind the numbers are 02-test-matrix.md section J.
 powershell -ExecutionPolicy Bypass -File scripts/cargo.ps1 test --workspace
 powershell -ExecutionPolicy Bypass -File scripts/cargo.ps1 clippy --workspace --all-targets
@@ -81,6 +81,23 @@ npm.cmd run test:ui
 npm.cmd run build:ui
 cd site; npm.cmd install; npm.cmd run build; node scripts/verify-build.mjs   # 52/52 checks
 ```
+
+The desktop package, in the order that matters:
+
+```powershell
+# A green build is NOT evidence that a package works: install it and run it (PROCESSING.md section 2.10).
+powershell -ExecutionPolicy Bypass -File scripts/build-sidecar.ps1 -Check   # the committed launcher is current
+powershell -ExecutionPolicy Bypass -File scripts/build-installer.ps1        # builds and packages
+powershell -ExecutionPolicy Bypass -File scripts/sign-artifacts.ps1 -Installer   # signs the setup .exe
+```
+
+**What the signature does and does not buy** (PROCESSING.md section 5.10.4): the certificate is LOCAL and
+SELF-SIGNED, so it proves integrity and gives a publisher name once `src-tauri/signing/veloct-codesign.cer` is
+installed into a machine's Trusted Publishers — and it does **not** remove SmartScreen's warning on a machine
+that has not done that. That is what a purchased certificate is for, not code. **And it currently covers the
+SETUP only:** the app inside the package comes out `NotSigned`, because a build after signing overwrites it —
+measured, and `scripts/sign-artifacts.ps1`'s own documentation records it together with the supported fix
+(Tauri's `bundle.windows.certificateThumbprint`).
 
 Why the wrapper exists:
 

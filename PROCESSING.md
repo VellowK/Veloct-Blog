@@ -55,9 +55,9 @@ has tests.
 | Frontend tests | **160 passed** (vitest: 24 `frontmatter` + **65** `storageTargetForm` + 36 `workForm` + 35 `networkImageForm`; the three new ones are the `{bucket}` transcription block, which compares the window's verdicts against the crate's for nine endpoint shapes and asserts the refusal names both the placeholder and where it belongs) |
 | `clippy --workspace --all-targets` | **0 warnings** |
 | Site build verifier | **52/52 checks** — `site/` is untouched by §13.12, and the build was re-run rather than assumed; §J names the command behind every number |
-| Test matrix | **246 rows at `I`, 0 at `P`** (224 + 9 for §13.14, the two races it exposed and the live verification, + 1 for §5.12's re-verified Pexels pause, + 3 for §13.12 and the §5.10 members it closed: D166–D168, + 1 for §13.10's SSH/SFTP REMOVAL: D169, + 8 for the live GitHub verifications, the OSS addressing rule and its save-path half, the `x-amz-date` defect a live call found, and the two live S3 round trips: D170–D177), out of **266** rows across tables A–G |
+| Test matrix | **247 rows at `I`, 0 at `P`** (224 + 9 for §13.14, the two races it exposed and the live verification, + 1 for §5.12's re-verified Pexels pause, + 3 for §13.12 and the §5.10 members it closed: D166–D168, + 1 for §13.10's SSH/SFTP REMOVAL: D169, + 9 for the live GitHub verifications, the OSS addressing rule and its save-path half, the `x-amz-date` defect a live call found, the two live S3 round trips, and the signing round: D170–D178), out of **267** rows across tables A–G |
 | Shell commands registered | **87** (unchanged: §13.12 needed no new command, because the storage commands are generic over the kind) |
-| Installer | **`target/release/bundle/nsis/Veloct_0.1.0_x64-setup.exe`, 27.94 MiB** — **rebuilt THREE times on 2026-10-02**: once so the package carries §13.12, again after §13.10's SSH/SFTP target was REMOVED, and a third time after the live-S3 fix moved `veloct-core` and therefore the committed sidecar LAUNCHER (so the packaged launcher is byte-identical to the committed one — verified by hash, §2.2). Each build was followed by the WHOLE §2.10 sequence: silently installed to a temp directory, listed (`veloct-desktop.exe` 16.2 MB, `veloct-astro-sidecar.exe` 2.8 MB, `veloct-node.exe` 93.6 MB, `uninstall.exe`), **the INSTALLED launcher started the real Astro dev server and `GET http://localhost:4399/` returned 200**, then tree-killed (port free, checked with `State -eq 'Listen'`) and uninstalled with the directory removed. **Still unsigned** (§5.10.4) |
+| Installer | **`target/release/bundle/nsis/Veloct_0.1.0_x64-setup.exe`, 27.94 MiB (29,305,464 bytes), SIGNED** (`Valid`, `CN=VellowChire Code Signing, O=Veloct`, SHA-256, timestamped — a LOCAL self-signed certificate; §5.10.4 states exactly what that does and does not buy, and D178 records the experiment that showed the app INSIDE it still comes out `NotSigned`). **Rebuilt and re-probed FOUR times on 2026-10-02**: so the package carries §13.12, again after §13.10's SSH/SFTP target was REMOVED, a third time after the live-S3 fix moved `veloct-core` and therefore the committed sidecar LAUNCHER (so the packaged launcher is byte-identical to the committed one — verified by hash, §2.2), and a fourth for the signing round. Each build was followed by the WHOLE §2.10 sequence: silently installed to a temp directory, listed, **the INSTALLED launcher started the real Astro dev server and `GET http://localhost:4399/` returned 200**, then tree-killed (port free, checked with `State -eq 'Listen'`), uninstalled and the directory removed. **Still unsigned inside: `veloct-desktop.exe`, `veloct-astro-sidecar.exe` and `uninstall.exe`** — D178 explains why, and names Tauri's `certificateThumbprint` as the supported fix |
 
 Every command above exits **0** on success. That matters and is itself a recent fix — see §2.
 
@@ -1219,11 +1219,15 @@ to make a checkbox green.
 The remote-image half of the old §5.9 is **CLOSED** — see §5.11. `veloct-attach::network`'s shape-only
 model now has a caller, a searcher, a key store and a panel.
 
-### 5.10 Limits that REMAIN after this round (three items CLOSED here, and moved out of this list)
+### 5.10 Limits that REMAIN after this round (three items CLOSED here, a FOURTH closed later by signing)
 
 This list is corrected rather than extended: **three of the four limits it carried are CLOSED**, and a
 status document that keeps listing a closed limit is as wrong as one that claims a gap is filled
-(`docs/spec/02-test-matrix.md` §I is about exactly that). What came out, and what closed it:
+(`docs/spec/02-test-matrix.md` §I is about exactly that). **A later round (2026-10-02) closed the fourth as
+well — the unsigned installer — by signing the app and the package with a locally created certificate, and item
+4 records precisely what that does and does not buy.** What is still LIVE below is item 1 (a duplication that
+exists by nature, guarded by transcriptions rather than removed) and item 2 (evaluated and deliberately NOT
+closed, with its cost named). What came out, and what closed it:
 
 - ~~`StorageConfig::validate` has no production caller~~ — **CLOSED** by `f29dcda`: `save_target_config`
   calls it for an implemented kind before anything is written (D141), with unimplemented kinds
@@ -1312,12 +1316,33 @@ What REMAINS, each still a **stated limit** in the matrix row that covers it:
    still referenced, and no automatic Markdown rewrite — a user who asks for a cleanup is asking for it, and
    §13.8's split between the remote object and the user's record stands. If this ever bites in practice, the
    available middle step is to REPORT the reference count before the cleanup rather than to block it.
-4. **The installer is unsigned, and that is a packaging gap rather than a code one.** §5.7 is closed in
-   the sense that a package exists, installs and runs — **rebuilt and re-probed on 2026-10-02 (27.93 MiB)**, so
-   the current package really does carry §13.12; a user who runs it still meets SmartScreen. `bundleVCRuntime`
-   is also `false`. Neither is hidden in the UI, and neither is worth fixing without a certificate. **The
-   supporting facts are §3's `::1` probe note and `docs/research/tauri2-windows-report.md`'s `dumpbin`
-   suggestion for deciding `bundleVCRuntime` empirically** rather than by preference.
+4. ~~**The installer is unsigned**~~ — **CLOSED by signing, on 2026-10-02, and the honest half of that is what
+   a self-signed certificate does NOT do.** `scripts/sign-artifacts.ps1` creates a local code-signing
+   certificate, signs the app the user launches and then the setup `.exe`, and verifies both as **`Valid`**
+   (subject `CN=VellowChire Code Signing, O=Veloct`, SHA-256, timestamped; thumbprint and expiry are §1's to
+   state). **What it does:** proves the bytes were signed by the holder of that key, and gives Windows a
+   publisher name to show once the certificate is trusted on the machine. **What it does NOT do:** remove
+   SmartScreen's warning on a machine that has not installed `src-tauri/signing/veloct-codesign.cer` into its
+   Trusted Publishers, and it is **not** a substitute for a CA-issued certificate — a self-signed signature is
+   exactly as trustworthy as the route that `.cer` took. **Stated rather than implied: on a fresh machine this
+   is still an unknown publisher, and the fix for THAT is a purchased certificate, not code.**
+   **Three binaries are deliberately left unsigned, each for its own reason:** `veloct-node.exe` is a
+   third-party runtime this project redistributes — and **it already carries its own vendor signature**
+   (`Valid`, `CN=OpenJS Foundation`), so signing it would be a claim about someone else's binary;
+   `src-tauri/binaries/veloct-astro-sidecar-<triple>.exe` is the COMMITTED launcher, and §2.2's `-Check`
+   compares it **byte for byte** against a fresh `cargo build -p veloct-sidecar`, so signing it would break that
+   check permanently — a subtle interaction worth knowing before someone "completes" the signing; and
+   `bundleVCRuntime` stays `false`, which is a separate packaging fact §3's `::1` probe note and
+   `docs/research/tauri2-windows-report.md`'s `dumpbin` suggestion cover.
+   **AND THE PART AN EXPERIMENT CORRECTED, because the obvious assumption is wrong:** signing
+   `target/release/veloct-desktop.exe` and then rebuilding the installer leaves the INSTALLED app
+   **`NotSigned`**. Measured twice: the file verifies `Valid` before the rebuild and `NotSigned` after it. The
+   likely cause is that `target/release/<name>.exe` is a hard link to `target/release/deps/<name>-<hash>.exe`,
+   so writing the signature breaks the link and the next build copies the unsigned file back. **So the package
+   a user installs currently has a SIGNED setup and an UNSIGNED app**, and the supported way to change that is
+   Tauri's own `bundle.windows.certificateThumbprint` (+ `digestAlgorithm`, `timestampUrl`) in
+   `src-tauri/tauri.conf.json`, which signs during the build — deliberately NOT configured here, because a
+   thumbprint is machine-specific and would make the committed manifest unusable anywhere else.
 
 ### 5.11 DECIDED and IMPLEMENTED: §13.14 uses the two sources whose terms describe it, and refuses the third
 
@@ -1536,8 +1561,12 @@ test races (§2.13, §2.14) that had been passing by luck.
    `scripts/build-installer.ps1` after any change to `tauri.conf.json`, the sidecar binaries, the bundle
    inputs or `crates/veloct-sidecar`, and then INSTALL it — §2.10 is why a green build is not evidence
    that a package works. **Any touch to `crates/veloct-sidecar` invalidates the committed launcher, even a
-   test-only edit** (§2.2). Signing is the gap worth naming if this is ever distributed.
-7. **§5.10 lists FOUR remaining limits** — the two-language ruleset (now with TWO transcriptions beside
+   test-only edit** (§2.2). **Signing is now a STEP rather than a gap:** `scripts/sign-artifacts.ps1` creates a
+   local self-signed certificate and signs the setup `.exe`, which verifies `Valid` — and §5.10.4 with D178 state
+   exactly what that does and does not buy, including the measured fact that the app INSIDE the package still
+   comes out unsigned and that Tauri's `bundle.windows.certificateThumbprint` is the supported fix for it.
+7. **§5.10 lists the limits that REMAIN, and there are TWO live ones** — the two-language ruleset (now with
+   THREE transcriptions beside
    `storageTargetForm.ts::CRATE_RULE`: `tests/workForm.test.ts`'s ten shapes for `WorkMetadata::validate`
    and `tests/networkImageForm.test.ts`'s rules), the untested command WRAPPERS (four storage ones and
    **none of the works or image ones** — the ten works commands need an `AppState` only for four of them,
