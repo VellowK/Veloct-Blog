@@ -43,7 +43,10 @@ crates/
   veloct-storage     SQLite migrations, schema, repositories, rebuildable index
   veloct-content     content model, truth-source I/O, WIP rules, work import
   veloct-git         change detection, publish commits, release tags, conflict detection
-  veloct-process     sidecar supervision (ports, pids, restart, tree-kill)
+  veloct-process     sidecar supervision (ports, pids, restart, tree-kill), child liveness and exit codes
+  veloct-sidecar     the Astro launcher the app spawns: `dev` / `preview` hand over to Node,
+                     `serve <dir>` serves a built directory itself (the works preview)
+  veloct-logging     structured events, redaction at the source, rotation, the log page's backend
   veloct-release     release manifest, build inputs, target snapshot, fingerprint, publish
   veloct-deploy      logical targets with main/works sub-targets and adapters
   veloct-ai          providers, per-feature model mapping, global fallback
@@ -67,9 +70,12 @@ handoff.md           the locked product contract
 Three environment quirks are handled by `scripts/cargo.ps1`. Use it; a bare `cargo` will fail.
 
 ```powershell
-# Rust — the recorded total INCLUDES veloct-desktop: 1425 passed, 0 failed, 11 ignored.
+# Rust — the recorded total INCLUDES veloct-desktop: 1509 passed, 0 failed, 16 ignored.
 # The checklist is PROCESSING.md section 3.1; the runs behind the numbers are 02-test-matrix.md section J.
-powershell -ExecutionPolicy Bypass -File scripts/cargo.ps1 test --workspace
+# Sum the `test result:` lines yourself: `--no-fail-fast` makes every binary report its own, and the
+# 47 of them add up to 1509/0/16. The 16 ignored are 7 real-process tests and 9 live-vendor ones,
+# each named in PROCESSING.md section 1.
+powershell -ExecutionPolicy Bypass -File scripts/cargo.ps1 test --workspace --no-fail-fast
 powershell -ExecutionPolicy Bypass -File scripts/cargo.ps1 clippy --workspace --all-targets
 
 # Frontend and site (npm.ps1 is blocked here, so use npm.cmd).
@@ -77,7 +83,8 @@ powershell -ExecutionPolicy Bypass -File scripts/cargo.ps1 clippy --workspace --
 # exits 1 with "Missing script: build". The workbench builds with `build:ui`; the Astro template
 # builds inside site/, which has its own package.json.
 npm.cmd install
-npm.cmd run test:ui
+npm.cmd run test:ui          # 181 passed (5 files: frontmatter 24, storageTargetForm 51, workForm 40,
+                             # networkImageForm 50, siteInstallForm 16)
 npm.cmd run build:ui
 cd site; npm.cmd install; npm.cmd run build; node scripts/verify-build.mjs   # 52/52 checks
 ```
@@ -87,17 +94,28 @@ The desktop package, in the order that matters:
 ```powershell
 # A green build is NOT evidence that a package works: install it and run it (PROCESSING.md section 2.10).
 powershell -ExecutionPolicy Bypass -File scripts/build-sidecar.ps1 -Check   # the committed launcher is current
-powershell -ExecutionPolicy Bypass -File scripts/build-installer.ps1        # builds and packages
-powershell -ExecutionPolicy Bypass -File scripts/sign-artifacts.ps1 -Installer   # signs the setup .exe
+powershell -ExecutionPolicy Bypass -File scripts/build-installer.ps1        # builds, packages, and lets the BUNDLER sign
+# CHECK the artefact rather than assuming it: the final setup signing talks to a timestamp server, and a
+# transient failure exits NON-ZERO while leaving an UNSIGNED setup .exe on disk (PROCESSING.md section 2.15.1).
+powershell -ExecutionPolicy Bypass -File scripts/sign-artifacts.ps1 -Installer -Check
 ```
 
 **What the signature does and does not buy** (PROCESSING.md section 5.10.4): the certificate is LOCAL and
 SELF-SIGNED, so it proves integrity and gives a publisher name once `src-tauri/signing/veloct-codesign.cer` is
 installed into a machine's Trusted Publishers — and it does **not** remove SmartScreen's warning on a machine
-that has not done that. That is what a purchased certificate is for, not code. **And it currently covers the
-SETUP only:** the app inside the package comes out `NotSigned`, because a build after signing overwrites it —
-measured, and `scripts/sign-artifacts.ps1`'s own documentation records it together with the supported fix
-(Tauri's `bundle.windows.certificateThumbprint`).
+that has not done that. That is what a purchased certificate is for, not code.
+
+**The package is signed, and so is what is inside it.** This used to read "it currently covers the SETUP
+only": signing `target/release/veloct-desktop.exe` on its own did not survive packaging, so the app inside
+came out `NotSigned`. The supported fix is now IN PLACE rather than merely named —
+`scripts/build-installer.ps1` discovers the certificate (its `-SignThumbprint`, then `VELOCT_SIGN_THUMBPRINT`,
+then the store by subject) and passes Tauri's own `bundle.windows.certificateThumbprint` (plus
+`digestAlgorithm` and a timestamp server) to the BUNDLER, so the signature is applied during the build.
+Verified by installing the package and checking what LANDS: `veloct-desktop.exe`, `veloct-astro-sidecar.exe`
+and `uninstall.exe` all verify `Valid` under `CN=VellowChire Code Signing, O=Veloct`, and `veloct-node.exe`
+keeps its own vendor signature `CN=OpenJS Foundation`. The COMMITTED launcher stays unsigned on purpose,
+because `build-sidecar.ps1 -Check` compares it byte for byte against a fresh unsigned build (PROCESSING.md
+section 2.2).
 
 Why the wrapper exists:
 

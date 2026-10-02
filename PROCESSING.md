@@ -51,13 +51,13 @@ has tests.
 |---|---|
 | Last commit these numbers describe | **`8ba4219` plus THIS round's change set**, which carries §13.12's Lsky Pro adapter (D166–D167) and is recorded in §J. `8ba4219` itself is **`585de01`** "Verify Unsplash against the LIVE service, the first real remote call in this repository" plus a documentation-only change, and all six of §3.1's checks were reproduced on it before this round began (§1.2) |
 | Working tree | **`git status --short` was EMPTY at `8ba4219`**, where the previous handover's numbers were reproduced; **this round's change set was NOT committed when its own run was taken**, so the numbers below are reproducible from the change set the commit carries rather than from a sha — §1.2 records why that distinction is written down rather than glossed. `git diff --stat 585de01 HEAD` was `PROCESSING.md` ONLY until this round; **§13.12's adapter is the first CODE change since `585de01`**, and it moves that line. Both the works and network-image rounds were FIRST measured on unclean trees, which §1.2 records rather than hides; both were then re-run on their commits, and the network-image re-run exposed two real test races (§2.13, §2.14) |
-| Rust tests | **1458 passed, 0 failed, 12 ignored** (+63 over `8ba4219`'s 1395: `veloct-attach` +31, `veloct-desktop` +16 (§5.10.2 item 2's five State-command tests included), `veloct-core` +1, `veloct-s3` +4, and §5.10.1's two new validation commands +11 — 7 for the storage draft, 4 for work metadata; **the workspace is 17 members — 16 crates plus `src-tauri`** — and its per-crate rows in §J sum to 1457, the 1458th being the one `live_providers` test that runs with no key and no network). The 12 ignored are the 4 real-process tests and the 8 live-vendor ones: the 3 real-process integration tests, 1 each in `publish_integration` and `end_to_end_release`, **3 in `crates/veloct-attach/tests/live_providers.rs`** (Unsplash search, Pexels search, and the ready-to-run TOPIC case added with the browse mode — written and never run, because no Unsplash key was available), **2 in `crates/veloct-attach/tests/live_github.rs`** (attachment round trip, §17.2's refusal), **2 in `crates/veloct-backup/tests/live_github.rs`** (the backup round trip and the same privacy rule), and **2 in the S3 pair: `crates/veloct-attach/tests/live_s3.rs` and `crates/veloct-backup/tests/live_s3.rs`** — a vendor's uptime must never gate `cargo test` |
-| Frontend tests | **165 passed** (vitest: 24 `frontmatter` + **51** `storageTargetForm` + **40** `workForm` + 50 `networkImageForm`). **The count FELL from 175, and that is the point of the round:** the four transcription tables are DELETED, and comparing two hand-written copies of a rule took more cases than asking the one authority does. The window no longer contains the rule text at all — it displays the crate's own message (D184) |
+| Rust tests | **1509 passed, 0 failed, 16 ignored** (+51 over the previous recorded run's 1458, measured on THIS tree rather than inherited — `powershell -ExecutionPolicy Bypass -File .\scripts\cargo.ps1 test --workspace --no-fail-fast`, whose 47 `test result:` lines sum to exactly 1509/0/16). **The five rounds that landed since the previous numbers, in order, and the crate each one moved** (diffed test-function by test-function against `c588c57`, the release commit that carried those numbers): `330c07b` the real OS process spawner — `src-tauri` +2 (one in the default suite, one `#[ignore]`d), plus the doubled "preview preview" repaired; `ae041cf`+`f6acc54` the Halo-style interface sample (no test moved: a shell and `DESIGN.md` tokens on the Attachments page); `ed519bd` the launcher's static `serve` mode — **`veloct-sidecar` +20**, the one crate whose whole test surface this round changed, plus `src-tauri` +2; `e6fdb83` the one-click `site/` install — `src-tauri` +29 (three real-process integration tests in the new `tests/site_install.rs`, one of them `#[ignore]`d) and the frontend +16; and the liveness fix in the same commit — **`veloct-process` +1**, the only crate-visible change outside `src-tauri` (`supervisor::a_handle_that_never_saw_an_exit_code_says_none_rather_than_zero`). **The workspace is 17 members — 16 crates plus `src-tauri`** — and the arithmetic is stated rather than smoothed: +55 test FUNCTIONS were added (`veloct-process` +1, `veloct-sidecar` +20, `src-tauri` +34) while the suite's own passed count moved +51 and its ignored count +4 (12 → 16), because 4 of the new tests are `#[ignore]`d and the two counters measure different things; the per-crate rows in §J carry the suite's own numbers. The 16 ignored are the 7 real-process tests and the 9 live-vendor ones: **3 in `src-tauri/tests/preview_wiring.rs`** (the real Astro dev server, `start_site_preview`, and the works preview — the first two added by `330c07b`, the third by `ed519bd`), 1 each in `publish_integration` and `end_to_end_release`, 1 in the new **`src-tauri/tests/site_install.rs`** (`the_real_npm_install_puts_the_astro_cli_where_the_build_looks`, which downloads `astro` from the real registry — run once by the implementer, 323.50 s, exit 0, and recorded rather than repeated), **3 in `crates/veloct-attach/tests/live_providers.rs`** (Unsplash search, Pexels search, and the TOPIC case — the first and third have since run live; the middle one cannot, because Pexels has paused key issuance), **2 in `crates/veloct-attach/tests/live_github.rs`** (the attachment round trip and §17.2's refusal), **2 in `crates/veloct-backup/tests/live_github.rs`** (the backup round trip and the same privacy rule), and **2 in the S3 pair: `crates/veloct-attach/tests/live_s3.rs` and `crates/veloct-backup/tests/live_s3.rs`** — a vendor's uptime must never gate `cargo test` |
+| Frontend tests | **181 passed** (vitest: 24 `frontmatter` + **51** `storageTargetForm` + **40** `workForm` + 50 `networkImageForm` + **16 `siteInstallForm`**). **Read the two moves separately, because they point in opposite directions.** The count FELL 175 → 165 in the round that DELETED the four transcription tables — comparing two hand-written copies of a rule took more cases than asking the one authority does, and the window no longer contains the rule text at all (D184). It then ROSE 165 → 181 because `e6fdb83`'s one-click install added `tests/siteInstallForm.test.ts` (16 tests over `src/lib/siteInstall.ts`), which is a DIFFERENT shape of test: those assertions are UI affordances the crate cannot own — which of the five states (`idle`/`running`/`succeeded`/`failed`/`cancelled`) renders which sentence, and that "no system npm" is an explanation rather than a disabled button. So the net 165 → 181 is +16 new cases, not the tables coming back |
 | `clippy --workspace --all-targets` | **0 warnings** |
 | Site build verifier | **52/52 checks** — `site/` is untouched by §13.12, and the build was re-run rather than assumed; §J names the command behind every number |
-| Test matrix | **253 rows at `I`, 0 at `P`** (224 + 9 for §13.14, the two races it exposed and the live verification, + 1 for §5.12's re-verified Pexels pause, + 3 for §13.12 and the §5.10 members it closed: D166–D168, + 1 for §13.10's SSH/SFTP REMOVAL: D169, + 15 for the live GitHub verifications, the OSS addressing rule and its save-path half, the `x-amz-date` defect a live call found, the two live S3 round trips, the signing rounds, the measured death of Unsplash's keyless routes, the reference reading of the suggested plugin, the browse mode adopted from it, the LIVE run of Unsplash's topic endpoints, and the removal of the two-language ruleset: D170–D184), out of **273** rows across tables A–G |
-| Shell commands registered | **89** (`87` + the two §5.10.1 validation commands, `validate_storage_target` and `validate_work_metadata`, both registered and asserted by `include_str!("lib.rs")` tests) |
-| Installer | **`target/release/bundle/nsis/Veloct_1.0.0_x64-setup.exe`, 28.01 MiB (29,374,472 bytes), SHA-256 `CDB98F4409247BC2F54CEA3E84B822DB05FEA42960AE29331989FBADBAE63773`, SIGNED — and so is everything INSIDE it.** All four installed binaries verify **`Valid`**: `veloct-desktop.exe`, `veloct-astro-sidecar.exe` and `uninstall.exe` under `CN=VellowChire Code Signing, O=Veloct`, and `veloct-node.exe` under its own vendor signature `CN=OpenJS Foundation`. Built for 1.0.0 on 2026-10-02 by `scripts/build-installer.ps1`, which discovers the certificate and lets the BUNDLER sign (D183, §2.15). The whole §2.10 sequence was run on THIS artefact: installed to a temp directory, all four statuses checked, the INSTALLED launcher served `GET http://localhost:4399/` **200**, the port came free after a tree-kill (checked with `State -eq 'Listen'`), and the uninstall removed the directory. **And a signed build no longer dirties the tree:** `build-sidecar.ps1 -Check` is green afterwards, which is the assertion, because Tauri signs the committed external binary in place and the script now restores it. **A CA-issued certificate is the only thing a fresh machine would still need in order not to call this an unknown publisher** |
+| Test matrix | **257 rows at `I`, 0 at `P`** (253 + **4 for this round**: the real process spawner and the wiring test that fails if the app is wired to a spawner that cannot spawn, the works `serve` mode with its path-traversal and `Host` hardening, the one-click install and its five UI states, and the `ShellChild::is_alive` liveness fix — **D185–D188**), out of **277** rows across tables A–G (D 186 → 190; A 23, B 14, C 12, E 21, F 6, G 11 unchanged). Every earlier total in this row's history is kept above rather than tidied away, because what a number USED to be is a fact about the repository |
+| Shell commands registered | **94** (`91` + `e6fdb83`'s three `commands::site_install_*`: `install_site_dependencies`, `site_install_status`, `cancel_site_install`, which turn the "no Astro CLI in `<project>/site/node_modules/astro`; run the site's dependency install first" message into a button; the previous count was itself `87` + the two §5.10.1 validation commands, `validate_storage_target` and `validate_work_metadata`, both registered and asserted by `include_str!("lib.rs")` tests). Counted from `tauri::generate_handler![…]` in `src-tauri/src/lib.rs`, not from a doc comment |
+| Installer | **`target/release/bundle/nsis/Veloct_1.0.0_x64-setup.exe`, 28.06 MiB (29,425,272 bytes), SHA-256 `EC33D1ACF1CD60ABEC537FD6730833ADC228F448FF0E7FD5A030E4F2370C11DE`, SIGNED — and so is everything INSIDE it.** Re-measured on the tree this row describes, and it MOVED: the previously recorded artefact was 28.01 MiB (29,374,472 bytes) with SHA-256 `CDB98F44…63773`, and the number is restated rather than left, because an installer hash that no longer matches the file on disk is exactly the kind of stale fact this file exists to prevent. All four installed binaries verify **`Valid`**: `veloct-desktop.exe` (16,350,656 bytes), `veloct-astro-sidecar.exe` (3,004,864 bytes — the SIGNED copy, which is why it is larger than the 2,997,248-byte UNSIGNED launcher `-Check` compares against, §2.15) and `uninstall.exe` (93,896 bytes) under `CN=VellowChire Code Signing, O=Veloct`, and `veloct-node.exe` (93,580,104 bytes) under its own vendor signature `CN=OpenJS Foundation`. Built for 1.0.0 on 2026-10-02 by `scripts/build-installer.ps1`, which discovers the certificate and lets the BUNDLER sign (D183, §2.15). The §2.10 sequence was re-run on THIS artefact for this correction: silently installed to a temp directory, all four statuses checked, and the uninstall removed the directory. **The live half of that sequence was recorded on the superseded 28.01 MiB artefact and is kept rather than inherited:** the INSTALLED launcher served `GET http://localhost:4399/` **200**, and the port came free after a tree-kill (checked with `State -eq 'Listen'`). **And a signed build no longer dirties the tree:** `build-sidecar.ps1 -Check` is green afterwards, which is the assertion, because Tauri signs the committed external binary in place and the script now restores it. **A CA-issued certificate is the only thing a fresh machine would still need in order not to call this an unknown publisher** |
 
 Every command above exits **0** on success. That matters and is itself a recent fix — see §2.
 
@@ -313,6 +313,75 @@ The many `*.log` files in the working directory are this session's captured veri
 `.gitignore` line 25 ignores `*.log`, so they are NOT part of the change set; they are safe to read
 (they are the raw evidence for the numbers in §1) and safe to delete.
 
+**FIVE further rounds landed after the 1.0.0 release was built, and they are the rounds §1's numbers now
+describe.** They are written here in the order they landed, because each one found the next:
+
+12. **`330c07b` — the application got a REAL process spawner, because it had never had one.** A user
+    reported "no preview spawner is configured, so the main site preview cannot start"; `lib.rs` was
+    installing `Arc::new(NullSpawner)`, and a grep proved there was no real OS `ShellSpawner` anywhere in
+    the workspace — only that stub and a test-only `FakeSpawner`. **So no preview had ever worked in a
+    shipped build, and the H4 row claiming one rested on tests that INJECT a fake spawner.** `state.rs`
+    gained `OsSpawner` (a real `std::process::Command` child, stdout/stderr PIPED and drained by reader
+    threads into a bounded tail, `ShellChild` implementing `ChildHandle`), `lib.rs` now chooses the spawner
+    in ONE function `application_state()` that `run` itself calls, and the doubled "preview preview" message
+    (a role label that already ended in "preview" interpolated into a sentence that added another) is
+    repaired. `src-tauri/tests/preview_wiring.rs` is the regression NET, and it was PROVED by putting
+    `NullSpawner` back: both it and the unit test then fail, naming the wrong spawner. **`c588c57`'s
+    installer probe had started `veloct-astro-sidecar.exe` BY HAND and never through this path, which is
+    the hole in the release verification that this round exposes.**
+13. **`ae041cf` + `f6acc54` — the owner's design reference is TRACKED, and the first interface sample is on
+    the Attachments page.** `DESIGN.md` had been swept in by an accident of an earlier commit; `ae041cf`
+    records it deliberately. `f6acc54` applies it: Halo's console STRUCTURE with `DESIGN.md`'s visual
+    tokens, on the Attachments page only. **No Rust test moved and no frontend test moved** — this is a
+    shell and a token set, and saying so is more honest than implying coverage it does not have.
+14. **`ed519bd` — the launcher gained its static `serve` mode, because the works preview sent it a command
+    it refused.** `330c07b` recorded rather than fixed the second half of the same defect: `start_works_preview`
+    ran `["serve", "dist/works", …]` against a launcher that accepted only `dev` and `preview`, so the works
+    role failed AT THE LAUNCHER instead of at the spawner. `crates/veloct-sidecar/src/serve.rs` (NEW, 15
+    tests in its own module, against the 22 the launcher's `lib.rs` gained for `SERVE_COMMAND`, `is_serve_command`
+    and `is_served_command` — the crate went 17 → 37 test functions) is a real static file server with the isolation §10.4 requires — loopback `Host` only, no target
+    that leaves the root, GET/HEAD only — and it deliberately depends on neither the bundled Node nor the
+    site's `node_modules`, because `dist/works` is build output a machine may be able to serve without ever
+    having installed the site's dependencies. **The committed launcher was rebuilt and committed with it**
+    (§2.2), taking it from 2 801 152 to **2 997 248 bytes**.
+15. **`e6fdb83` — one-click install of a project's `site/` dependencies, and the liveness defect that would
+    have broken it.** A user hit "no Astro CLI in `<project>/site/node_modules/astro; run the site's
+    dependency install first" — correct and actionable, and still a console. `resolve_npm()` checks
+    `VELOCT_NPM`, then scans `PATH` for `npm.cmd`/`npm.exe`/`npm.bat`, and the install runs through the
+    EXISTING `OsSpawner`, so output capture, tree-kill and the supervision rules all apply; the Rust side
+    holds a lock across check, spawn and store so a double click cannot start two `npm`s. The 发布 page
+    renders all five states (`idle`/`running`/`succeeded`/`failed`/`cancelled`) through `src/lib/siteInstall.ts`
+    and `tests/siteInstallForm.test.ts` (16 tests), and a machine with no npm is shown an EXPLANATION
+    instead of a button that must fail. **AND IT FOUND A DEFECT IN THE PREVIOUS ROUND'S WORK, which is the
+    part worth reading:** `state.rs`'s `ShellChild::is_alive` cached the RUNNING answer and returned early,
+    so once a child had been seen alive **its death was invisible for ever** — `try_wait` was never called
+    again. Two consequences, both silent: the preview supervisor's **crash detection could never fire**, and
+    this install would have reported "running" for ever, because the death and the exit code are learned
+    from that same call. Fixed to remember only TERMINAL answers, with a real-process test that polls a live
+    child, lets it die, and asserts both the death and the exit code
+    (`state::a_real_childs_death_and_exit_code_are_observed_on_every_poll`). **That is a behaviour change
+    outside this feature's own surface, hence recorded rather than folded in.**
+
+The paths these five rounds changed:
+
+```text
+crates/veloct-process/src/supervisor.rs         ChildHandle::exit_code (defaulted) + its honest None (e6fdb83; 330c07b only moved a doc comment here)
+crates/veloct-sidecar/src/serve.rs              NEW  the static file server: the works preview's origin (15 tests)
+crates/veloct-sidecar/src/lib.rs                SERVE_COMMAND, is_serve_command, is_served_command, parse_serve, the third mode's contract
+crates/veloct-sidecar/src/main.rs               the three-mode dispatch, before Node is resolved
+src-tauri/src/state.rs                          OsSpawner, ShellChild, resolve_launcher, resolve_npm, the install run
+src-tauri/src/lib.rs                            application_state(), OsSpawner installed, 3 new registrations (94 commands)
+src-tauri/src/commands.rs                       install_site_dependencies, site_install_status, cancel_site_install
+src-tauri/tests/preview_wiring.rs               NEW  the wiring net + 3 real-process tests
+src-tauri/tests/site_install.rs                 NEW  the install's real process + 1 #[ignore]d real npm run
+src/lib/siteInstall.ts, tests/siteInstallForm.test.ts  NEW  the window's decisions and their 16 tests (publishBlockedReason,
+                                                describeSiteInstall, npmSourceLabel, siteInstallStateLabel)
+src/PublishPanel.tsx, src/App.tsx, src/lib/api.ts     the panel that meets the error where it happens
+DESIGN.md                                       the owner's design reference, now tracked on purpose
+crates/veloct-sidecar/.../veloct-astro-sidecar-<triple>.exe   REBUILT and committed (2 801 152 → 2 997 248 bytes)
+docs/spec/02-test-matrix.md, PROCESSING.md, README.md   D185–D188, §1, §2.15.1, the recorded totals
+```
+
 ### 1.2 The numbers were measured on an UNCLEAN tree — twice, and one of the two has since been CONFIRMED
 
 **The works round** was verified **before** its commit, so `git status --short` was not empty at the
@@ -412,6 +481,16 @@ it. So the honest rule is **"any touch to `crates/veloct-sidecar` OR to anything
 `veloct-core` is the crate most likely to be edited for an unrelated reason. The launcher was rebuilt
 (2.67 MB) and re-checked green in the same round; the installer was rebuilt with it, so the packaged launcher
 and the committed one are the same bytes.
+
+**Both of those byte counts are historical, and the last sentence stopped being true for a stated
+reason.** `ed519bd` gave the launcher its third mode (the static `serve` the works preview uses), which
+took it to **2 997 248 bytes (2.86 MB)** — and a SIGNED build then makes the packaged copy
+**3 004 864 bytes**, because Tauri signs the external binary while packing it. **That divergence is the
+designed one, not staleness:** `build-sidecar.ps1 -Check` compares the COMMITTED file against a fresh
+UNSIGNED `cargo build`, and the build script restores the committed copy after every signed build, so
+the repository keeps the 2 997 248-byte file and the PACKAGE keeps the signed 3 004 864-byte one
+(§2.15, D183, §1's Installer row). A signed launcher can never match a fresh unsigned build, which is
+exactly why it is deliberately not signed in the repository.
 
 ### 2.3 `VeloctError`'s hint is not in its `Display`
 
@@ -718,7 +797,9 @@ found by re-running a suite that had already been recorded green.
   itself and `nsis_tauri_utils.dll` from GitHub, which is why it needs the network once.
 - **The pinned Node runtime is fetched, not committed** (`scripts/fetch-node.ps1`, pin in
   `scripts/node-runtime.toml`, 89 MB, hash-verified against Node's own `SHASUMS256.txt`). The
-  2.66 MB launcher IS committed. If `src-tauri/binaries/veloct-node-*.exe` is missing, run the
+  launcher IS committed — **2.86 MB (2 997 248 bytes) since `ed519bd` added the `serve` mode; it was
+  2.66 MB / 2 801 152 bytes before that** — and it compares BYTE FOR BYTE against a fresh build, which
+  is why a signed build must restore it (§2.2). If `src-tauri/binaries/veloct-node-*.exe` is missing, run the
   fetch script.
 - **`git show <blob>` mangles binary output** through line-ending conversion and reports a wrong
   size. Use `git cat-file -s` / `git hash-object` to compare a committed binary with disk.
@@ -749,10 +830,10 @@ found by re-running a suite that had already been recorded green.
 ### 3.1 The commands to run before claiming anything
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\cargo.ps1 test --workspace     # exit 0, 1395 passed, 0 failed, 7 ignored
+powershell -ExecutionPolicy Bypass -File .\scripts\cargo.ps1 test --workspace --no-fail-fast   # exit 0, 1509 passed, 0 failed, 16 ignored
 powershell -ExecutionPolicy Bypass -File .\scripts\cargo.ps1 clippy --workspace --all-targets   # exit 0, 0 warnings
 powershell -ExecutionPolicy Bypass -File .\scripts\build-sidecar.ps1 -Check       # exit 0, the committed launcher matches a fresh build
-cmd /c "npm.cmd run test:ui"                                                       # 152 passed
+cmd /c "npm.cmd run test:ui"                                                       # 181 passed
 cmd /c "npm.cmd run build:ui"                                                      # tsc clean, exit 0
 # in site/:
 $env:VELOCT_BUILD_TIME="2026-01-01T12:00:00.000Z"; npm.cmd run build; node scripts/verify-build.mjs   # 52/52
@@ -764,7 +845,7 @@ run). Run it when `tauri.conf.json`, the sidecar binaries or the bundle inputs c
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\build-installer.ps1
-# -> target/release/bundle/nsis/Veloct_0.1.0_x64-setup.exe
+# -> target/release/bundle/nsis/Veloct_1.0.0_x64-setup.exe
 # verify what the package actually CONTAINS, without touching the real install:
 #   Start-Process <setup.exe> -ArgumentList '/S',"/D=$env:TEMP\veloct-probe" -Wait
 #   Get-ChildItem $env:TEMP\veloct-probe      # veloct-desktop.exe, veloct-astro-sidecar.exe, veloct-node.exe
@@ -845,9 +926,9 @@ by clause, and each row names the evidence it requires.
 | `veloct-content` | Content model, WIP lifecycle, paragraph ids, `create_from_source`, works import/metadata, **and `PREVIEW_PREFIX`: §10.1's `preview/` is a SIBLING of the body, which is what an import now produces** |
 | `veloct-git` | Change sets, publish commits, release tags, worktrees |
 | `veloct-logging` | `[info]/[warning]/[error]`, mandatory redaction AT CONSTRUCTION, rotation, log page |
-| `veloct-process` | Preview supervisor, port reservation, readiness probes |
+| `veloct-process` | Preview supervisor, port reservation, readiness probes, **and `ChildHandle::exit_code` — a defaulted method added for the one child that is not a preview, where "no longer alive" cannot tell success from failure (`e6fdb83`). Its answer is meaningful only AFTER `is_alive` has reported `false`, because that call is what reaps the child; `None` therefore means "not observed" and never "exited 0"** |
 | `veloct-release` | `release.json` (no commit sha), frozen inputs, deterministic fingerprint, one build → two roots, **`publish()`** = freeze → build → commit → tag |
-| `veloct-sidecar` | The Astro launcher: resolves the bundled Node from the sidecar path, NEVER `PATH` (ADR-0005), **under BOTH names a bundle can give it** (§2.10) |
+| `veloct-sidecar` | The Astro launcher: resolves the bundled Node from the sidecar path, NEVER `PATH` (ADR-0005), **under BOTH names a bundle can give it** (§2.10). **THREE modes, not two** (`ed519bd`): `dev` and `preview` hand the process to the site's own Astro CLI through the bundled Node, while **`serve <directory>` serves an already-built directory of static files from THIS process with no Node runtime and no `node_modules` involved** — that is the works preview, and it is deliberately not an Astro command, because `dist/works` is build output (`veloct_sidecar::serve`, 24 tests, incl. path-traversal refusal and a loopback-only `Host` rule) |
 | `veloct-deploy` | Three logical targets × main/works sub-targets, Cloudflare adapter, manual exports, roll-up (`partial` vs `failed`), re-send, **SEO push lifecycle** |
 | `veloct-ai` | Providers, per-feature model mapping, CANCELLED-safe fallback, context, apply plans, **the page creator**, **model discovery + a connection test whose failure message is redacted at the source** (§2.8) |
 | `veloct-attach` | Three independent state axes, reference sets, dedup, cache pool, upload transaction, **GitHub, S3, the local-directory attachment targets (`StorageKind::Local`, §13.10 where the server is this machine) and §13.12's Lsky Pro target (`LskyStore`, over the contract read from the vendor's own shipped API page and source — D166)**, **§13.8's explicit `delete_remote_object` — the only path that removes a remote object**, the canonical MIME map, **and §13.14's two network image providers (`network::providers`): Unsplash's and Pexels's search contracts, their OPPOSITE auth headers, the credit line each one requires, and Unsplash's mandatory download report — with Pixabay listed and refused in its own words** |
@@ -866,12 +947,14 @@ by clause, and each row names the evidence it requires.
   so a `localhost` probe answers and a `127.0.0.1` one does not — see §3, and D64's probe passed
   `--host 127.0.0.1` explicitly, which is why that stayed invisible.
 - **A real NSIS package was built, silently INSTALLED, listed, probed and uninstalled** (§2.10):
-  `Veloct_0.1.0_x64-setup.exe` is **27.93 MiB** and installs `veloct-desktop.exe`,
+  `Veloct_1.0.0_x64-setup.exe` is **28.06 MiB** and installs `veloct-desktop.exe`,
   `veloct-astro-sidecar.exe`, `veloct-node.exe` and `uninstall.exe`; the INSTALLED launcher launches the
   real Astro dev server, and `GET http://localhost:<port>/` returns **200** from a `veloct-node` listener.
   This is the one §5.7 claim that a `cargo build` could not have made. **Rebuilt and re-probed twice on
   2026-10-02** (so the package carries §13.12, and then so it no longer offers a kind the contract has
-  removed), with the whole sequence re-run rather than assumed each time.
+  removed), with the whole sequence re-run rather than assumed each time; **the size in this bullet was
+  27.93 MiB at `Veloct_0.1.0` and moved to 28.06 MiB at 1.0.0 once the package carried signed binaries —
+  §1's table is the current number, and this one is kept because it is what the 0.1.0 probes measured.**
 - **A real vendor was WATCHED answering on 2026-10-02, in FIVE directions**: a live `put`/`head`/`delete` round
   trip through §13.13's attachment target against `api.github.com` (D170), §17.2's privacy refusal against a real
   PUBLIC repository (D171), the §17.4 BACKUP target's own `upload`/`list`/`remove` round trip once that
@@ -881,6 +964,16 @@ by clause, and each row names the evidence it requires.
   this repository has WRITTEN to a third party. **And the S3 pair found a shipped defect on its first run**
   (D174): `x-amz-date` carried a real clock's sub-second digits, so no S3 request this application made could
   have succeeded anywhere — see §5.8, which is where that gap was already written down as the biggest one.
+- **The PREVIEW is now on this list, and until `330c07b` it could not honestly have been.** The old
+  evidence for it was a sidecar smoke test that started `veloct-astro-sidecar.exe` **by hand**, which
+  exercises none of the application's own wiring — and the wiring was the defect: `lib.rs` installed
+  `NullSpawner`, so **no preview had ever worked in a shipped build** while the suite stayed green.
+  Three `#[ignore]`d real-process tests now drive the application's OWN state (`application_state()`,
+  the function `run` calls): the real Astro dev server through `start_site_preview`, the same through
+  the supervisor with `OsSpawner`, and the works preview through `start_works_preview` — each requiring
+  `Running`, a port that answers, real served BYTES in the works case, and a port that stops answering
+  after shutdown (D185–D186). The structural net is `the_shipped_application_is_wired_to_a_spawner_that_spawns`,
+  which runs in the DEFAULT suite and fails if the shipped state is ever wired to a spawner that cannot spawn.
 - **A real Astro build emits the works poster**: `dist/site/work-previews/demo-counter/screenshot.webp`
   was compared BYTE FOR BYTE with the work's own `preview/screenshot.webp` (52/52 verifier checks).
 - `publish` runs a real Astro build, emits `dist/site` + `dist/works`, writes `release.json`,
@@ -895,16 +988,16 @@ believing any summary, including this one. Judged against the evidence that exis
 
 | # | Requirement | Honest verdict |
 |---|---|---|
-| H1 | Create and manage a project | **done** — `ProjectService`, 82 shell commands |
-| H2 | Markdown edit, autosave 2 s / 30 s / save-on-close | **done** — `src/lib/autosave.ts`, 117 frontend tests |
+| H1 | Create and manage a project | **done** — `ProjectService`, **94** shell commands (§1) |
+| H2 | Markdown edit, autosave 2 s / 30 s / save-on-close | **done** — `src/lib/autosave.ts`, **181** frontend tests (§1) |
 | H3 | SQLite index rebuilds | **done** — `veloct-storage::rebuild` |
-| H4 | Real Astro live preview, same project as production | **done** — sidecar smoke test: HTTP 200, article route 200 |
+| H4 | Real Astro live preview, same project as production | **done, and it is now TRUE OF THE SHIPPED BUILD rather than only of a test.** The old verdict here read "sidecar smoke test: HTTP 200, article route 200" — and that probe started `veloct-astro-sidecar.exe` **by hand**, through no application code at all. `330c07b` found what that hid: `src-tauri/src/lib.rs` installed `state::NullSpawner`, whose every `spawn_preview` returns an error, so **no preview had ever worked in a shipped build** while the suite stayed green, because every test injected a fake spawner or built its own `PreviewSpec` and never asked what the APPLICATION was wired to. `OsSpawner` is now installed by `lib.rs::application_state()` — the very function `run` calls — the doubled "preview preview" message is repaired, and `src-tauri/tests/preview_wiring.rs` fails if the shipped state is ever wired to a spawner that cannot spawn. The ignored real-process tests then start the real Astro dev server **through the application's own state** and require the port to answer and to stop answering after shutdown (D185) |
 | H5 | WIP control, stable URL, finished redirect | **done** |
 | H6 | Knowledge paragraph references + repair | **done** |
 | H7 | Page creator | **done** — `veloct-ai::page` + `src/PageCreator.tsx` |
 | H8 | AI per-feature provider/model + fallback | **done** |
 | H9 | AI confirm / apply-all / apply-partial | **done** (apply lives in `veloct-ai::apply`; the UI exposes confirm) |
-| H10 | Work import, screenshot, iframe preview, isolation | **PARTIAL, and this round moved it to the edge: import (ZIP and folder), the poster image and export are ALL reachable from the window**, the import PLAN is shown before anything is written, the stable id and import provenance are protected from a metadata edit, and §10.1's `preview/` is now produced by an import and EMITTED by the build at `/work-previews/<slug>/screenshot.webp` — the route that had no writer before, so the poster wall always rendered 暂无截图. The iframe preview and the isolation are done (`F6`, `G5`, the sandbox checks). **What is STILL PARTIAL and exactly why: the screenshot is a FILE THE USER CHOOSES rather than one Veloct captures.** This build has no headless browser; `PROCESSING.md` §5.9 records that rather than papering over it, and the command's own doc says so. A headless capture is a new dependency decision (a `chromiumoxide`-class crate or a WebView2 capture path), which is not one to take silently. Everything else in §5.9 is closed; the remaining work is that one decision |
+| H10 | Work import, screenshot, iframe preview, isolation | **PARTIAL, and this round moved it to the edge: import (ZIP and folder), the poster image and export are ALL reachable from the window**, the import PLAN is shown before anything is written, the stable id and import provenance are protected from a metadata edit, and §10.1's `preview/` is now produced by an import and EMITTED by the build at `/work-previews/<slug>/screenshot.webp` — the route that had no writer before, so the poster wall always rendered 暂无截图. The iframe preview and the isolation are done (`F6`, `G5`, the sandbox checks), **and the works half of that isolation now RUNS rather than merely being asserted: `ed519bd` gave the launcher the static `serve` mode (`crates/veloct-sidecar/src/serve.rs`), because `start_works_preview` had been sending `["serve", "dist/works", …]` to a launcher that accepted only `dev` and `preview` and refused it by name — so §10.4's "the work bodies on a genuinely different origin" had no working path above `veloct-process`. The built works root is now served by the launcher process itself on its own port, reads neither `VELOCT_PROJECT_ROOT` nor a Node runtime, refuses a non-loopback `Host`, refuses to resolve a target that would leave the root, and takes a GET or HEAD only (D186); `the_works_preview_serves_the_built_works_root_on_its_own_origin` fetches the real BUILT bytes and compares them.** **What is STILL PARTIAL and exactly why: the screenshot is a FILE THE USER CHOOSES rather than one Veloct captures.** This build has no headless browser; `PROCESSING.md` §5.9 records that rather than papering over it, and the command's own doc says so. A headless capture is a new dependency decision (a `chromiumoxide`-class crate or a WebView2 capture path), which is not one to take silently. Everything else in §5.9 is closed; the remaining work is that one decision |
 | H11 | Publish commit + Release tag | **done** — real publish integration run |
 | H12 | One build per publish, all targets share it | **done** |
 | H13 | Failed target re-publish by original Release | **done** — `resendable_sub_targets` |
@@ -1127,10 +1220,13 @@ Kept here rather than deleted, because the old text called this one of the four 
 unmet and a reader looking for that sentence must find out what happened to it. **It is no longer a
 gap.** `tauri build` has run and a package exists:
 
-- **`target/release/bundle/nsis/Veloct_0.1.0_x64-setup.exe`**, built by
+- **`target/release/bundle/nsis/Veloct_1.0.0_x64-setup.exe`**, built by
   `scripts/build-installer.ps1` (NEW). **Its size is a moving fact, so §1's table is the current number**:
-  27.89 MiB when this section was written (a first run), **27.93 MiB on 2026-10-02 after §13.12 was
-  implemented and the package was rebuilt**. The 2026-10-02 run re-did the WHOLE sequence — build, silent
+  **5.49 MiB** for the very first package (which carried no Node runtime at all), 27.89 MiB when this
+  section was written, **27.93 MiB at `Veloct_0.1.0` on 2026-10-02 after §13.12 was implemented and the
+  package was rebuilt**, and **28.06 MiB at `Veloct_1.0.0`** once the bundler started signing what it
+  packs — every earlier number is kept, because the arithmetic of why the file grew is the useful part.
+  The 2026-10-02 runs re-did the WHOLE sequence — build, silent
   install to a temp directory, list, probe the installed launcher, uninstall — rather than assuming it,
   and `GET http://localhost:<port>/` returned 200 through the installed `veloct-node`.
 - The Tauri CLI is a **devDependency** (`@tauri-apps/cli` 2.12.1), so the build is reproducible from a
@@ -1148,7 +1244,12 @@ gap.** `tauri build` has run and a package exists:
 
 What is still NOT here: the package is **unsigned**, so Windows SmartScreen will warn a user who runs
 it, and `bundleVCRuntime` is `false` (a machine without the MSVC runtime relies on the WebView2
-installer path). Neither is a correctness problem and neither is claimed away.
+installer path). Neither is a correctness problem and neither is claimed away. **The first half of that
+sentence is superseded rather than deleted: on 2026-10-02 the package was SIGNED with a local
+self-signed certificate (§5.10.4, D183), and §1's Installer row carries what that does and does not buy
+— it still does not remove SmartScreen's warning on a machine that has not installed
+`src-tauri/signing/veloct-codesign.cer`, so "unsigned" was true when written and "an unknown publisher
+on a fresh machine" is what remains true. `bundleVCRuntime` is unchanged.**
 
 ### 5.8 Smaller, stated gaps
 
@@ -1629,10 +1730,11 @@ test races (§2.13, §2.14) that had been passing by luck.
   with no Node runtime and a launcher that could not find it. Install the artefact and run it.
 
 
-### 2.15 Releasing this application: the order that matters, and the two steps that bite
+### 2.15 Releasing this application: the order that matters, and the three steps that bite
 
 Written while preparing the 1.0.0 build, from facts measured on 2026-10-02 rather than from a template. Every
-step below was run at least once; the two marked BITES were discovered by running them.
+step below was run at least once; the three marked BITES were discovered by running them — the third was
+added by the round that followed the release, which is why the heading says three rather than two.
 
 **1. Bump the version in FOUR places, and check for others.** `Cargo.toml`'s `[workspace.package]` (every crate
 inherits it, so it is one line), `src-tauri/tauri.conf.json`, `package.json` and `site/package.json`. Verify
@@ -1678,3 +1780,40 @@ purchased certificate, not code.
 §5.9's screenshot (a file the user chooses; §10.3's "screenshot or placeholder" is met), Pexels's vendor pause
 (§5.12), Lsky Pro's missing live verification (§5.8), and the deploy targets' live state. The matrix's H table and
 §1 are where the numbers come from, and they are the ones to read before writing a sentence about coverage.
+
+### 2.15.1 Two things the round after the release taught
+
+**The FINAL setup signing can fail transiently, and it leaves an UNSIGNED artefact behind.** The bundler
+signs the setup `.exe` through `signtool`, and that call reaches `http://timestamp.digicert.com` over the
+network (step 3's `TimestampUrl`). When the timestamp step cannot complete, **`scripts/build-installer.ps1`
+exits NON-ZERO — and the finished setup `.exe` is already on disk, UNSIGNED, because the file is fully
+written before it is signed.** So the dangerous shape is not the failure message, it is what a reader does
+next: the exit code says the release did not build, while
+`target/release/bundle/nsis/Veloct_<version>_x64-setup.exe` exists and looks like a finished artefact. Two
+rules follow, and both cost seconds:
+
+1. **A retry is the first thing to try**, with the network up. Timestamping is the one network round trip in
+   the whole packaging step, and it is the part that failed.
+2. **CHECK the artefact rather than assuming it.** `Get-AuthenticodeSignature <setup.exe>` must report
+   `Valid` and name the publisher; the same check on what the package INSTALLS is step 4's. A setup that
+   verifies `NotSigned` after a non-zero build is not a mystery — it is this failure, and re-running the
+   build is the repair. **Never ship, tag or describe an artefact whose signature was inferred from the
+   exit code of a previous attempt.** §1's Installer row is what a checked artefact looks like: the size,
+   the SHA-256 and the `Valid` status written down together, so the next reader compares rather than
+   assumes.
+
+**`crates/veloct-sidecar` now has a THIRD mode — `serve` — and it is what the works preview uses.** The
+launcher answers three subcommands: `dev` and `preview` hand the process to the site's own Astro CLI
+through the bundled Node, while **`serve <directory>` serves an already-built directory of static files
+from the launcher process itself, with no Node runtime and no `node_modules` involved** (`ed519bd`). That
+is deliberately not an Astro command: `dist/works` is BUILD OUTPUT, so an Astro `dev` would compile and
+serve the wrong thing and an Astro `preview` would serve the site's own `dist/site`. Before `serve`
+existed, `start_works_preview` sent `["serve", "dist/works", …]` to a launcher that accepted only `dev`
+and `preview` and refused it by name — so that role failed AT THE LAUNCHER even after `330c07b` gave the
+application a real spawner. Two consequences for a release, worth naming together: **step 2's `-Check` is
+the only thing that keeps the COMMITTED launcher in step with the `serve` code the application will
+actually call at runtime**, and step 4's probe of the installed launcher is the only thing that proves the
+packaged `serve` path runs. `crates/veloct-sidecar/src/serve.rs` also carries the works origin's security
+rules — a non-loopback `Host` is refused, a target that would leave the root is refused rather than
+resolved, and only GET and HEAD are answered — so a change there is a change to §10.4's isolation
+boundary, not only to a helper.
