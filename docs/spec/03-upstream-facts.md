@@ -354,3 +354,39 @@ download report is an API call.
 **The generalisable rule, and it is the third form of §4.4's and §5's:** a remembered workaround is a fact to
 MEASURE, not to inherit. The endpoint that made the belief true was retired; the page that replaced it is a bot
 check; and the project cited as proof asks for a key in its own settings file.
+
+### 7.1 The plugin as a REFERENCE: what it implements, and the one thing it has that Veloct does not
+
+Read on 2026-10-02 from its own source (`halo-sigs/plugin-unsplash`, `main`), because "look at how they do it" is
+the right instinct even when the premise that brought you there turns out to be wrong. **It is a competent
+implementation of the same documented API**, and comparing it with §13.14's is useful in both directions.
+
+| | Halo's plugin | Veloct (§13.14) |
+| --- | --- | --- |
+| API | the official `unsplash-js` SDK, `createApi({ accessKey })` | hand-rolled HTTP against the same documented endpoints — no vendor SDK, the style ADR-0016 set for S3 |
+| Where the key lives | a `$formkit: password` field in the plugin's settings, read back by the browser console and used there | the OS credential store; it never leaves the process and the window never receives it (§12.2, §18.1) |
+| Browsing | **topics** (`topics.list`, 100 of them) AND keyword search (48 per page, paginated), so a user can browse a topic or search | keyword search. **Topic browsing does not exist** |
+| Rendition | the user picks `raw` / `full` / `regular` / `small` by name in the settings | one rendition, the 1080 px `regular`, fixed and live-verified (D164) |
+| Where the image ends up | hotlink by default; with 转存 ("transfer") enabled it fetches the chosen URL, uploads it into Halo's OWN attachment storage under a policy and group, binds photo→attachment, and links the local permalink | hotlinks the returned URL — which §4.1's quote from Unsplash's guidelines **requires** ("we **require** the image URLs returned by the API to be directly used or embedded") |
+| Download reporting | **not sent anywhere in the component** — no `links.download_location`, no `/download` call | **sent**, and D164's live run includes the accepted report. It is an obligation, not a courtesy |
+
+**So Veloct is the stricter of the two on the two things that are obligations** (the key never reaches a UI; the
+download report is sent), and **the plugin is ahead on exactly one feature: browsing by topic.**
+
+**Three candidates, none taken, and the reasons are stated rather than implied:**
+
+1. **Topic browsing is the one worth considering.** It is a genuine browse mode (Unsplash curates the topics),
+   the SDK call is two endpoints, and its absence is the only gap the comparison found. It is NOT taken here
+   because it is a feature addition, not a defect: §13.14's clause is met by search, the window has no place to
+   put a topic strip today, and the owner is the one who decides scope.
+2. **A rendition choice is NOT worth copying.** Veloct's 1080 px `regular` is the size §13.14's flow needs and
+   D164 verified live; letting a user pick `raw` invites multi-megabyte pages for no benefit the clause asks for.
+3. **The 转存 (re-host) mode is the one to be careful about, and NOT to copy as it stands.** Two reasons, and the
+   first is the plugin's own: it re-hosts an image the API terms expect to be hotlinked, and it does so WITHOUT
+   the download report that a download is supposed to trigger. Veloct already has a place a user can put a file
+   they want to own — §13.5's attachment pool — and it documents the consequence of re-hosting (a remote cleanup
+   leaves the article pointing at a dead URL, §5.10.3).
+
+**The generalisable rule:** a reference implementation is evidence about the API, not a specification for your
+product. Read what it calls, then check each of those calls against the obligations YOU verified — the plugin is
+right about the endpoints and silent about one of the two obligations §4.1 records.
