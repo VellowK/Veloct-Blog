@@ -35,7 +35,7 @@
 use std::time::Duration;
 
 use veloct_attach::network::providers;
-use veloct_attach::{ImageSource, SearchQuery};
+use veloct_attach::{ImageSource, SearchQuery, TopicQuery};
 use veloct_core::http::ReqwestHttpClient;
 
 /// The environment variable holding Unsplash's access key.
@@ -253,4 +253,82 @@ fn pixabay_is_refused_by_the_crate_with_its_own_reason() {
     assert!(providers::facts(ImageSource::Pixabay).is_err());
     // And a search cannot even be built for it.
     assert!(SearchQuery::new(ImageSource::Pixabay, "coffee").is_err());
+}
+
+
+/// The BROWSE MODE: Unsplash's curated topics, and one topic's photos (§13.14's owner-requested enhancement).
+///
+/// **Written and NEVER RUN, and it says so rather than implying otherwise** (matrix row D181): no Unsplash access
+/// key was available when topic browsing was implemented, so every assertion about the topic endpoints is against
+/// `FakeHttpClient` and the shapes came from Unsplash's published OpenAPI specification. **This test is what turns
+/// those assertions into evidence the moment somebody has a key** — the same device the Pexels case above uses,
+/// and it must not be deleted to make this file look tidy, because a deleted case cannot be run later.
+///
+/// It asserts both of §4.1's obligations on the topic path rather than only that something came back: the URL is
+/// the provider's own hotlinkable one, and `download_location` is present, because that field is what
+/// [`veroct_attach::download_tracking_request`] needs to report a download.
+#[test]
+#[ignore = "makes a real network request; run with --ignored and a key in the environment"]
+fn unsplash_topics_and_a_topic_browse_answer_live() {
+    let api_key = key(UNSPLASH_KEY_ENV);
+    let client = client();
+
+    // ---- the curated topics -------------------------------------------------------------------------
+    //
+    // The body here is a BARE ARRAY, not the `{total, results}` envelope the search endpoint returns, which is
+    // why `parse_topics` is a separate function from `parse_search` and why this assertion is on a `Vec`.
+    let topics = veloct_attach::list_topics(&client, &api_key, &TopicQuery::first_page())
+        .expect("Unsplash answers a real topics request");
+    println!("Unsplash topics: {} on the first page", topics.len());
+    assert!(
+        !topics.is_empty(),
+        "a live topics request returned nothing at all"
+    );
+    for topic in topics.iter().take(5) {
+        println!(
+            "  id={} slug={} title={:?} visibility={} total_photos={} described={}",
+            topic.id,
+            topic.slug,
+            topic.title,
+            topic.visibility,
+            topic.total_photos,
+            topic.description.is_some()
+        );
+    }
+    let first = &topics[0];
+    assert!(
+        !first.id.is_empty() && !first.slug.is_empty(),
+        "a topic carries the id the photos path takes and the slug a user can read: {first:?}"
+    );
+
+    // ---- one topic's photos ------------------------------------------------------------------------
+    //
+    // The SAME result shape as a search, which is what lets the window reuse one grid for both.
+    let found = veloct_attach::browse_topic(&client, &api_key, &first.id, &TopicQuery::first_page())
+        .expect("Unsplash answers a real topic-photos request");
+    let usable = found.usable();
+    println!(
+        "Topic {}: {} raw result(s), {} usable, has_more={}",
+        first.slug,
+        found.results.len(),
+        usable.len(),
+        found.has_more
+    );
+    assert!(
+        !usable.is_empty(),
+        "a live topic browse returned nothing usable; response had {} raw result(s)",
+        found.results.len()
+    );
+
+    let photo = usable[0];
+    println!("{}", describe(ImageSource::Unsplash, photo));
+    assert!(
+        photo.url.starts_with("https://"),
+        "the URL must be hotlinkable: {}",
+        photo.url
+    );
+    assert!(
+        photo.download_location.is_some(),
+        "§4.1's download report needs this field, so a topic photo must carry it: {photo:?}"
+    );
 }
