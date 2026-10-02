@@ -1340,15 +1340,24 @@ What REMAINS, each still a **stated limit** in the matrix row that covers it:
    check permanently — a subtle interaction worth knowing before someone "completes" the signing; and
    `bundleVCRuntime` stays `false`, which is a separate packaging fact §3's `::1` probe note and
    `docs/research/tauri2-windows-report.md`'s `dumpbin` suggestion cover.
-   **AND THE PART AN EXPERIMENT CORRECTED, because the obvious assumption is wrong:** signing
+   **AND THE PART AN EXPERIMENT CORRECTED, and then FIXED — both are true and in order.** Signing
    `target/release/veloct-desktop.exe` and then rebuilding the installer leaves the INSTALLED app
-   **`NotSigned`**. Measured twice: the file verifies `Valid` before the rebuild and `NotSigned` after it. The
-   likely cause is that `target/release/<name>.exe` is a hard link to `target/release/deps/<name>-<hash>.exe`,
-   so writing the signature breaks the link and the next build copies the unsigned file back. **So the package
-   a user installs currently has a SIGNED setup and an UNSIGNED app**, and the supported way to change that is
-   Tauri's own `bundle.windows.certificateThumbprint` (+ `digestAlgorithm`, `timestampUrl`) in
-   `src-tauri/tauri.conf.json`, which signs during the build — deliberately NOT configured here, because a
-   thumbprint is machine-specific and would make the committed manifest unusable anywhere else.
+   **`NotSigned`**: measured twice, and the likely cause is that `target/release/<name>.exe` is a hard link to
+   `target/release/deps/<name>-<hash>.exe`, so writing the signature breaks the link and the next build copies
+   the unsigned file back. **The supported fix is now IN PLACE rather than merely named:** `scripts/build-installer.ps1`
+   discovers the certificate (parameter, then `VELOCT_SIGN_THUMBPRINT`, then the store by subject), writes a
+   MERGED `--config` for Tauri's own `bundle.windows.certificateThumbprint` + `sha256` + a timestamp server, and
+   lets the BUNDLER sign during the build — so the committed `tauri.conf.json` never carries a machine-specific
+   thumbprint. **Verified on 2026-10-02 by installing the package and checking what lands:** `veloct-desktop.exe`,
+   `veloct-astro-sidecar.exe` and `uninstall.exe` all verify **`Valid`** under `CN=VellowChire Code Signing,
+   O=Veloct`, the setup verifies `Valid`, the bundled `veloct-node.exe` keeps its vendor signature
+   (`CN=OpenJS Foundation`), and the installed launcher still serves `http://localhost:4399/` with **200**.
+   **One interaction had to be found and defused:** Tauri signs the COMMITTED external binary
+   (`src-tauri/binaries/veloct-astro-sidecar-<triple>.exe`) **in place**, so after one signed build
+   `build-sidecar.ps1 -Check` failed permanently — the exact §2.2 breakage this file predicted, caused by the
+   signature rather than by a stale launcher. The script now backs the file up before the build and restores it
+   afterwards, automatically and with a printed line, so the package keeps the signed copy while the repository
+   keeps the unsigned one `-Check` compares against.
 
 ### 5.11 DECIDED and IMPLEMENTED: §13.14 uses the two sources whose terms describe it, and refuses the third
 
