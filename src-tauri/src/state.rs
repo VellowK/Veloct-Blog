@@ -587,29 +587,17 @@ impl AppState {
         })?;
 
         let port = reserve_local_port()?.as_u16();
-        let site_dir = project.path().join("site");
-        let spec = PreviewSpec {
-            role: PreviewRole::Site,
-            program,
-            args: vec![
-                "dev".to_string(),
-                "--port".to_string(),
-                port.to_string(),
-                "--host".to_string(),
-                "127.0.0.1".to_string(),
-            ],
-            working_directory: site_dir,
-            env: Default::default(),
-            port,
-        };
+        let spec = site_preview_spec(project.path(), program, port);
 
         Ok(self.previews.start(&spec)?)
     }
 
-    /// Start the works-origin preview on its own free port.
+    /// Start the works-origin preview on its own free port, or return the running one.
     ///
     /// `handoff.md` §10.4 requires the works bodies on a GENUINELY different origin, and two loopback
-    /// ports are two origins.
+    /// ports are two origins. What is served is the project's built `dist/works` — build output rather
+    /// than an Astro target — so the launcher's `serve` mode answers it as static files; see
+    /// [`works_preview_spec`] for why neither Astro command is the right tool and what that fix was.
     pub fn start_works_preview(&self) -> Result<PreviewState, veloct_app::CommandError> {
         let project = self.project()?;
         let existing = self.previews.state(PreviewRole::Works);
@@ -625,21 +613,7 @@ impl AppState {
         })?;
 
         let port = reserve_local_port()?.as_u16();
-        let spec = PreviewSpec {
-            role: PreviewRole::Works,
-            program,
-            args: vec![
-                "serve".to_string(),
-                "dist/works".to_string(),
-                "--port".to_string(),
-                port.to_string(),
-                "--host".to_string(),
-                "127.0.0.1".to_string(),
-            ],
-            working_directory: project.path().to_path_buf(),
-            env: Default::default(),
-            port,
-        };
+        let spec = works_preview_spec(project.path(), program, port);
 
         Ok(self.previews.start(&spec)?)
     }
@@ -664,6 +638,70 @@ impl AppState {
 impl Default for AppState {
     fn default() -> Self {
         Self::headless()
+    }
+}
+
+/// The spec the main-site preview runs: the project's own `site/` through the Astro CLI's `dev`.
+///
+/// A function rather than an inline literal so the command the application hands the launcher is
+/// asserted WITHOUT starting a process, in the default suite
+/// (`the_site_preview_still_runs_the_astro_dev_server_against_the_projects_site`). `handoff.md` §5.4
+/// wants HMR, which is what `dev` gives: a production `astro build` is never run just to preview.
+pub fn site_preview_spec(project: &Path, program: String, port: u16) -> PreviewSpec {
+    PreviewSpec {
+        role: PreviewRole::Site,
+        program,
+        args: vec![
+            "dev".to_string(),
+            "--port".to_string(),
+            port.to_string(),
+            "--host".to_string(),
+            "127.0.0.1".to_string(),
+        ],
+        working_directory: project.join("site"),
+        env: Default::default(),
+        port,
+    }
+}
+
+/// The spec the works-origin preview runs: the project's BUILT works root, served as static files.
+///
+/// **`serve dist/works`, and deliberately not an Astro command.** `handoff.md` §10.4 requires the work
+/// bodies on a genuinely different origin, and ADR-0004 says what serves them: "a second sidecar that
+/// serves the work bodies as plain static files". `dist/works` is BUILD OUTPUT — the
+/// `splitPublishRoots` integration emits it during `astro build` — so there is no Astro target for it:
+///
+/// * `dev` compiles the site's SOURCES and serves the project's routes. The works root has no Astro
+///   project, no pages and no sources, so `astro dev` there would serve the wrong thing or fail.
+/// * `preview` serves the site PROJECT's `outDir`, which `site/astro.config.mjs` sets to `dist/site`.
+///   The work bodies are the sibling `dist/works`, and Astro has exactly one `outDir` per project.
+///
+/// The launcher's `serve` mode is what answers it: it reads this directory and serves those bytes, from
+/// its own process on its own port, which is the independent origin §10.4 requires. The directory is
+/// relative to the spec's `working_directory` (the project root), so the pair means
+/// `<project>/dist/works` exactly as §10.5 lays the publish roots out.
+///
+/// **This is the second half of the works-preview defect.** The application already sent `serve`, the
+/// launcher accepted only `dev` and `preview`, and the works preview was refused with `expected dev or
+/// preview, got "serve"` before it ever listened — so the work bodies had no independent origin at all.
+/// The unit test that guards it asks [`veloct_sidecar::is_served_command`] as well as comparing the
+/// arguments, so a future edit that reintroduces a command the launcher refuses fails THERE and not on
+/// a user's first hover.
+pub fn works_preview_spec(project: &Path, program: String, port: u16) -> PreviewSpec {
+    PreviewSpec {
+        role: PreviewRole::Works,
+        program,
+        args: vec![
+            "serve".to_string(),
+            "dist/works".to_string(),
+            "--port".to_string(),
+            port.to_string(),
+            "--host".to_string(),
+            "127.0.0.1".to_string(),
+        ],
+        working_directory: project.to_path_buf(),
+        env: Default::default(),
+        port,
     }
 }
 
@@ -742,6 +780,55 @@ mod tests {
         let state = AppState::headless();
         assert!(state.preview_url(PreviewRole::Site).is_none());
         assert!(state.preview_url(PreviewRole::Works).is_none());
+    }
+
+    #[test]
+    fn the_works_preview_hands_the_launcher_a_command_it_actually_serves() {
+        // **This is the test for the second half of the works-preview defect.** The application built
+        // `serve dist/works ...`, the launcher accepted only `dev` and `preview`, and the works preview
+        // failed with `expected dev or preview, got "serve"` — so the work bodies had no independent
+        // origin at all (`handoff.md` §10.4). Comparing the arguments to a literal would only assert what
+        // this file happens to say; asking the launcher's own predicate is what makes a command the
+        // launcher refuses fail HERE, in the default suite, rather than on a user's first hover.
+        let dir = TempDir::new().unwrap();
+        let spec = works_preview_spec(dir.path(), "binaries/veloct-astro-sidecar".to_string(), 4322);
+
+        assert_eq!(spec.role, PreviewRole::Works);
+        assert_eq!(spec.program, "binaries/veloct-astro-sidecar");
+        assert_eq!(
+            spec.args,
+            vec!["serve", "dist/works", "--port", "4322", "--host", "127.0.0.1"]
+        );
+        assert_eq!(spec.port, 4322);
+        // The directory is relative, so the working directory is half of what it means: the pair is
+        // `<project>/dist/works`, which is where `handoff.md` §10.5 puts the works publish root.
+        assert_eq!(spec.working_directory, dir.path());
+        assert_eq!(
+            spec.working_directory.join(&spec.args[1]),
+            dir.path().join("dist").join("works")
+        );
+        assert!(
+            veloct_sidecar::is_served_command(&spec.args),
+            "the launcher does not serve {:?}, so the works preview would fail before it ever listened \
+             (the defect this test exists for)",
+            spec.args
+        );
+    }
+
+    #[test]
+    fn the_site_preview_still_runs_the_astro_dev_server_against_the_projects_site() {
+        // The other half of the same contract: fixing the works command must not move the site preview
+        // off `dev` against `<project>/site`, which is the command that already works.
+        let dir = TempDir::new().unwrap();
+        let spec = site_preview_spec(dir.path(), "binaries/veloct-astro-sidecar".to_string(), 4321);
+
+        assert_eq!(spec.role, PreviewRole::Site);
+        assert_eq!(
+            spec.args,
+            vec!["dev", "--port", "4321", "--host", "127.0.0.1"]
+        );
+        assert_eq!(spec.working_directory, dir.path().join("site"));
+        assert!(veloct_sidecar::is_served_command(&spec.args));
     }
 
     #[test]

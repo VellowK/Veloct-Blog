@@ -1,4 +1,14 @@
-//! Resolving and running the bundled Node runtime.
+//! Resolving and running the bundled Node runtime, and serving built files.
+//!
+//! The launcher answers two kinds of request, and the difference between them is who serves the bytes:
+//!
+//! * **`dev` / `preview`** hand the process over to the site's own Astro CLI, run by the bundled Node
+//!   runtime. Everything below about resolving Node and the site applies to them, and they are the main
+//!   site's preview.
+//! * **`serve <directory>`** is answered by the launcher itself: it serves an already-built directory as
+//!   static files, with no Node runtime involved. That is the works preview, because `dist/works` is
+//!   build output rather than an Astro target. See [`serve`] for why neither Astro command is right for
+//!   it, and [`parse_serve`] for the arguments.
 //!
 //! `docs/spec/00-architecture.md` ADR-0005: "Node.js is a bundled sidecar, never a user prerequisite. A
 //! pinned Node runtime is bundled as a Tauri `externalBin` sidecar together with the site template, and the
@@ -18,6 +28,8 @@
 use std::path::{Path, PathBuf};
 
 use veloct_core::{Result, VeloctError};
+
+pub mod serve;
 
 /// The name Tauri gives the bundled runtime, without the target triple.
 pub const NODE_SIDECAR_STEM: &str = "veloct-node";
@@ -263,8 +275,111 @@ pub fn command_line(node: &Path, astro_entry: &Path, args: &[String]) -> (PathBu
 }
 
 /// Whether the arguments name a preview subcommand this launcher supports.
+///
+/// `serve` is deliberately not in this list: it is not an Astro subcommand and is answered by
+/// [`serve::StaticServer`] instead of by the Astro CLI. [`is_served_command`] is the predicate for
+/// "can this launcher run these arguments at all".
 pub fn is_preview_command(args: &[String]) -> bool {
     matches!(args.first().map(String::as_str), Some("dev" | "preview"))
+}
+
+/// The subcommand that serves an already-built directory as static files.
+pub const SERVE_COMMAND: &str = "serve";
+
+/// Whether the arguments name the static-serve mode.
+pub fn is_serve_command(args: &[String]) -> bool {
+    args.first().map(String::as_str) == Some(SERVE_COMMAND)
+}
+
+/// Whether this launcher can run these arguments.
+///
+/// **The predicate exists to be asked.** The application sends the works preview `serve dist/works`,
+/// and the launcher accepted only `dev` and `preview`, so the works preview was refused with
+/// `expected dev or preview, got "serve"` before it ever listened. A test that compared the
+/// application's argument vector to a literal would have passed throughout; asking this function is
+/// what makes a command the launcher refuses a failing test.
+pub fn is_served_command(args: &[String]) -> bool {
+    is_preview_command(args) || is_serve_command(args)
+}
+
+/// A parsed `serve` invocation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServeRequest {
+    /// The directory to serve, as given: RELATIVE to the process's working directory, which is what the
+    /// spawner sets to the project root. `dist/works` therefore means `<project>/dist/works`, the works
+    /// root `handoff.md` §10.5 names.
+    pub directory: PathBuf,
+    /// The port to bind. The caller chooses it (`handoff.md` §5.3), so it is required rather than
+    /// defaulted: a server that picked its own port would answer where nothing is looking for it.
+    pub port: u16,
+    /// The address to bind, `127.0.0.1` unless the caller says otherwise.
+    pub host: String,
+}
+
+/// Parse the arguments of `serve`, after the subcommand itself.
+///
+/// `serve <directory> --port <port> [--host <host>]`. Unknown options are refused rather than ignored:
+/// a typo in `--port` that quietly bound something else would look like a preview that never starts.
+pub fn parse_serve(args: &[String]) -> Result<ServeRequest> {
+    const USAGE: &str = "usage: serve <directory> --port <port> [--host 127.0.0.1]";
+
+    let mut directory: Option<PathBuf> = None;
+    let mut port: Option<u16> = None;
+    let mut host: Option<String> = None;
+
+    let mut index = 0;
+    while index < args.len() {
+        let argument = args[index].as_str();
+        match argument {
+            "--port" => {
+                let value = args
+                    .get(index + 1)
+                    .ok_or_else(|| VeloctError::Invalid(format!("--port needs a value; {USAGE}")))?;
+                let parsed = value.parse::<u16>().map_err(|_| {
+                    VeloctError::Invalid(format!("--port {value:?} is not a port number; {USAGE}"))
+                })?;
+                port = Some(parsed);
+                index += 2;
+            }
+            "--host" => {
+                let value = args
+                    .get(index + 1)
+                    .ok_or_else(|| VeloctError::Invalid(format!("--host needs a value; {USAGE}")))?;
+                host = Some(value.clone());
+                index += 2;
+            }
+            // Anything else that looks like an option is a mistake this launcher can see. A relative
+            // path never starts with `-`, so refusing them all costs nothing real.
+            option if option.starts_with('-') => {
+                return Err(VeloctError::Invalid(format!(
+                    "unknown option {option:?}; {USAGE}"
+                )))
+            }
+            positional => {
+                if directory.is_some() {
+                    return Err(VeloctError::Invalid(format!(
+                        "serve takes one directory, and {positional:?} is a second one; {USAGE}"
+                    )));
+                }
+                directory = Some(PathBuf::from(positional));
+                index += 1;
+            }
+        }
+    }
+
+    let directory = directory
+        .ok_or_else(|| VeloctError::Invalid(format!("serve needs the directory to serve; {USAGE}")))?;
+    let port = port.ok_or_else(|| {
+        VeloctError::Invalid(format!(
+            "serve needs the port the supervisor chose; {USAGE}"
+        ))
+    })?;
+
+    Ok(ServeRequest {
+        directory,
+        port,
+        host: host.unwrap_or_else(|| "127.0.0.1".to_string()),
+    })
 }
 
 #[cfg(test)]
@@ -530,5 +645,86 @@ mod tests {
         assert!(is_preview_command(&["preview".to_string()]));
         assert!(!is_preview_command(&["build".to_string()]));
         assert!(!is_preview_command(&[]));
+        // `serve` is NOT an Astro subcommand and never becomes one: it is answered by this launcher's
+        // static server, so adding it here would send it to the Astro CLI.
+        assert!(!is_preview_command(&["serve".to_string()]));
+    }
+
+    #[test]
+    fn the_commands_this_launcher_serves_include_the_static_serve_the_works_preview_uses() {
+        // The works preview sends `serve dist/works --port <p> --host 127.0.0.1`. The launcher refused
+        // it with `expected dev or preview, got "serve"` until this mode existed, which is why the
+        // application's own test asks THIS predicate rather than only comparing its argument vector.
+        assert!(is_served_command(&[
+            "serve".to_string(),
+            "dist/works".to_string()
+        ]));
+        assert!(is_served_command(&["dev".to_string()]));
+        assert!(is_served_command(&["preview".to_string()]));
+        // And it says no to everything else, so a command that cannot be served is still refused.
+        assert!(!is_served_command(&["build".to_string()]));
+        assert!(!is_served_command(&[]));
+        assert!(!is_serve_command(&["dev".to_string()]));
+    }
+
+    #[test]
+    fn the_serve_arguments_name_a_directory_and_the_port_the_supervisor_chose() {
+        let request = parse_serve(&[
+            "dist/works".to_string(),
+            "--port".to_string(),
+            "4322".to_string(),
+            "--host".to_string(),
+            "127.0.0.1".to_string(),
+        ])
+        .unwrap();
+
+        assert_eq!(request.directory, PathBuf::from("dist/works"));
+        assert_eq!(request.port, 4322);
+        assert_eq!(request.host, "127.0.0.1");
+    }
+
+    #[test]
+    fn the_serve_host_defaults_to_loopback_so_a_caller_cannot_expose_work_bodies_by_omission() {
+        let request =
+            parse_serve(&["dist/works".to_string(), "--port".to_string(), "4322".to_string()])
+                .unwrap();
+        assert_eq!(request.host, "127.0.0.1");
+    }
+
+    #[test]
+    fn a_serve_invocation_without_a_directory_or_a_port_is_refused_with_the_usage() {
+        // A missing port is the important one: the supervisor records the port it asked for, so a
+        // default here would produce a preview that answers where nothing is looking.
+        let error = parse_serve(&["dist/works".to_string()]).unwrap_err();
+        assert!(error.to_string().contains("--port"), "{error}");
+        assert!(error.to_string().contains("usage: serve"), "{error}");
+
+        let error = parse_serve(&["--port".to_string(), "4322".to_string()]).unwrap_err();
+        assert!(error.to_string().contains("directory"), "{error}");
+
+        let error = parse_serve(&["--port".to_string(), "not-a-port".to_string()]).unwrap_err();
+        assert!(error.to_string().contains("not a port number"), "{error}");
+    }
+
+    #[test]
+    fn an_unknown_serve_option_is_refused_rather_than_ignored() {
+        // A typo that was ignored would bind something the caller did not ask for and look like a
+        // preview that never starts.
+        let error = parse_serve(&[
+            "dist/works".to_string(),
+            "--prot".to_string(),
+            "4322".to_string(),
+        ])
+        .unwrap_err();
+        assert!(error.to_string().contains("unknown option"), "{error}");
+
+        let error = parse_serve(&[
+            "dist/works".to_string(),
+            "dist/site".to_string(),
+            "--port".to_string(),
+            "4322".to_string(),
+        ])
+        .unwrap_err();
+        assert!(error.to_string().contains("second one"), "{error}");
     }
 }

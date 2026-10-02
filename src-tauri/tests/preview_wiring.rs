@@ -21,7 +21,16 @@
 //!
 //! What neither test does is assert a message. A preview that fails with a good message is still a
 //! broken preview, which is the whole point of the defect.
+//!
+//! [`the_works_preview_serves_the_built_works_root_on_its_own_origin`] covers the SAME defect's second
+//! half, on the other role. Once the application was wired to a real spawner the works preview reached
+//! the launcher and was refused there instead (`expected dev or preview, got "serve"`), because
+//! `<project>/dist/works` is build output that no Astro command serves. It goes through
+//! `AppState::start_works_preview`, requires the port to answer AND to return the built bytes, and
+//! requires `shutdown` to take the server down.
 
+use std::io::{Read, Write};
+use std::net::{Ipv4Addr, SocketAddrV4, TcpStream};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -240,6 +249,254 @@ fn the_application_preview_command_reaches_running_and_serves_a_url() {
     );
 
     let _ = std::fs::remove_dir_all(&project_dir);
+}
+
+/// The works preview, end to end: `start_works_preview` must reach Running, serve the project's BUILT
+/// works files on its own origin, and stop answering after `shutdown`.
+///
+/// This is the user-facing path for the other half of the preview defect. `handoff.md` §10.4 requires
+/// the work bodies on a genuinely different origin, and `dist/works` is BUILD OUTPUT rather than an
+/// Astro target, so the launcher has to serve the directory itself. What this asserts is therefore the
+/// whole claim: a real process, a real port, the real built bytes, and a kill that frees the port.
+///
+/// `#[ignore]`d for environmental reasons rather than convenience: it needs the built launcher
+/// (`scripts/build-sidecar.ps1`) and a built works root (`npm run build` in `site/`).
+#[test]
+#[ignore = "starts a real static preview server; needs the built sidecar and a built works root"]
+fn the_works_preview_serves_the_built_works_root_on_its_own_origin() {
+    let root = repository_root();
+    let launcher = launcher_in(&root);
+
+    // `handoff.md` §10.5 puts the two publish roots in the PROJECT's `dist/`, while the Astro build
+    // writes them under the site's own `site/dist/`; `veloct-release`'s runner copies one into the
+    // other. This stages what a release produces, and removes only what it created.
+    let staged = stage_works_root(&root);
+    let works_root = root.join("dist").join("works");
+
+    // A file that is really in the built root, and its bytes: "the URL answered" must not be satisfiable
+    // by a server that returns 404 for everything, and comparing the body is what says the BUILT file is
+    // what is being served.
+    let (relative, expected) = first_built_page(&works_root);
+    let relative_url = format!("/{relative}");
+
+    // The application's OWN state, built by the function `run` calls, so the supervisor under test is
+    // the one that ships. `serve` reads the directory it was given and consults neither
+    // `VELOCT_PROJECT_ROOT` nor a Node runtime, which is a deliberate property: the works preview must
+    // not depend on the site's installed dependencies.
+    let state = application_state();
+    state
+        .set_project(
+            // An in-memory log sink: opening the repository as a project must not write a log into the
+            // repository this test is testing.
+            veloct_desktop_lib::OpenProject::with_log(
+                &root,
+                "2026-01-01T00:00:00Z",
+                Box::new(veloct_logging::MemorySink::new(64)),
+            ),
+        )
+        .unwrap_or_else(|error| panic!("the project could not be set: {error}"));
+    // Exactly what `lib.rs`'s setup does with the resolved resource directory.
+    state.set_sidecar(launcher.to_string_lossy().to_string());
+
+    let started = match state.start_works_preview() {
+        Ok(state) => state,
+        Err(error) => panic!(
+            "start_works_preview failed with {}: {} (hint {:?})",
+            error.code, error.message, error.hint
+        ),
+    };
+    let port = started
+        .port()
+        .unwrap_or_else(|| panic!("a running preview must report its port: {started:?}"));
+    let url = state.preview_url(PreviewRole::Works);
+    let answered = is_http_ready(port, Duration::from_millis(500));
+    let fetched = fetch(port, &relative_url);
+
+    // Teardown BEFORE the assertions about the run, so a failing expectation cannot leak a server that
+    // holds the port for the rest of the session.
+    let stopped = state.shutdown();
+
+    assert!(
+        started.is_running(),
+        "start_works_preview must reach Running, got {started:?}"
+    );
+    assert_eq!(
+        url.as_deref(),
+        Some(format!("http://127.0.0.1:{port}/").as_str()),
+        "the iframe URL must point at the port that answers"
+    );
+    assert!(
+        answered,
+        "the works preview was reported running on port {port} but nothing answered HTTP there"
+    );
+    assert_eq!(
+        fetched.0, 200,
+        "GET {relative_url} must be served from {}",
+        works_root.display()
+    );
+    assert_eq!(
+        fetched.1, expected,
+        "the works origin must serve the BUILT bytes of {relative_url}, not a substitute"
+    );
+    assert!(stopped.is_ok(), "shutdown must stop the preview: {stopped:?}");
+    assert!(
+        !is_http_ready(port, Duration::from_millis(500)),
+        "port {port} is still answering after shutdown, so the kill left a server holding it"
+    );
+
+    // Dropped here rather than at the end of the function so the staging is undone even if an assertion
+    // above failed: the guard removes only what it created.
+    drop(staged);
+}
+
+/// One raw HTTP GET, returning the status code and the body BYTES.
+///
+/// The app's own readiness primitive cannot say which bytes were served, and "something answered" is not
+/// the claim this test makes.
+fn fetch(port: u16, path: &str) -> (u16, Vec<u8>) {
+    let address = SocketAddrV4::new(Ipv4Addr::LOCALHOST, port);
+    let mut stream = TcpStream::connect_timeout(&address.into(), Duration::from_secs(5))
+        .unwrap_or_else(|error| panic!("could not connect to 127.0.0.1:{port}: {error}"));
+    stream
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .unwrap_or_else(|error| panic!("could not bound the read: {error}"));
+
+    let request = format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n");
+    stream
+        .write_all(request.as_bytes())
+        .unwrap_or_else(|error| panic!("the request could not be written: {error}"));
+
+    // `Connection: close` is what the server states, so the response ends at the end of the stream.
+    let mut response = Vec::new();
+    stream
+        .read_to_end(&mut response)
+        .unwrap_or_else(|error| panic!("the response could not be read: {error}"));
+
+    let head_end = response
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .unwrap_or_else(|| {
+            panic!(
+                "no response head in {:?}",
+                String::from_utf8_lossy(&response)
+            )
+        });
+    let head = String::from_utf8_lossy(&response[..head_end]).to_string();
+    let status = head
+        .lines()
+        .next()
+        .and_then(|line| line.split_whitespace().nth(1))
+        .and_then(|code| code.parse::<u16>().ok())
+        .unwrap_or_else(|| panic!("no status code in {head:?}"));
+
+    (status, response[head_end + 4..].to_vec())
+}
+
+/// The directory this test created, removed when it is dropped.
+///
+/// Only what was created is removed: a project that already has a `dist/works` is left exactly as it was
+/// found.
+struct StagedDist {
+    created: Option<PathBuf>,
+}
+
+impl Drop for StagedDist {
+    fn drop(&mut self) {
+        if let Some(path) = &self.created {
+            let _ = std::fs::remove_dir_all(path);
+        }
+    }
+}
+
+/// Make sure the project has a works root, the way a release does.
+///
+/// `handoff.md` §10.5 puts `dist/works` in the PROJECT and the Astro integration writes it under the
+/// site's own `site/dist/`, so `veloct-release`'s runner copies one into the other. A preview before
+/// any build has nothing to serve and a test cannot run a whole release, so this does the same copy —
+/// rather than inventing a file and then asserting that the invented file is served.
+fn stage_works_root(root: &Path) -> StagedDist {
+    let dist = root.join("dist");
+    let works = dist.join("works");
+    if works.is_dir() {
+        return StagedDist { created: None };
+    }
+
+    let built = root.join("site").join("dist").join("works");
+    assert!(
+        built.is_dir(),
+        "neither {} nor {} exists; run `npm run build` in site/ first, because the works preview serves \
+         the BUILT works root and has nothing to serve before a build",
+        works.display(),
+        built.display()
+    );
+
+    // What to remove afterwards is what this test creates: the whole `dist/` when there was none, or just
+    // `dist/works` when the project already had a dist.
+    let created = if dist.is_dir() { works.clone() } else { dist.clone() };
+    copy_tree(&built, &works);
+    StagedDist {
+        created: Some(created),
+    }
+}
+
+/// Copy a directory tree. Test-local, so staging a fixture does not import the release pipeline.
+fn copy_tree(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to)
+        .unwrap_or_else(|error| panic!("could not create {}: {error}", to.display()));
+    for entry in std::fs::read_dir(from)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", from.display()))
+        .flatten()
+    {
+        let source = entry.path();
+        let target = to.join(entry.file_name());
+        if source.is_dir() {
+            copy_tree(&source, &target);
+        } else {
+            std::fs::copy(&source, &target)
+                .unwrap_or_else(|error| panic!("could not copy {}: {error}", source.display()));
+        }
+    }
+}
+
+/// The first built page under the works root: its path relative to the root, with `/` separators, and its
+/// bytes.
+///
+/// The works root holds `<slug>/index.html` (`handoff.md` §10.1's layout), but this walks the tree rather
+/// than assuming a slug, because what matters is that the file it asks for is one THIS project actually
+/// built.
+fn first_built_page(works_root: &Path) -> (String, Vec<u8>) {
+    let mut directories = vec![works_root.to_path_buf()];
+    let mut pages: Vec<PathBuf> = Vec::new();
+    while let Some(directory) = directories.pop() {
+        for entry in std::fs::read_dir(&directory)
+            .unwrap_or_else(|error| panic!("could not read {}: {error}", directory.display()))
+            .flatten()
+        {
+            let path = entry.path();
+            if path.is_dir() {
+                directories.push(path);
+            } else if path.extension().and_then(|value| value.to_str()) == Some("html") {
+                pages.push(path);
+            }
+        }
+    }
+    // Sorted so the file this test fetches is the same on every run.
+    pages.sort();
+    let page = pages.into_iter().next().unwrap_or_else(|| {
+        panic!(
+            "{} holds no built .html file; run `npm run build` in site/ so there is something to serve",
+            works_root.display()
+        )
+    });
+
+    let relative = page
+        .strip_prefix(works_root)
+        .expect("the page is inside the works root")
+        .to_string_lossy()
+        .replace('\\', "/");
+    let bytes = std::fs::read(&page)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", page.display()));
+    (relative, bytes)
 }
 
 /// A port reserved the way the application reserves one.
