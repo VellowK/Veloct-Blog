@@ -26,7 +26,7 @@ pub mod supervisor;
 
 pub use port::{pick_free_port, reserve_local_port, PortReservation};
 pub use supervisor::{
-    AlwaysReadyProbe, ChildHandle, ChildSpawner, HttpReadinessProbe, NeverReadyProbe, PreviewRole,
-    PreviewSpec, PreviewState, PreviewStatus, PreviewSupervisor, ReadinessProbe, RestartPolicy,
-    SpawnedChild, SupervisorConfig,
+    kill_process_tree, AlwaysReadyProbe, ChildHandle, ChildSpawner, HttpReadinessProbe,
+    NeverReadyProbe, PreviewRole, PreviewSpec, PreviewState, PreviewStatus, PreviewSupervisor,
+    ReadinessProbe, RestartPolicy, SpawnedChild, SupervisorConfig,
 };

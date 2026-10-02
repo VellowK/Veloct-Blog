@@ -143,8 +143,11 @@ impl RestartPolicy {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PreviewSpec {
     pub role: PreviewRole,
-    /// The sidecar's bare file name, as Tauri's Rust-side `sidecar()` expects. The JS path would
-    /// take the full configured string instead, which is why this is documented here.
+    /// The program to launch: the preview launcher's path, or a bare name for the OS to resolve.
+    ///
+    /// The application supplies the resolved `binaries/veloct-astro-sidecar` name Tauri gives the
+    /// bundled launcher; the spawner is what turns that into an existing file (a build tree and an
+    /// installed bundle name it differently) and what runs it with `args`.
     pub program: String,
     pub args: Vec<String>,
     pub working_directory: std::path::PathBuf,

@@ -29,16 +29,31 @@ pub mod state;
 pub mod works;
 
 pub use commands::{AppInfo, DocumentView, PreviewView, ProjectView, SaveView};
-pub use state::{AppState, NullSpawner, OpenProject, ShellSpawner};
+pub use state::{resolve_launcher, AppState, NullSpawner, OpenProject, OsSpawner, ShellSpawner};
 
 use std::sync::Arc;
 
 use tauri::Manager;
 
+/// Build the application state the shipped application runs on.
+///
+/// This is the ONE place the application's spawner is chosen, and it is a function rather than two
+/// lines inside [`run`] so that a test can build the SAME state and assert on it. The defect this
+/// exists to prevent was purely a wiring one: the state was built with `NullSpawner`, whose every
+/// spawn attempt fails, so "start preview" could never work in a shipped build — and no test caught
+/// it, because every test either injected a fake spawner or built its own `PreviewSpec` and never
+/// asked what the application was wired to. `tests/preview_wiring.rs` asks exactly that.
+pub fn application_state() -> AppState {
+    // The real spawner: an OS child process running the Astro preview sidecar. `NullSpawner` is for
+    // `AppState::headless` (tests and any genuinely headless construction) and must never be what
+    // the application installs.
+    let spawner: Arc<dyn ShellSpawner> = Arc::new(OsSpawner);
+    AppState::new(spawner)
+}
+
 /// Build and run the desktop application.
 pub fn run() {
-    let spawner: Arc<dyn ShellSpawner> = Arc::new(NullSpawner);
-    let state = AppState::new(spawner);
+    let state = application_state();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -189,10 +204,30 @@ mod tests {
     }
 
     #[test]
-    fn the_default_spawner_is_the_one_that_reports_rather_than_pretending() {
-        // A packaged application replaces it during setup; until then a preview attempt is an explicit
-        // error rather than a silent no-op.
+    fn the_application_is_wired_to_a_spawner_that_can_actually_spawn() {
+        // The shipped build once installed `NullSpawner`, so every "start preview" failed with a
+        // message about a spawner the user had never heard of. This asserts the wiring itself, on the
+        // same state `run` builds, which is the only thing that would have caught it: a test that
+        // injects its own spawner exercises the supervisor, not the application.
+        let state = application_state();
+        assert!(
+            state.can_spawn_previews(),
+            "the application is wired to {}, which cannot start a process",
+            state.spawner_kind()
+        );
+        assert!(
+            state.spawner_kind().ends_with("OsSpawner"),
+            "the application must run the real OS spawner, got {}",
+            state.spawner_kind()
+        );
+    }
+
+    #[test]
+    fn the_null_spawner_is_only_for_a_headless_construction() {
+        // `NullSpawner` stays for tests and headless runs, and it stays honest about itself: it
+        // refuses, and it says it refuses, so nothing can mistake it for a working preview path.
         let spawner: Arc<dyn ShellSpawner> = Arc::new(NullSpawner);
+        assert!(!spawner.can_spawn());
         let spec = veloct_process::PreviewSpec {
             role: PreviewRole::Site,
             program: "veloct-astro-sidecar".to_string(),
@@ -201,7 +236,15 @@ mod tests {
             env: Default::default(),
             port: 1,
         };
-        assert!(spawner.spawn_preview(&spec).is_err());
+        // `match` rather than `expect_err`, because the Ok type holds a trait object that is not
+        // `Debug`.
+        let error = match spawner.spawn_preview(&spec) {
+            Err(error) => error,
+            Ok(_) => panic!("the null spawner must not report success"),
+        };
+        // The doubled "preview preview" the user saw came from interpolating a label that already
+        // ends in "preview" into a sentence that added another one.
+        assert!(!error.to_string().contains("preview preview"), "{error}");
     }
 
     #[test]
