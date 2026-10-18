@@ -17,7 +17,6 @@ tauri-build = { workspace = true }
 [dependencies]
 veloct-core = { workspace = true }
 veloct-app = { workspace = true }
-veloct-ai = { workspace = true }
 veloct-content = { workspace = true }
 veloct-logging = { workspace = true }
 git2 = { workspace = true }
@@ -28,6 +27,7 @@ veloct-storage = { workspace = true }
 veloct-process = { workspace = true }
 veloct-attach = { workspace = true }
 rand = { workspace = true }
+base64 = { workspace = true }
 veloct-backup = { workspace = true }
 veloct-deploy = { workspace = true }
 veloct-markdown = { workspace = true }

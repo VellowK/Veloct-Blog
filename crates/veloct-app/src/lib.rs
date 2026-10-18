@@ -14,12 +14,19 @@
 #![forbid(unsafe_code)]
 
 pub mod attachments;
+pub mod attachment_sync;
 pub mod autobackup;
 pub mod backup;
 pub mod cloud_backup;
 pub mod deploy;
 pub mod error;
 pub mod project;
+pub mod site_settings;
+pub mod site_images;
+pub mod github_activity;
+pub mod navigation;
+pub mod linked_knowledge;
+pub mod linked_knowledge_links;
 pub mod works;
 
 pub use attachments::{
@@ -30,7 +37,7 @@ pub use backup::{
     apply_restore, backup, backup_directory, describe_scan, export_to, history_note, list_archives,
     manual_backup, prune, read_manifest, retention_from_settings, stage_restore, BackupArchiveView,
     BackupOutcomeView, RestoreAppliedView, RestorePlanView, SkippedPathView, BACKUP_DIR,
-    DEFAULT_RETENTION,
+    DEFAULT_RETENTION, prune_older_than,
 };
 pub use deploy::{
     deploy, deploy_with_client, dist_decision, dist_of, is_manual, kind_label, parse_kind,
@@ -49,6 +56,11 @@ pub use cloud_backup::{
 };
 pub use error::CommandError;
 pub use project::{CreateProjectOptions, ProjectRecord, ProjectService};
+pub use site_settings::{
+    AliasPolicy, FilingSettings, PageTransition, SaveSiteSettingsView, SeoSettings, SiteSettings,
+    SiteSettingsService, SiteSettingsView, AVATAR_RELATIVE_PATH, AVATAR_URL, MAX_AVATAR_BYTES,
+};
+pub use navigation::{NavigationItem, NavigationService, NavigationView};
 pub use works::{
     export, find as find_work, import as import_work, list_works, plan_import as plan_work_import,
     remove as remove_work, set_screenshot as set_work_screenshot,

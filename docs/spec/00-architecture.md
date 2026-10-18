@@ -212,6 +212,28 @@ Decision:
 This keeps handoff §26's locked "three logical deployment targets" intact while refusing to
 fabricate a vendor integration.
 
+### ADR-0012 follow-up — verified official EdgeOne direct-upload protocol (2026-10-17)
+
+The original decision above is historical. The owner now requests both regions, **upload only after an
+explicit Deploy click**, covering all enabled targets and all published main/works files. Official
+[Makers SDK 0.1.0](<https://unpkg.com/@edgeone/makers-sdk@0.1.0/dist/client.js>) and its contract 0.1.39
+provide the previously missing authoritative protocol. Implement it in Rust without installing/running a CLI:
+
+- China/global use `https://pages-api.cloud.tencent.com/v1` / `https://pages-api.edgeone.ai/v1` respectively,
+  Bearer Pages API Token, `Action` in JSON, and the `Code` + `Data.Response` response envelope.
+- Require existing `Upload` projects; request temporary COS credentials, upload a ZIP with official COS
+  HMAC-SHA1 signing, create a Production deployment and poll its specific ID. Only `Success` settles success;
+  errors/timeouts/unknown results never claim a live deployment and never trigger automatic re-upload.
+- Main and works are separate payloads/projects. OS credential handles remain the only persisted secret
+  reference. No region fallback, source-directory upload, symlink/cache/credential publication or token-bearing
+  redirects. The Tauri command runs blocking network/archive work on a worker, not the WebView thread.
+- Publishing/building/saving configuration does not call deployment. 1Panel remains manual. Existing roll-up
+  and build/re-send contracts are not replaced. Official protocol/source verification and deterministic
+  offline tests do **not** imply a successful real-account deployment; none was authorized this round.
+
+See [upstream evidence](<03-upstream-facts.md#edgeone-direct-upload-protocol-verified-2026-10-17>) and
+[latest regression matrix](<02-test-matrix.md#edgeone-explicit-direct-upload-2026-10-17>).
+
 ## ADR-0013 — Knowledge reference cards are built on the client, from a build-time payload
 
 *Measured against the installed Astro 7.3.5, not assumed.*
@@ -482,3 +504,21 @@ SYSTEM clock — because a fixed clock is what hid the bug.
   keeping two checks rather than one.
 * **A live test found a shipped defect that the whole suite could not.** That is the strongest argument this
   repository has produced for §5.8's claim that the live gap is the biggest honesty gap.
+
+## ADR-0019 — Optional S3 attachment policy, not an implicit migration (2026-10-17)
+
+User-requested Halo-style storage fields are implemented in [S3Policy](<../../crates/veloct-attach/src/s3_policy.rs>) and [form controls](<../../src/S3ConfigFields.tsx>). `StorageConfig.s3_policy` defaults to absent; old configurations, recorded objects and the backup adapter keep their original path/reuse behavior. New form defaults are UUID + conditional create with random-alphanumeric collision suffixes. Explicit Path/VirtualHosted addressing overrides the old inference only for this optional attachment policy.
+
+Directory/name tokens use the attachment's persisted UTC creation time and stable seeded UUID/random values, because re-running a failed transaction must not silently choose a different path. Actual collision key/URL is persisted by the original upload transaction; existing content dedup remains first. `If-None-Match: *` is signed in the shared client but used only by the new attachment create path, not by legacy uploads/backups. A 409/412 either produces a bounded candidate suffix or an explicit no-overwrite error.
+
+Presentation metadata `hidden_from_upload` (default false) / `upload_priority` (default 0) only filters/sorts upload selectors; management and configured synchronization targets remain intact. Public-domain/query suffix changes do not rekey recorded objects or rewrite Markdown. Thumbnail parameters affect preview only, and require the configured domain service to support them.
+
+The explicit `test_storage_target` command validates the current draft and uses entered or stored credentials in a background task. It performs only the existing signed `ListObjectsV2(max-keys=1)` read, never saves credentials/configuration or writes a probe object. A successful read proves neither PUT/conditional-write permission nor public CDN/thumbnail availability. This round has official-source plus isolated HTTP/IPC regression evidence, **not a live R2 account test**; historical live OSS evidence above remains historical.
+
+## ADR-0020 — Explicit file staging, transient feedback and application history (2026-10-18)
+
+The [attachment picker](<../../src/AttachmentFilePicker.tsx>) stages native paths or browser/clipboard bytes before explicit import. Native preview is a bounded read-only command with raster signature detection, not unrestricted file URLs or SVG/HTML rendering. Up to20 files/64MiB each may be staged; only raster images <=8MiB are inlined. Explicit import uses the original hash/cache transaction; bytes reject unsafe names and malformed encoding. Choosing, dropping or pasting never uploads or changes article text. Async results are ignored after the owning component/project changes.
+
+[Notifications](<../../src/components/Notifications.tsx>) are a five-item maximum portal with semantic categories and five-second timers, progress and persistent full-message details when opened. They do not mutate caller error/loading state; structural conflict/object/target errors and stable retry controls remain in their business panels. UI keys are not cryptographic identities. [History](<../../src/lib/navigationHistory.ts>) tracks application views/documents rather than browser or preview navigation, preserves editor buffers and resets on project switch.
+
+The user's removal request supersedes historical AI page-creation UI decisions: no desktop AI navigation/settings/generation commands remain wired. Ordinary page editing and existing user data are retained; unused shared domain code does not authorize restoring the removed feature. Browser evidence uses the real production bundle with isolated IPC/native-event fixtures, not live cloud or OS clipboard acceptance.

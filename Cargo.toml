@@ -104,6 +104,9 @@ reqwest = { version = "0.13", default-features = false, features = [
   "rustls",
   "rustls-native-certs",
   "webpki-roots",
+  # Disabling defaults also disables Windows/macOS system proxy discovery. Keep it explicit:
+  # otherwise GitHub calendar sync goes direct even when the user's OS proxy is enabled.
+  "system-proxy",
   "json",
   "stream",
   "multipart",

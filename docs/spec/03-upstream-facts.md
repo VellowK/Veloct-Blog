@@ -119,12 +119,38 @@ allows **no origins**, so every request is denied until an explicit URL scope is
 4. `rusqlite`'s `serde_json` feature.
 5. Whether `@tauri-apps/plugin-http` 2.7.0 interoperates with the Rust `tauri-plugin-http`
    2.8.0 (a real upstream version skew; Veloct avoids the JS HTTP plugin entirely).
-6. EdgeOne's upload API. Veloct implements EdgeOne as a manual/export target (ADR-0012) rather
-   than inventing endpoints.
+6. ~~EdgeOne's upload API.~~ **Protocol/source verification closed 2026-10-17**, see the dated
+   EdgeOne supplement below and ADR-0012 follow-up. Both regions now have direct-upload adapters;
+   real-account deployment remains unverified and requires separate user confirmation.
 7. ~~Unsplash's and Pexels's image-search protocols.~~ **CLOSED by section 4 below: both were read
    live on 2026-10-01, and Pixabay's was read too — which is why Pixabay is NOT one of the two sources
    implemented.** Reading the vendors first changed the design; the entry is kept so that the order of
    events is visible.
+
+### EdgeOne direct-upload protocol verified (2026-10-17)
+
+Sources read, not guessed:
+- [Official API Token guide](<https://pages.edgeone.ai/document/api-token>): create a Pages/Makers API Token
+  in the selected region's console; it authorizes direct uploads. Do not ask for Tencent Cloud account keys.
+- [Makers SDK 0.1.0 client](<https://unpkg.com/@edgeone/makers-sdk@0.1.0/dist/client.js>) and package contract
+  0.1.39: both regional API bases, Bearer header, JSON `Action`, `Code=0` and `Data.Response`; project
+  lookup, `DescribePagesCosTempToken`, `CreatePagesDeployment`, `DescribePagesDeployments`.
+- [Official COS signing reference](<https://cloud.tencent.com/document/product/436/7778>) and
+  [COS Node SDK 2.15.4 signing implementation](<https://unpkg.com/cos-nodejs-sdk-v5@2.15.4/sdk/util.js>):
+  HMAC-SHA1 key-time / HTTP-string / string-to-sign protocol. A fixed SDK-generated signature for Unicode
+  object paths and temporary tokens is checked verbatim by the Rust test.
+
+The China endpoint is `https://pages-api.cloud.tencent.com/v1`; international is
+`https://pages-api.edgeone.ai/v1`. A project must be an existing `Provider=Upload` project. The service
+returns short-lived Bucket/Region/TargetPath and Credentials (TmpSecretId/TmpSecretKey/Token); only these
+are used for COS ZIP upload, never the Pages bearer token. Creation uses `Env=Production`, `DistType=Zip`
+and `TempBucketPath`, then polls the returned deployment ID until `Success`, failure or bounded timeout.
+Cloud response text and untrusted URLs are not surfaced as executable instructions or credential-bearing
+links. No CLI install or live-account write was performed to establish these protocol facts.
+
+**Evidence boundary:** this is official-source verification plus offline HTTP/ZIP/signing tests and real
+browser UI fixtures. It is not a user's token/project permission, quota, domain or successful-live-deploy
+check. A real cloud deployment still needs explicit permission and a configured region/project/Token.
 
 ## 4. Image providers (read live, verified — and why there are two and not three)
 
@@ -396,3 +422,11 @@ download report is sent), and **the plugin is ahead on exactly one feature: brow
 **The generalisable rule:** a reference implementation is evidence about the API, not a specification for your
 product. Read what it calls, then check each of those calls against the obligations YOU verified — the plugin is
 right about the endpoints and silent about one of the two obligations §4.1 records.
+
+## 8. S3/R2 policy reference and conditional creates (2026-10-17)
+
+- User reference: [Halo S3 configuration guide](<https://github.com/halo-dev/plugin-s3#上传目录>), read from the same project's [README mirror](<https://cdn.jsdelivr.net/gh/halo-dev/plugin-s3@main/README.md>) because local GitHub resolution was unavailable. Confirms endpoint without protocol/bucket, explicit path/virtual styles, lowercase R2 `auto`, slash-trimmed directory, UUID/time/date/random placeholders and filename modes. Veloct uses persisted attachment UTC time/stable random seeds to preserve retries; it is not a wholesale port of Halo settings/plugins.
+- [Cloudflare's S3 compatibility table](<https://developers.cloudflare.com/r2/api/s3/api/>) confirms account endpoint, region `auto` (empty/us-east-1 aliases), and atomic `PutObject` conditional headers including `If-None-Match`; with `*`, at most one concurrent create succeeds and others receive 412. This is the basis of non-overwriting collision handling, not a HEAD-then-unconditional-PUT assumption.
+- [AWS PutObject](<https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutObject.html>) documents `If-None-Match: *`, 412 existing-object and 409 concurrent-conflict responses. Veloct signs that header, renames under a bounded loop or reports conflict; existing legacy reuse and backup writes are unchanged.
+- A public custom domain is separate from the authenticated bucket endpoint; processing query/thumbnail parameters are service-specific. R2 storage alone is not an image-processing service. Veloct supports none/custom thumbnail parameters and ordered extension suffixes, without claiming a specific CDN transformation works.
+- Evidence boundary: signed request/409/412/URL/path fixtures, UI tests and production-bundle Edge checks; no current real bucket read/write or CDN-account verification. The explicit form verification is one signed read-only ListObjectsV2 request, not an upload/delete probe.

@@ -169,6 +169,7 @@ impl IndexEntry {
                     format!("/article/{}/", self.slug)
                 }
             }
+            ContentKind::Page if self.slug == "home" => "/".to_string(),
             ContentKind::Page => format!("/{}/", self.slug),
             ContentKind::Knowledge => format!("/docs/{}/", self.slug),
         }

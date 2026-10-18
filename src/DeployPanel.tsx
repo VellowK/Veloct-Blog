@@ -4,9 +4,8 @@
  * `handoff.md` §28 names the three logical targets and their main/works sub-targets, and §10.5 makes the works
  * sub-target a SEPARATE origin. Two distinctions this panel keeps visible rather than flattening:
  *
- *  * **Automatic versus manual.** §14.11 says 1Panel is not an automatic adapter and ADR-0012 records that
- *    EdgeOne's upload API was never verified. Those targets describe what to upload instead of pretending, and
- *    the panel labels them so a user is not surprised by a deployment that produced a manifest.
+ *  * **Automatic versus manual.** EdgeOne uses the official Makers direct-upload protocol only on an explicit
+ *    Deploy click. 1Panel remains a manual export; cloud acceptance alone is not deployment success.
  *  * **Succeeded, partial, failed, skipped.** §14.13 requires the failure reason to be shown, and a target whose
  *    works sub-target was skipped because it has no works origin is DEGRADED, not broken — showing that as a
  *    failure would send the user looking for a problem that does not exist.
@@ -16,6 +15,7 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
+import { Feedback } from './components/Notifications';
 
 import {
   api,
@@ -25,10 +25,12 @@ import {
   type TargetResultView,
 } from './lib/api';
 
+import { deployFormKind, deployOutcomeNotice, isEdgeOneKind, validateEdgeOneProjects } from './lib/deployForm';
+
 const KIND_OPTIONS: Array<{ value: string; label: string }> = [
   { value: 'cloudflare_pages', label: 'Cloudflare Pages(自动)' },
-  { value: 'edgeone_mainland', label: 'EdgeOne 中国大陆(手动导出)' },
-  { value: 'edgeone_international', label: 'EdgeOne 国际(手动导出)' },
+  { value: 'edgeone_mainland', label: 'EdgeOne 中国大陆(自动直传)' },
+  { value: 'edgeone_international', label: 'EdgeOne 国际(自动直传)' },
   { value: 'onepanel', label: '1Panel(手动上传)' },
 ];
 
@@ -107,14 +109,14 @@ export default function DeployPanel({ enabled }: { enabled: boolean }) {
   }, [reload]);
 
   const run = useCallback(
-    async (action: () => Promise<void>, done: string) => {
+    async (action: () => Promise<void | string>, done: string) => {
       setBusy(true);
       setError(null);
       setNotice(null);
       try {
-        await action();
+        const result = await action();
         await reload();
-        setNotice(done);
+        setNotice(result ?? done);
       } catch (caught) {
         setError(describeError(caught));
       } finally {
@@ -140,10 +142,11 @@ export default function DeployPanel({ enabled }: { enabled: boolean }) {
           <input
             type="checkbox"
             checked={targets?.enabled ?? true}
+            disabled={busy}
             onChange={(event) =>
               void run(
                 () => api.setDeployEnabled(event.target.checked),
-                event.target.checked ? '已开启部署。' : '已关闭部署:发布时不会推送到任何目标。',
+                event.target.checked ? '已开启部署。' : '已关闭部署：点击部署也不会推送。发布和构建始终不会自动上传。',
               )
             }
           />
@@ -156,8 +159,11 @@ export default function DeployPanel({ enabled }: { enabled: boolean }) {
             void run(async () => {
               // A deploy does NOT build: it pushes the existing dist, so section 14.13's fingerprint still
               // describes the bytes being pushed.
-              setOutcome(await api.deployNow());
-            }, '部署完成。')
+              setOutcome(null);
+              const result = await api.deployNow();
+              setOutcome(result);
+              return deployOutcomeNotice(result);
+            }, '')
           }
           disabled={busy}
         >
@@ -168,12 +174,8 @@ export default function DeployPanel({ enabled }: { enabled: boolean }) {
         </button>
       </header>
 
-      {error && (
-        <p className="deploy-error" role="alert">
-          {error}
-        </p>
-      )}
-      {notice && <p className="deploy-notice">{notice}</p>}
+      <Feedback message={error} tone="error" />
+      <Feedback message={notice} tone="success" />
 
       {outcome && (
         <section className="deploy-result">
@@ -214,11 +216,20 @@ export default function DeployPanel({ enabled }: { enabled: boolean }) {
               <span>{target.kind_label}</span>
               {target.manual && <span className="manual-badge">手动</span>}
               {target.works_origin && <span className="muted">{target.works_origin}</span>}
-              {target.credential_ref && (
+              {!target.manual && (
                 <span className={target.has_credential ? 'ok' : 'bad'}>
                   {target.has_credential ? '已保存凭据' : '缺少凭据'}
                 </span>
               )}
+              <button type="button" disabled={busy} onClick={() => {
+                setId(target.id);
+                setKind(deployFormKind(target.kind));
+                setProjectName(target.project ?? '');
+                setWorksProject(target.works_project ?? '');
+                setWorksOrigin(target.works_origin ?? '');
+                setCredential('');
+                setNotice('已载入目标。凭据不会回显；留空保留已保存的 Token。');
+              }}>编辑</button>
               <button
                 type="button"
                 onClick={() =>
@@ -232,7 +243,8 @@ export default function DeployPanel({ enabled }: { enabled: boolean }) {
           ))}
         </ul>
         <p className="muted hint">
-          EdgeOne 与 1Panel 为手动导出:Veloct 会给出上传清单,不会替你发送请求(ADR-0012、第 14.11 节)。
+          仅点击「部署当前构建」才上传：覆盖当前发布构建的全部主站文件、独立作品站文件，以及全部已启用目标。
+          不上传源码、密钥或本地缓存。发布、构建和保存目标不会自动部署。1Panel 仍为手动导出。
         </p>
       </section>
 
@@ -254,17 +266,22 @@ export default function DeployPanel({ enabled }: { enabled: boolean }) {
             </select>
           </label>
         </div>
+        {isEdgeOneKind(kind) && <p className="muted hint">
+          在所选区域的 EdgeOne Pages 控制台创建「直接上传」项目，填写项目 ID（不是名称或网址）和该区域的 API Token。
+          不需要腾讯云 SecretId / SecretKey。主站和作品站需使用不同项目；国际与国内 Token 不会自动互换。
+          先发布/构建，再手动点击部署；后台会等待云端确认，未确认不会报成功。
+        </p>}
         <div className="row">
           <label>
-            <span>主站项目 / 账号</span>
+            <span>{isEdgeOneKind(kind) ? '主站项目 ID' : '主站项目 / 账号'}</span>
             <input
               value={projectName}
               onChange={(event) => setProjectName(event.target.value)}
-              placeholder="Cloudflare: 账号 id"
+              placeholder={isEdgeOneKind(kind) ? 'EdgeOne 主站 ProjectId' : 'Cloudflare: 账号 id'}
             />
           </label>
           <label>
-            <span>作品项目(留空则跳过作品子目标)</span>
+            <span>{isEdgeOneKind(kind) ? '作品站项目 ID（独立项目；留空则跳过）' : '作品项目(留空则跳过作品子目标)'}</span>
             <input
               value={worksProject}
               onChange={(event) => setWorksProject(event.target.value)}
@@ -281,7 +298,7 @@ export default function DeployPanel({ enabled }: { enabled: boolean }) {
             />
           </label>
           <label>
-            <span>凭据(留空表示不修改已保存的凭据)</span>
+            <span>{isEdgeOneKind(kind) ? 'EdgeOne API Token（留空保留原凭据）' : '凭据(留空表示不修改已保存的凭据)'}</span>
             <input
               type="password"
               value={credential}
@@ -295,6 +312,10 @@ export default function DeployPanel({ enabled }: { enabled: boolean }) {
           onClick={() =>
             void run(async () => {
               if (!id.trim()) throw new Error('目标需要一个 id。');
+              if (isEdgeOneKind(kind)) {
+                const invalid = validateEdgeOneProjects(projectName, worksProject);
+                if (invalid) throw new Error(invalid);
+              }
               await api.saveDeployTarget({
                 id: id.trim(),
                 kind,

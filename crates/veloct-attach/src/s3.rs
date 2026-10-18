@@ -97,7 +97,10 @@ pub fn s3_config(config: &StorageConfig) -> Result<S3Config> {
         .clone()
         .filter(|bucket| !bucket.trim().is_empty())
         .ok_or_else(|| {
-            VeloctError::Invalid(format!("the S3 target {} has no bucket configured", config.name))
+            VeloctError::Invalid(format!(
+                "the S3 target {} has no bucket configured",
+                config.name
+            ))
         })?;
     let region = config
         .region
@@ -113,6 +116,13 @@ pub fn s3_config(config: &StorageConfig) -> Result<S3Config> {
         Some(endpoint) => S3Config::compatible(bucket, region, endpoint),
         None => S3Config::aws(bucket, region),
     };
+    if let Some(policy) = &config.s3_policy {
+        s3.addressing = match policy.access_style {
+            crate::s3_policy::AccessStyle::Auto => s3.addressing,
+            crate::s3_policy::AccessStyle::Path => veloct_s3::Addressing::PathStyle,
+            crate::s3_policy::AccessStyle::VirtualHosted => veloct_s3::Addressing::VirtualHosted,
+        };
+    }
     s3.public_url_prefix = config.public_url_prefix.clone();
     Ok(s3)
 }
@@ -135,6 +145,41 @@ impl StorageAdapter for S3Store {
 
     fn put(&self, key: &str, bytes: &[u8]) -> Result<PutOutcome> {
         let timestamp = self.timestamp();
+        if let Some(policy) = &self.config.s3_policy {
+            use crate::s3_policy::Duplicate;
+            if policy.duplicate != Duplicate::LegacyReuse {
+                for attempt in 0..17 {
+                    let candidate = if attempt == 0 {
+                        key.to_string()
+                    } else {
+                        crate::s3_policy::collision_key(
+                            key,
+                            attempt,
+                            policy.duplicate == Duplicate::RandomAlphabetic,
+                        )
+                    };
+                    let content_type = content_type_for(&candidate);
+                    if self.client.put_object_if_absent(
+                        &candidate,
+                        bytes,
+                        content_type.as_deref(),
+                        &timestamp,
+                    )? {
+                        return Ok(PutOutcome::Created(
+                            self.object(&candidate, bytes.len() as u64)?,
+                        ));
+                    }
+                    if policy.duplicate == Duplicate::Error {
+                        return Err(VeloctError::Attachment(
+                            "远程存在同名文件，已停止上传，未覆盖任何对象。".into(),
+                        ));
+                    }
+                }
+                return Err(VeloctError::Attachment(
+                    "同名冲突重试达到上限，未覆盖任何对象。".into(),
+                ));
+            }
+        }
 
         // S3 answers 200 for a create AND for an overwrite, so the reuse report §13.4 asks for cannot be
         // read from the response: the object is looked up first.
@@ -201,16 +246,105 @@ mod tests {
     }
 
     #[test]
+    fn explicit_access_styles_override_endpoint_defaults() {
+        use crate::s3_policy::{AccessStyle, S3Policy};
+        let mut config = s3_config_fixture();
+        config.s3_policy = Some(S3Policy {
+            access_style: AccessStyle::Path,
+            ..S3Policy::default()
+        });
+        let path = s3_config(&config).unwrap();
+        assert_eq!(path.path_for("a.png").unwrap(), "/veloct-assets/a.png");
+        config.endpoint = Some("https://objects.example.com".into());
+        config.s3_policy.as_mut().unwrap().access_style = AccessStyle::VirtualHosted;
+        assert_eq!(
+            s3_config(&config).unwrap().host().unwrap(),
+            "veloct-assets.objects.example.com"
+        );
+    }
+
+    #[test]
+    fn new_collision_policy_signs_conditional_put_and_returns_actual_suffixed_key() {
+        use crate::s3_policy::{Duplicate, S3Policy};
+        let fake = Arc::new(FakeHttpClient::new().always(412, "").always(200, ""));
+        let mut config = s3_config_fixture();
+        config.s3_policy = Some(S3Policy {
+            duplicate: Duplicate::RandomAlphanumeric,
+            ..S3Policy::default()
+        });
+        let store = build_store(Arc::clone(&fake), config);
+        let uploaded = store
+            .put("dir.with.dot/photo.png", b"actual-image-bytes")
+            .unwrap();
+        assert!(matches!(uploaded, PutOutcome::Created(_)));
+        let actual = &uploaded.object().key;
+        assert!(actual.starts_with("dir.with.dot/photo_"));
+        assert!(actual.ends_with(".png"));
+        assert!(uploaded.object().public_url.ends_with(actual));
+        let requests = fake.recorded();
+        assert_eq!(requests.len(), 2);
+        for request in requests {
+            assert_eq!(request.method, HttpMethod::Put);
+            assert!(
+                matches!(&request.body, veloct_core::http::HttpBody::Bytes(bytes) if bytes == b"actual-image-bytes")
+            );
+            assert!(request
+                .headers
+                .iter()
+                .any(|(k, v)| k.eq_ignore_ascii_case("if-none-match") && v == "*"));
+            assert!(request
+                .headers
+                .iter()
+                .any(|(k, v)| k == "Authorization" && v.contains("if-none-match")));
+        }
+    }
+
+    #[test]
+    fn collision_error_is_one_request_and_random_retries_are_bounded() {
+        use crate::s3_policy::{Duplicate, S3Policy};
+        let fake = Arc::new(FakeHttpClient::new().always(412, ""));
+        let mut config = s3_config_fixture();
+        config.s3_policy = Some(S3Policy {
+            duplicate: Duplicate::Error,
+            ..S3Policy::default()
+        });
+        assert!(build_store(Arc::clone(&fake), config.clone())
+            .put("a.png", b"bytes")
+            .unwrap_err()
+            .to_string()
+            .contains("未覆盖"));
+        assert_eq!(fake.request_count(), 1);
+        let mut responses = FakeHttpClient::new();
+        for _ in 0..17 {
+            responses = responses.always(412, "");
+        }
+        let fake = Arc::new(responses);
+        config.s3_policy.as_mut().unwrap().duplicate = Duplicate::RandomAlphabetic;
+        assert!(build_store(Arc::clone(&fake), config)
+            .put("a.png", b"bytes")
+            .unwrap_err()
+            .to_string()
+            .contains("上限"));
+        assert_eq!(fake.request_count(), 17);
+    }
+
+    #[test]
     fn an_aws_target_is_virtual_hosted_and_a_custom_endpoint_is_path_style() {
         let aws = s3_config(&s3_config_fixture()).unwrap();
-        assert_eq!(aws.host().unwrap(), "veloct-assets.s3.us-east-1.amazonaws.com");
+        assert_eq!(
+            aws.host().unwrap(),
+            "veloct-assets.s3.us-east-1.amazonaws.com"
+        );
         assert_eq!(aws.path_for("a.png").unwrap(), "/a.png");
 
         let mut minio = s3_config_fixture();
         minio.endpoint = Some("http://127.0.0.1:9000".to_string());
         let compatible = s3_config(&minio).unwrap();
         assert_eq!(compatible.host().unwrap(), "127.0.0.1:9000");
-        assert_eq!(compatible.path_for("a.png").unwrap(), "/veloct-assets/a.png");
+        assert_eq!(
+            compatible.path_for("a.png").unwrap(),
+            "/veloct-assets/a.png"
+        );
     }
 
     #[test]
@@ -257,7 +391,8 @@ mod tests {
             requests[1]
                 .headers
                 .iter()
-                .any(|(name, value)| name.eq_ignore_ascii_case("content-type") && value == "image/png"),
+                .any(|(name, value)| name.eq_ignore_ascii_case("content-type")
+                    && value == "image/png"),
             "{:?}",
             requests[1].headers
         );
@@ -281,7 +416,10 @@ mod tests {
             .into_iter()
             .filter(|request| request.method == HttpMethod::Put)
             .count();
-        assert_eq!(puts, 0, "an object that is already there is not uploaded again");
+        assert_eq!(
+            puts, 0,
+            "an object that is already there is not uploaded again"
+        );
     }
 
     #[test]
@@ -384,7 +522,11 @@ mod tests {
 
         let requests = fake.recorded();
         assert_eq!(requests[0].method, HttpMethod::Get);
-        assert!(requests[0].url.contains("max-keys=1"), "{}", requests[0].url);
+        assert!(
+            requests[0].url.contains("max-keys=1"),
+            "{}",
+            requests[0].url
+        );
     }
 
     #[test]
@@ -422,8 +564,10 @@ mod tests {
                 .contains("Credential=AKIAIOSFODNN7EXAMPLE/20130524/us-east-1/s3/aws4_request"),
             "{authorization}"
         );
-        assert!(request.headers.iter().any(
-            |(name, value)| name.eq_ignore_ascii_case("x-amz-date") && value == "20130524T000000Z"
-        ));
+        assert!(request
+            .headers
+            .iter()
+            .any(|(name, value)| name.eq_ignore_ascii_case("x-amz-date")
+                && value == "20130524T000000Z"));
     }
 }

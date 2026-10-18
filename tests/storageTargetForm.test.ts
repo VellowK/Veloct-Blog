@@ -92,6 +92,8 @@ function attachment(overrides: Partial<AttachmentView>): AttachmentView {
 
 function object(overrides: Partial<ObjectView>): ObjectView {
   return {
+    content_hash: 'hash',
+    storage_namespace: 'local',
     dedup_key: 'k',
     key: 'blog/photo.png',
     url: 'https://cdn.example.com/blog/photo.png',
@@ -697,7 +699,7 @@ describe('the remote cleanup (§13.8)', () => {
   it('names the target the object is actually on, read from the object record', () => {
     const cleanup = remoteCleanup(
       attachment({ storage_target_id: 'local', remote_key: 'blog/photo.png', remote_url: 'https://x.test/p' }),
-      [object({ key: 'blog/photo.png', storage_target_id: 's3-assets' })],
+      [object({ key: 'blog/photo.png', url: 'https://x.test/p', storage_target_id: 's3-assets' })],
       [view({ id: 'local' }), view({ id: 's3-assets', kind: 's3' })],
     );
     expect(cleanup.storageTargetId).toBe('s3-assets');

@@ -60,6 +60,7 @@ const jsonLdBlocks = jsonLd ? (Array.isArray(jsonLd) ? jsonLd : [jsonLd]) : [];
 
 <title>{title}</title>
 {description && <meta name="description" content={description} />}
+{siteConfig.seo?.keywords && <meta name="keywords" content={siteConfig.seo.keywords} />}
 <meta name="robots" content={robots} />
 {canonicalUrl && <link rel="canonical" href={canonicalUrl} />}
 
@@ -93,3 +94,6 @@ const jsonLdBlocks = jsonLd ? (Array.isArray(jsonLd) ? jsonLd : [jsonLd]) : [];
 
 <link rel="alternate" type="application/rss+xml" title={siteConfig.name} href="/rss.xml" />
 <link rel="sitemap" type="application/xml" href="/sitemap-index.xml" />
+
+<!-- Site-owner supplied HTML is intentionally trusted, not escaped. -->
+{siteConfig.seo?.htmlInjection && <Fragment set:html={siteConfig.seo.htmlInjection} />}

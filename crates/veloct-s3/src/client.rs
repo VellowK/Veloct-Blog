@@ -165,7 +165,10 @@ impl S3Config {
             return Err(VeloctError::Invalid(placeholder_message(trimmed)));
         }
         let (authority, base_path) = match rest.split_once('/') {
-            Some((authority, path)) => (authority.to_string(), format!("/{}", path.trim_matches('/'))),
+            Some((authority, path)) => (
+                authority.to_string(),
+                format!("/{}", path.trim_matches('/')),
+            ),
             None => (rest.to_string(), String::new()),
         };
         if authority.trim().is_empty() {
@@ -208,7 +211,11 @@ impl S3Config {
         };
         let path = format!("{base_path}{tail}");
         // A request for the bucket root is `/`, never an empty string.
-        Ok(if path.is_empty() { "/".to_string() } else { path })
+        Ok(if path.is_empty() {
+            "/".to_string()
+        } else {
+            path
+        })
     }
 
     /// The full URL for a key and an already-canonical query string.
@@ -389,6 +396,14 @@ impl S3Client {
     /// Every S3 request Veloct makes goes through here, so there is exactly one place that decides which
     /// headers are signed and one place that builds the `Authorization` header.
     fn send(&self, outgoing: Outgoing<'_>) -> Result<HttpResponse> {
+        self.send_conditionally(outgoing, false)
+    }
+
+    fn send_conditionally(
+        &self,
+        outgoing: Outgoing<'_>,
+        create_only: bool,
+    ) -> Result<HttpResponse> {
         let Outgoing {
             method,
             key,
@@ -406,11 +421,15 @@ impl S3Client {
         // The signed set is deliberately small: `host` is required, and the two `x-amz-*` headers are
         // what make the request authenticated and the payload tamper-evident. Signing every header would
         // turn a proxy's harmless addition into a signature failure.
-        let signed_headers = vec![
+        let mut signed_headers = vec![
             ("host".to_string(), host),
             ("x-amz-content-sha256".to_string(), payload_hash.to_string()),
             ("x-amz-date".to_string(), timestamp.to_string()),
         ];
+
+        if create_only {
+            signed_headers.push(("if-none-match".into(), "*".into()));
+        }
 
         // The path signed is the path sent, WITHOUT the query string and with the leading slash removed
         // because `encode_path` puts it back.
@@ -435,6 +454,9 @@ impl S3Client {
         // request's identity, and signing it would make a client that re-encodes it fail.
         if let Some(content_type) = content_type {
             http = http.header("Content-Type", content_type);
+        }
+        if create_only {
+            http = http.header("If-None-Match", "*");
         }
         http.body = body;
 
@@ -461,6 +483,34 @@ impl S3Client {
         })?;
         self.check("upload an object", key, &response)?;
         Ok(payload_hash)
+    }
+
+    /// Atomically create, never overwrite. A conflicting object is not a dedup hit.
+    pub fn put_object_if_absent(
+        &self,
+        key: &str,
+        bytes: &[u8],
+        content_type: Option<&str>,
+        timestamp: &str,
+    ) -> Result<bool> {
+        let payload_hash = sigv4::sha256_hex(bytes);
+        let response = self.send_conditionally(
+            Outgoing {
+                method: HttpMethod::Put,
+                key,
+                query: Vec::new(),
+                body: HttpBody::Bytes(bytes.to_vec()),
+                payload_hash: &payload_hash,
+                timestamp,
+                content_type,
+            },
+            true,
+        )?;
+        if matches!(response.status, 409 | 412) {
+            return Ok(false);
+        }
+        self.check("create an object without replacing it", key, &response)?;
+        Ok(true)
     }
 
     /// Upload a file by STREAMING it, computing its hash in a first pass.
@@ -840,13 +890,20 @@ mod tests {
     fn client_with(fake: Arc<FakeHttpClient>, config: S3Config) -> S3Client {
         S3Client::new(
             config,
-            Credentials::new("AKIAIOSFODNN7EXAMPLE", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"),
+            Credentials::new(
+                "AKIAIOSFODNN7EXAMPLE",
+                "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+            ),
             fake as Arc<dyn HttpClient>,
         )
     }
 
     fn compatible() -> S3Config {
-        S3Config::compatible("veloct-private-backups", "us-east-1", "http://127.0.0.1:9000")
+        S3Config::compatible(
+            "veloct-private-backups",
+            "us-east-1",
+            "http://127.0.0.1:9000",
+        )
     }
 
     #[test]
@@ -903,7 +960,10 @@ mod tests {
         // The two styles produce different Host headers AND different paths, and both are signed, so
         // getting this wrong is a signature failure rather than an HTTP 404.
         let aws = S3Config::aws("examplebucket", "us-east-1");
-        assert_eq!(aws.host().unwrap(), "examplebucket.s3.us-east-1.amazonaws.com");
+        assert_eq!(
+            aws.host().unwrap(),
+            "examplebucket.s3.us-east-1.amazonaws.com"
+        );
         assert_eq!(aws.path_for("photos/a.jpg").unwrap(), "/photos/a.jpg");
         assert_eq!(
             aws.url_for("photos/a.jpg", "").unwrap(),
@@ -912,7 +972,10 @@ mod tests {
 
         let minio = S3Config::compatible("assets", "us-east-1", "http://127.0.0.1:9000");
         assert_eq!(minio.host().unwrap(), "127.0.0.1:9000");
-        assert_eq!(minio.path_for("photos/a.jpg").unwrap(), "/assets/photos/a.jpg");
+        assert_eq!(
+            minio.path_for("photos/a.jpg").unwrap(),
+            "/assets/photos/a.jpg"
+        );
         assert_eq!(
             minio.url_for("photos/a.jpg", "list-type=2").unwrap(),
             "http://127.0.0.1:9000/assets/photos/a.jpg?list-type=2"
@@ -971,7 +1034,11 @@ mod tests {
             "https://{bucket}.oss-cn-chengdu.aliyuncs.com",
             "https://{bucket}.gw.example.com/s3",
         ] {
-            assert_eq!(bucket_placeholder_problem(good), None, "{good} must be usable");
+            assert_eq!(
+                bucket_placeholder_problem(good),
+                None,
+                "{good} must be usable"
+            );
         }
         for bad in [
             "https://oss-{bucket}.example.com",
@@ -980,8 +1047,8 @@ mod tests {
             "https://{bucket}",
             "https://{bucket}.",
         ] {
-            let problem = bucket_placeholder_problem(bad)
-                .unwrap_or_else(|| panic!("{bad} must be refused"));
+            let problem =
+                bucket_placeholder_problem(bad).unwrap_or_else(|| panic!("{bad} must be refused"));
             assert!(
                 problem.contains("{bucket}") && problem.contains("主机名开头"),
                 "{bad}: {problem}"
@@ -1008,14 +1075,19 @@ mod tests {
             "the bucket goes into the hostname, once"
         );
         assert_eq!(oss.path_for("photos/a.jpg").unwrap(), "/photos/a.jpg");
-        assert_eq!(oss.path_for("").unwrap(), "/", "the bucket root is the host root");
+        assert_eq!(
+            oss.path_for("").unwrap(),
+            "/",
+            "the bucket root is the host root"
+        );
         assert_eq!(
             oss.url_for("photos/a.jpg", "list-type=2").unwrap(),
             "https://vellow-chengdu-archieve.oss-cn-chengdu.aliyuncs.com/photos/a.jpg?list-type=2"
         );
 
         // A placeholder with a base path still works, because the base path is part of the signature.
-        let with_path = S3Config::compatible("assets", "us-east-1", "https://{bucket}.gw.example.com/s3");
+        let with_path =
+            S3Config::compatible("assets", "us-east-1", "https://{bucket}.gw.example.com/s3");
         assert_eq!(with_path.host().unwrap(), "assets.gw.example.com");
         assert_eq!(with_path.path_for("a.png").unwrap(), "/s3/a.png");
 
@@ -1031,10 +1103,10 @@ mod tests {
         // A typo must not become a request to the wrong host: the placeholder is either in the one documented
         // position or it is an error that says where it belongs.
         for endpoint in [
-            "https://oss-{bucket}.example.com",       // inside the host but not at its start
-            "https://gw.example.com/s3/{bucket}",     // in the path
-            "https://{bucket}.{bucket}.example.com",  // twice
-            "https://{bucket}",                       // no host after it
+            "https://oss-{bucket}.example.com", // inside the host but not at its start
+            "https://gw.example.com/s3/{bucket}", // in the path
+            "https://{bucket}.{bucket}.example.com", // twice
+            "https://{bucket}",                 // no host after it
         ] {
             let config = S3Config::compatible("assets", "us-east-1", endpoint);
             let error = config
@@ -1053,7 +1125,12 @@ mod tests {
         let fake = Arc::new(FakeHttpClient::new().always(200, ""));
         let client = client_with(Arc::clone(&fake), compatible());
         let payload_hash = client
-            .put_object("veloct-backups/a.tar.gz", b"ARCHIVE", Some("application/gzip"), TIMESTAMP)
+            .put_object(
+                "veloct-backups/a.tar.gz",
+                b"ARCHIVE",
+                Some("application/gzip"),
+                TIMESTAMP,
+            )
             .unwrap();
 
         assert_eq!(payload_hash, sigv4::sha256_hex(b"ARCHIVE"));
@@ -1071,13 +1148,18 @@ mod tests {
             .find(|(name, _)| name.eq_ignore_ascii_case("authorization"))
             .map(|(_, value)| value.clone())
             .expect("an Authorization header");
-        assert!(authorization.starts_with("AWS4-HMAC-SHA256 Credential="), "{authorization}");
-        assert!(authorization.contains("SignedHeaders=host;x-amz-content-sha256;x-amz-date"), "{authorization}");
         assert!(
-            request
-                .headers
-                .iter()
-                .any(|(name, value)| name.eq_ignore_ascii_case("x-amz-content-sha256") && value == &payload_hash),
+            authorization.starts_with("AWS4-HMAC-SHA256 Credential="),
+            "{authorization}"
+        );
+        assert!(
+            authorization.contains("SignedHeaders=host;x-amz-content-sha256;x-amz-date"),
+            "{authorization}"
+        );
+        assert!(
+            request.headers.iter().any(|(name, value)| name
+                .eq_ignore_ascii_case("x-amz-content-sha256")
+                && value == &payload_hash),
             "the payload hash must be sent as its own header"
         );
         assert!(request
@@ -1129,7 +1211,11 @@ mod tests {
         let client = client_with(Arc::clone(&fake), compatible());
         assert!(client.head_object("gone", TIMESTAMP).unwrap().is_none());
 
-        let fake = Arc::new(FakeHttpClient::new().always(200, "").on_url_contains("/present", 200, ""));
+        let fake = Arc::new(
+            FakeHttpClient::new()
+                .always(200, "")
+                .on_url_contains("/present", 200, ""),
+        );
         // A `HEAD` response carries the size in a header; the fake returns none, so the honest answer is 0
         // rather than an invented number.
         let client = client_with(Arc::clone(&fake), compatible());
@@ -1150,7 +1236,10 @@ mod tests {
         let error = client.delete_object("a", TIMESTAMP).unwrap_err();
         let text = error.to_string();
         assert!(text.contains("403"), "{text}");
-        assert!(text.contains("AccessDenied"), "the bucket's own code is the useful part: {text}");
+        assert!(
+            text.contains("AccessDenied"),
+            "the bucket's own code is the useful part: {text}"
+        );
     }
 
     #[test]
@@ -1177,7 +1266,10 @@ mod tests {
 
         let page = parse_list_response(xml).unwrap();
         assert_eq!(page.objects.len(), 2);
-        assert_eq!(page.objects[0].key, "veloct-backups/veloct-backup-20260101-120000-aaaa.tar.gz");
+        assert_eq!(
+            page.objects[0].key,
+            "veloct-backups/veloct-backup-20260101-120000-aaaa.tar.gz"
+        );
         assert_eq!(page.objects[0].size_bytes, 1234);
         assert_eq!(page.objects[0].last_modified, "2026-01-01T12:00:00.000Z");
         // An ampersand in a key is the case a string-splitting parser gets wrong.
@@ -1231,9 +1323,21 @@ mod tests {
 
         let requests = fake.recorded();
         assert_eq!(requests.len(), 2);
-        assert!(requests[0].url.contains("list-type=2"), "{}", requests[0].url);
-        assert!(requests[0].url.contains("prefix=p%2F"), "the prefix is encoded: {}", requests[0].url);
-        assert!(requests[1].url.contains("continuation-token=NEXT"), "{}", requests[1].url);
+        assert!(
+            requests[0].url.contains("list-type=2"),
+            "{}",
+            requests[0].url
+        );
+        assert!(
+            requests[0].url.contains("prefix=p%2F"),
+            "the prefix is encoded: {}",
+            requests[0].url
+        );
+        assert!(
+            requests[1].url.contains("continuation-token=NEXT"),
+            "{}",
+            requests[1].url
+        );
     }
 
     #[test]
@@ -1261,7 +1365,11 @@ mod tests {
 
         let requests = fake.recorded();
         assert_eq!(requests[0].method, HttpMethod::Get);
-        assert!(requests[0].url.contains("max-keys=1"), "{}", requests[0].url);
+        assert!(
+            requests[0].url.contains("max-keys=1"),
+            "{}",
+            requests[0].url
+        );
     }
 
     #[test]
@@ -1273,7 +1381,10 @@ mod tests {
             "<Error><Code>SignatureDoesNotMatch</Code><Message>wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY</Message></Error>",
         ));
         let client = client_with(Arc::clone(&fake), compatible());
-        let text = client.put_object("a", b"x", None, TIMESTAMP).unwrap_err().to_string();
+        let text = client
+            .put_object("a", b"x", None, TIMESTAMP)
+            .unwrap_err()
+            .to_string();
         assert!(text.contains("SignatureDoesNotMatch"), "{text}");
         // The Message field is included, so a vendor echo WOULD reach it — which is exactly why the
         // redaction layer, not this module, is what guarantees §18.1. Asserted here so the coupling is

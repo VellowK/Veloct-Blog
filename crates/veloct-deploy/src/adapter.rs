@@ -73,6 +73,13 @@ impl PushPayload {
             });
         }
 
+        // A publish root (or its dist parent) must not redirect deployment to source/private data.
+        for ancestor in std::iter::once(root).chain(root.parent()) {
+            let metadata = std::fs::symlink_metadata(ancestor).map_err(|error| VeloctError::io(ancestor, error))?;
+            if metadata.file_type().is_symlink() {
+                return Err(VeloctError::Invalid("a publish root must not be a symbolic link".into()));
+            }
+        }
         let mut files = Vec::new();
         collect(root, root, &mut files)?;
         files.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
@@ -123,20 +130,26 @@ fn collect(root: &Path, current: &Path, out: &mut Vec<PushFile>) -> Result<()> {
             source: error,
         })?;
         let path = entry.path();
-        if path.is_dir() {
-            collect(root, &path, out)?;
-            continue;
-        }
-        if !path.is_file() {
-            continue;
+        let file_type = entry.file_type().map_err(|error| VeloctError::io(&path, error))?;
+        if file_type.is_symlink() {
+            return Err(VeloctError::Invalid("publish artifacts must not contain symbolic links".into()));
         }
         let relative = path
             .strip_prefix(root)
             .map_err(|_| VeloctError::Invalid("a file escaped the publish root".into()))?
             .to_string_lossy()
             .replace('\\', "/");
-        let bytes = std::fs::read(&path).map_err(|error| VeloctError::io(&path, error))?;
-        out.push(PushFile::new(relative, bytes));
+        if !crate::edgeone::safe_path(&relative) {
+            return Err(VeloctError::Invalid("publish artifacts contain a private or unsafe path; rebuild without source, credentials or caches".into()));
+        }
+        if file_type.is_dir() {
+            collect(root, &path, out)?;
+        } else if file_type.is_file() {
+            let bytes = std::fs::read(&path).map_err(|error| VeloctError::io(&path, error))?;
+            out.push(PushFile::new(relative, bytes));
+        } else {
+            return Err(VeloctError::Invalid("publish artifacts must contain only regular files".into()));
+        }
     }
     Ok(())
 }
@@ -801,8 +814,8 @@ mod tests {
         let outcome = adapter.push(&payload).unwrap();
         assert!(outcome.manual);
         assert!(!adapter.capabilities().automatic);
-        // ADR-0012: an unverified protocol reports that it is unverified.
-        assert!(!adapter.capabilities().verified);
+        // The verified protocol can still be explicitly simulated as a manual export.
+        assert!(adapter.capabilities().verified);
     }
 
     #[test]
@@ -812,7 +825,7 @@ mod tests {
         assert!(memory.capabilities().automatic);
 
         let edgeone = MemoryAdapter::new(frozen(TargetKind::EdgeOneInternational, "intl"));
-        assert!(!edgeone.capabilities().verified, "ADR-0012: not verified");
+        assert!(edgeone.capabilities().verified, "official Makers SDK protocol verified");
     }
 
     #[test]

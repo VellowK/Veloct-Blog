@@ -251,7 +251,23 @@ pub fn prune(directory: &Path, keep: usize) -> Result<usize> {
     Ok(removed)
 }
 
-/// Stage a restore, so the user can be shown what it will do BEFORE it does it (§17.10).
+/// Remove archives older than `days` based on file modification time.
+pub fn prune_older_than(directory: &Path, days: usize) -> Result<usize> {
+    let cutoff = std::time::SystemTime::now()
+        .checked_sub(std::time::Duration::from_secs(days.max(1) as u64 * 24 * 60 * 60))
+        .ok_or_else(|| VeloctError::Invalid("invalid backup expiration period".into()))?;
+    let mut removed = 0usize;
+    for archive in list_archives(directory)? {
+        let old = std::fs::metadata(&archive.path)
+            .and_then(|metadata| metadata.modified())
+            .map(|modified| modified < cutoff)
+            .unwrap_or(false);
+        if old && std::fs::remove_file(&archive.path).is_ok() { removed += 1; }
+    }
+    Ok(removed)
+}
+
+
 ///
 /// Staging unpacks into a temporary directory and verifies every file against the manifest. Nothing in the
 /// project is touched.

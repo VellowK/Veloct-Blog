@@ -17,6 +17,7 @@
 // repository has no React test renderer and a rule in JSX is a rule nothing checks.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Feedback } from './components/Notifications';
 
 import {
   api,
@@ -53,11 +54,15 @@ import {
 interface Props {
   /** A network image lands in a document, so the panel needs an open project like its neighbours. */
   enabled: boolean;
+  /** Resource browsing is separate from API-key configuration. */
+  mode?: 'manage' | 'settings';
+  /** Opens the independent network-image settings view. */
+  onOpenSettings?: () => void;
   /** Called with the Markdown for a chosen image. The caller decides what to do with it. */
   onInsertMarkdown?: (markdown: string) => void;
 }
 
-export default function NetworkImagePanel({ enabled, onInsertMarkdown }: Props) {
+export default function NetworkImagePanel({ enabled, mode = 'manage', onInsertMarkdown }: Props) {
   const [sources, setSources] = useState<NetworkImageSourceView[]>([]);
   const [active, setActive] = useState<ImageSourceName>('unsplash');
   const [query, setQuery] = useState('');
@@ -267,22 +272,19 @@ export default function NetworkImagePanel({ enabled, onInsertMarkdown }: Props) 
     );
   }
 
+
   return (
     <div className="network-image-panel">
       <header className="network-image-header">
-        <strong>网络图片浏览</strong>
+        <strong>{mode === 'settings' ? '网络图片设置与浏览' : '网络图片浏览'}</strong>
         <span className="muted">§13.14:只写入远程地址,不下载、不进缓存池</span>
         <button type="button" onClick={() => void reload()} disabled={busy}>
           刷新来源
         </button>
       </header>
 
-      {error && (
-        <p className="network-image-error" role="alert">
-          {error}
-        </p>
-      )}
-      {notice && <p className="network-image-notice">{notice}</p>}
+      <Feedback message={error} tone="error" />
+      <Feedback message={notice} tone="success" />
 
       {/* A source the contract names but this build does not offer is a sentence, not a silence. */}
       {refusal && <p className="network-image-warning">{refusal}</p>}

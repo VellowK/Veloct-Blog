@@ -9,10 +9,10 @@ import { readSiteConfig } from '../../lib/site-config.mjs';
 import { byNewest, formatDate, readingStats, isProduction } from '../../lib/format.ts';
 import { articleRoute, WipRoute } from '../../lib/content.ts';
 
+
 export async function getStaticPaths() {
   const articles = await getCollection('articles');
   const options = { isProduction: import.meta.env.PROD };
-
   const tags = new Map();
   for (const entry of articles) {
     if (articleRoute(entry, options).kind !== WipRoute.Article) continue;
@@ -21,24 +21,25 @@ export async function getStaticPaths() {
       tags.get(tag).push(entry);
     }
   }
-
-  return [...tags.entries()].map(([tag, entries]) => ({
-    params: { tag },
-    props: { tag, entries: entries.sort(byNewest) },
-  }));
+  const site = readSiteConfig();
+  return [...tags.entries()].map(([tag, values]) => {
+    const entries = values.sort(byNewest);
+    return { params: { tag }, props: { tag, page: { data: entries.slice(0, site.tagDisplayCount), total: entries.length, url: { current: `/tags/${encodeURIComponent(tag)}/` } } } };
+  });
 }
 
-const { tag, entries } = Astro.props;
+const { tag, page } = Astro.props;
+const entries = page.data;
 const site = readSiteConfig();
 ---
 
 <BaseLayout
   title={`#${tag} · ${site.name}`}
   description={`${site.name} 中标签为 ${tag} 的文章`}
-  canonical={`/tags/${encodeURIComponent(tag)}/`}
+  canonical={page.url.current}
 >
   <h1 class="font-serif text-2xl">#{tag}</h1>
-  <p class="mt-2 muted">{entries.length} 篇文章</p>
+  <p class="mt-2 muted">{page.total} 篇文章</p>
 
   <ul class="mt-6 space-y-3">
     {entries.map((entry) => {

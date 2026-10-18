@@ -6,11 +6,9 @@
  *  * **Full Markdown editing, WYSIWYG by default.** Tiptap's StarterKit plus a table, an image and a link
  *    extension covers the dialect §3.3 names: CommonMark, GFM, tables, code blocks, images, links, lists
  *    and quotes.
- *  * **A split mode whose right side is the REAL Astro render.** That is why this component renders no
- *    preview of its own. §5.1 forbids a second renderer, and the moment there were two they would
- *    disagree — at which point the preview stops predicting the site. The preview is an iframe in `App`.
- *  * **A draggable divider.** Owned by `App`, because the split is between this pane and the preview pane
- *    rather than inside the editor.
+ *  * **One full-width writing surface.** The owner's latest request removes the duplicate reading pane;
+ *    this WYSIWYG editor already shows formatted content. MD switches the same surface to source mode.
+ *    Final theme/layout remains in the separate real-site preview, not alongside the writing pane.
  *  * **The online frontend contains no Markdown editor.** Everything here lives in `src/`, which is only
  *    ever bundled into the Tauri window; the site is a separate Astro project that never imports it.
  *
@@ -20,17 +18,11 @@
  * permanent redirect for good. `replaceBody` is the single place that happens.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useImperativeHandle, useMemo, useRef, useState, type Ref } from 'react';
 import { EditorContent, useEditor } from '@tiptap/react';
-import StarterKit from '@tiptap/starter-kit';
-import { Markdown } from '@tiptap/markdown';
-// Tiptap v3 exports the whole table family from one package, so there is one import and no chance of
-// the four pieces drifting to different versions.
-import { Table, TableCell, TableHeader, TableRow } from '@tiptap/extension-table';
-import Image from '@tiptap/extension-image';
-import Link from '@tiptap/extension-link';
+import { markdownExtensions } from './lib/markdownExtensions';
 
-import { frontmatterFields, splitSource } from './lib/frontmatter';
+import { frontmatterFields, frontmatterSummary, replaceBody, replaceSummary, splitSource } from './lib/frontmatter';
 
 /** A toolbar action, kept as data so the buttons and their states cannot drift apart. */
 interface ToolbarAction {
@@ -42,11 +34,15 @@ interface ToolbarAction {
   disabled?: boolean;
 }
 
+export interface EditorHandle { insertMarkdown: (markdown: string) => void }
+
 export default function Editor({
   source,
   editable,
   onChange,
+  ref,
 }: {
+  ref?: Ref<EditorHandle>;
   /** The whole file, including the frontmatter, which the editor never touches. */
   source: string;
   editable: boolean;
@@ -55,35 +51,28 @@ export default function Editor({
   const { frontmatter, body } = useMemo(() => splitSource(source), [source]);
   const fields = useMemo(() => frontmatterFields(frontmatter), [frontmatter]);
 
-  // The body the editor last wrote, so an incoming `source` change from Select or from a conflict
-  // resolution is applied, while the change the editor itself just produced is not applied back over it.
+  const sourceRef = useRef(source);
+  sourceRef.current = source;
+  const summary = useMemo(() => frontmatterSummary(frontmatter), [frontmatter]);
   const lastWrittenBody = useRef<string | null>(null);
   const [markdownView, setMarkdownView] = useState(false);
+  const markdownInput = useRef<HTMLTextAreaElement>(null);
 
   const editor = useEditor({
     editable,
-    extensions: [
-      StarterKit.configure({
-        // The heading levels §3.3 uses; a deeper one would produce Markdown the site does not style.
-        heading: { levels: [1, 2, 3, 4] },
-        // Markdown is the truth, so a code block is fenced rather than a rich object.
-        codeBlock: {},
-      }),
-      Markdown,
-      Table.configure({ resizable: false }),
-      TableRow,
-      TableHeader,
-      TableCell,
-      Image.configure({ inline: false, allowBase64: false }),
-      // A link is plain Markdown, so it is not opened on click: clicking inside the editor should place
-      // the cursor, not navigate away from the document being written.
-      Link.configure({ openOnClick: false, autolink: true }),
-    ],
+    extensions: markdownExtensions(),
     content: body,
+    contentType: 'markdown',
     onUpdate: ({ editor: instance }) => {
       const nextBody = instance.getMarkdown();
       lastWrittenBody.current = nextBody;
-      onChange(`${frontmatter}${frontmatter.endsWith('\n') || !frontmatter ? '' : '\n'}${nextBody}`);
+      const current = sourceRef.current;
+      const currentSplit = splitSource(current);
+      const nextSource = currentSplit.frontmatter === frontmatter
+        ? `${frontmatter}${frontmatter.endsWith('\n') || !frontmatter ? '' : '\n'}${nextBody}`
+        : replaceBody(current, nextBody);
+      sourceRef.current = nextSource;
+      onChange(nextSource);
     },
   });
 
@@ -95,12 +84,36 @@ export default function Editor({
     if (lastWrittenBody.current === body) return;
     if (editor.getMarkdown() === body) return;
     lastWrittenBody.current = body;
-    editor.commands.setContent(body);
+    // External/MD-buffer updates are reads, not edits. Do not fire onChange or dirty the document.
+    editor.commands.setContent(body, { contentType: 'markdown', emitUpdate: false });
   }, [editor, body]);
 
   useEffect(() => {
-    editor?.setEditable(editable);
+    editor?.setEditable(editable, false);
   }, [editor, editable]);
+
+  useImperativeHandle(ref, () => ({
+    insertMarkdown(markdown: string) {
+      if (!editable || !editor) throw new Error('编辑器尚未就绪，请稍后重试。');
+      if (!markdownView) {
+        editor.chain().focus().insertContent(markdown, { contentType: 'markdown' }).run();
+        return;
+      }
+      const input = markdownInput.current;
+      const current = splitSource(sourceRef.current).body;
+      const start = input?.selectionStart ?? current.length;
+      const end = input?.selectionEnd ?? start;
+      const insertion = `\n\n${markdown}\n\n`;
+      const next = replaceBody(sourceRef.current, current.slice(0, start) + insertion + current.slice(end));
+      sourceRef.current = next;
+      onChange(next);
+      requestAnimationFrame(() => {
+        if (!input?.isConnected) return;
+        input.focus();
+        input.setSelectionRange(start + insertion.length, start + insertion.length);
+      });
+    },
+  }), [editable, editor, markdownView, onChange]);
 
   if (!editor) {
     return <div className="editor-loading muted">正在加载编辑器…</div>;
@@ -239,8 +252,23 @@ export default function Editor({
 
   return (
     <div className="wysiwyg">
+      <div className="summary-editor">
+        <label htmlFor="document-summary">摘要</label>
+        <textarea
+          id="document-summary"
+          rows={2}
+          value={summary}
+          readOnly={!editable}
+          placeholder="填写页面摘要"
+          onChange={(event) => {
+            const nextSource = replaceSummary(sourceRef.current, event.target.value);
+            sourceRef.current = nextSource;
+            onChange(nextSource);
+          }}
+        />
+      </div>
       {fields.length > 0 && (
-        <div className="frontmatter-strip" title="frontmatter 由 Veloct 维护,编辑器不会改动它">
+        <div className="frontmatter-strip" title="仅摘要可编辑;ID 等其他 frontmatter 元数据保持不变">
           {fields.map((field) => (
             <span key={field.key} className={`fm ${field.key}`}>
               <span className="fm-key">{field.key}</span>
@@ -280,12 +308,15 @@ export default function Editor({
       {markdownView ? (
         <textarea
           className="markdown-source"
+          ref={markdownInput}
           value={body}
           spellCheck={false}
           readOnly={!editable}
           onChange={(event) => {
-            lastWrittenBody.current = event.target.value;
-            onChange(`${frontmatter}${frontmatter.endsWith('\n') || !frontmatter ? '' : '\n'}${event.target.value}`);
+            const nextSource = replaceBody(sourceRef.current, event.target.value);
+            sourceRef.current = nextSource;
+            // Let the body effect update the rich-text instance too, so switching back cannot show stale text.
+            onChange(nextSource);
           }}
         />
       ) : (

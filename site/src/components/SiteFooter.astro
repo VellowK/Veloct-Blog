@@ -11,9 +11,9 @@ const site = readSiteConfig();
 const filing = site.filing ?? {};
 
 const entries = [
-  { key: 'icp', label: 'ICP 备案', href: 'https://beian.miit.gov.cn/' },
-  { key: 'police', label: '公安备案', href: 'https://beian.mps.gov.cn/' },
-  { key: 'moe', label: 'MOE 备案', href: null },
+  { key: 'icp', label: 'ICP 备案', href: filing.icpUrl || 'https://beian.miit.gov.cn/' },
+  { key: 'police', label: '公安备案', href: filing.policeUrl || 'https://beian.mps.gov.cn/' },
+  { key: 'moe', label: 'MOE 备案', href: filing.moeUrl || null },
 ].filter((entry) => filing[entry.key]);
 
 const year = new Date(import.meta.env.VELOCT_BUILD_TIME ?? 0).getUTCFullYear();
@@ -24,7 +24,7 @@ const displayYear = Number.isNaN(year) || year === 1970 ? new Date().getUTCFullY
 
 <footer class="mt-12 border-t border-ink-800 pt-6 text-sm muted">
   <p>
-    © {displayYear} {site.author?.name ?? site.name}
+    © {displayYear} <span data-veloct-draft="author.name">{site.author?.name || site.name}</span>
   </p>
 
   {entries.length > 0 && (
@@ -32,11 +32,11 @@ const displayYear = Number.isNaN(year) || year === 1970 ? new Date().getUTCFullY
       {entries.map((entry) => (
         <li>
           {entry.href ? (
-            <a href={entry.href} target="_blank" rel="noopener noreferrer">
-              {entry.label}: {filing[entry.key]}
+            <a href={entry.href} data-veloct-draft-href={`filing.${entry.key}Url`} target="_blank" rel="noopener noreferrer">
+              {entry.label}: <span data-veloct-draft={`filing.${entry.key}`}>{filing[entry.key]}</span>
             </a>
           ) : (
-            <span>{entry.label}: {filing[entry.key]}</span>
+            <span>{entry.label}: <span data-veloct-draft={`filing.${entry.key}`}>{filing[entry.key]}</span></span>
           )}
         </li>
       ))}

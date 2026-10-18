@@ -187,14 +187,17 @@ pub struct StorageConfig {
     /// Only a HANDLE. Never a secret value.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub credential_ref: Option<String>,
+    #[serde(default)]
+    pub hidden_from_upload: bool,
+    #[serde(default)]
+    pub upload_priority: i32,
+    /// Absent in older projects: retain legacy addressing, naming and reuse.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub s3_policy: Option<crate::s3_policy::S3Policy>,
 }
 
 impl StorageConfig {
-    pub fn new(
-        id: impl Into<String>,
-        name: impl Into<String>,
-        kind: StorageKind,
-    ) -> Self {
+    pub fn new(id: impl Into<String>, name: impl Into<String>, kind: StorageKind) -> Self {
         Self {
             id: StorageTargetId::new(id),
             name: name.into(),
@@ -213,6 +216,9 @@ impl StorageConfig {
             key_prefix: None,
             public_url_prefix: String::new(),
             credential_ref: None,
+            hidden_from_upload: false,
+            upload_priority: 0,
+            s3_policy: None,
         }
     }
 
@@ -225,10 +231,7 @@ impl StorageConfig {
     pub fn storage_namespace(&self) -> String {
         let prefix = self.key_prefix.clone().unwrap_or_default();
         let parts: Vec<String> = match self.kind {
-            StorageKind::S3 => vec![
-                self.bucket.clone().unwrap_or_default(),
-                prefix,
-            ],
+            StorageKind::S3 => vec![self.bucket.clone().unwrap_or_default(), prefix],
             StorageKind::GitHub => vec![
                 self.repository.clone().unwrap_or_default(),
                 self.branch.clone().unwrap_or_else(|| "main".to_string()),
@@ -243,10 +246,7 @@ impl StorageConfig {
                 self.username.clone().unwrap_or_default(),
                 prefix,
             ],
-            StorageKind::LskyPro => vec![
-                self.instance.clone().unwrap_or_default(),
-                prefix,
-            ],
+            StorageKind::LskyPro => vec![self.instance.clone().unwrap_or_default(), prefix],
             // A local target's directory is derived from the project root and the target's own id
             // (`targets::local_root`), so the id is already part of the dedup key and the prefix is the
             // only remaining part of an object's identity. Two prefixes are two namespaces, exactly as
@@ -309,9 +309,9 @@ impl StorageConfig {
                 // where it is enforced while a request is built; it is asked here TOO so a typo is refused when
                 // the target is SAVED rather than at the first upload — the same move D168 made for §13.12's
                 // instance address, and §2.9 is why: a configuration mistake should be reported as one.
-                if let Some(problem) = veloct_s3::bucket_placeholder_problem(
-                    self.endpoint.as_deref().unwrap_or(""),
-                ) {
+                if let Some(problem) =
+                    veloct_s3::bucket_placeholder_problem(self.endpoint.as_deref().unwrap_or(""))
+                {
                     return Err(problem);
                 }
             }
@@ -324,7 +324,8 @@ impl StorageConfig {
                 let instance = self.instance.as_deref().unwrap_or("").trim();
                 if instance.is_empty() {
                     return Err(
-                        "Lsky Pro 目标必须填写实例地址(§13.12),例如 https://img.example.com。".into(),
+                        "Lsky Pro 目标必须填写实例地址(§13.12),例如 https://img.example.com。"
+                            .into(),
                     );
                 }
                 // §13.12's "实例地址 / API 地址": the endpoint is built by appending `/api/v1` to this value, so
@@ -353,8 +354,18 @@ impl StorageConfig {
                 }
             }
         }
+        if self.kind == StorageKind::S3 {
+            if let Some(policy) = &self.s3_policy {
+                policy.validate(self).map_err(|e| e.to_string())?;
+                crate::s3::s3_config(self)
+                    .and_then(|s3| s3.url_for("", ""))
+                    .map_err(|e| e.to_string())?;
+            }
+        }
         if let Some(prefix) = &self.key_prefix {
-            if prefix.contains("..") || prefix.starts_with('/') {
+            if (prefix.contains("..") || prefix.starts_with('/'))
+                && !(self.kind == StorageKind::S3 && self.s3_policy.is_some())
+            {
                 return Err(format!(
                     "路径前缀 {prefix:?} 必须是相对路径:不能以 / 开头,也不能包含 ..。"
                 ));
@@ -504,7 +515,9 @@ pub fn object_key(config: &StorageConfig, file_name: &str) -> Result<String> {
 /// Deliberately small and honest: it covers what a personal site actually attaches, and an unknown
 /// extension is `None` rather than a guess, because a WRONG `Content-Type` is worse than a missing one.
 pub fn content_type_for(file_name: &str) -> Option<String> {
-    let extension = file_name.rsplit_once('.').map(|(_, ext)| ext.to_ascii_lowercase())?;
+    let extension = file_name
+        .rsplit_once('.')
+        .map(|(_, ext)| ext.to_ascii_lowercase())?;
     let mime = match extension.as_str() {
         "png" => "image/png",
         "jpg" | "jpeg" => "image/jpeg",
@@ -533,11 +546,15 @@ pub fn public_url(config: &StorageConfig, key: &str) -> Result<String> {
             config.id
         )));
     }
-    Ok(format!(
-        "{}/{}",
-        config.public_url_prefix.trim_end_matches('/'),
+    let encoded;
+    let key = if config.kind == StorageKind::S3 && config.s3_policy.is_some() {
+        encoded = veloct_s3::sigv4::uri_encode(key.trim_start_matches('/'), false);
+        encoded.as_str()
+    } else {
         key.trim_start_matches('/')
-    ))
+    };
+    let url = format!("{}/{}", config.public_url_prefix.trim_end_matches('/'), key);
+    Ok(crate::s3_policy::with_suffix(config, key, url))
 }
 
 /// A target: its configuration plus an adapter.
@@ -563,6 +580,10 @@ impl StorageTarget {
     pub fn store(&self, file_name: &str, bytes: &[u8]) -> Result<PutOutcome> {
         let key = object_key(&self.config, file_name)?;
         self.adapter.put(&key, bytes)
+    }
+
+    pub(crate) fn store_key(&self, key: &str, bytes: &[u8]) -> Result<PutOutcome> {
+        self.adapter.put(key, bytes)
     }
 
     /// The public URL for a key.
@@ -733,9 +754,7 @@ impl StorageAdapter for MemoryStore {
     fn delete_remote(&self, key: &str) -> Result<()> {
         let mut objects = self.store.objects.lock().unwrap();
         if objects.remove(key).is_none() {
-            return Err(VeloctError::Invalid(format!(
-                "no remote object at {key}"
-            )));
+            return Err(VeloctError::Invalid(format!("no remote object at {key}")));
         }
         Ok(())
     }
@@ -802,9 +821,7 @@ impl StorageAdapter for LocalFileStore {
         if !path.is_file() {
             return Ok(None);
         }
-        let size = std::fs::metadata(&path)
-            .map(|meta| meta.len())
-            .unwrap_or(0);
+        let size = std::fs::metadata(&path).map(|meta| meta.len()).unwrap_or(0);
         Ok(Some(RemoteObject {
             key: key.to_string(),
             public_url: public_url(&self.config, key)?,
@@ -814,7 +831,11 @@ impl StorageAdapter for LocalFileStore {
 
     fn test_connection(&self) -> Result<String> {
         std::fs::create_dir_all(&self.root).map_err(|error| VeloctError::io(&self.root, error))?;
-        Ok(format!("{} is writable at {}", self.config.name, self.root.display()))
+        Ok(format!(
+            "{} is writable at {}",
+            self.config.name,
+            self.root.display()
+        ))
     }
 
     fn delete_remote(&self, key: &str) -> Result<()> {
@@ -882,7 +903,11 @@ mod tests {
         ] {
             let mut ok = s3();
             ok.endpoint = Some(endpoint.to_string());
-            assert!(ok.validate().is_ok(), "{endpoint} must be usable: {:?}", ok.validate());
+            assert!(
+                ok.validate().is_ok(),
+                "{endpoint} must be usable: {:?}",
+                ok.validate()
+            );
         }
 
         // And an endpoint left EMPTY still means the AWS endpoint, which is what §13.11 documents.
@@ -946,10 +971,17 @@ mod tests {
         let mut spellings: Vec<&str> = Vec::new();
         for kind in StorageKind::ALL {
             let (variant, spelling) = spelling_of(kind);
-            assert_eq!(variant, kind, "the guard table must answer for {kind:?} itself");
+            assert_eq!(
+                variant, kind,
+                "the guard table must answer for {kind:?} itself"
+            );
             // The stored spelling is what a view carries and what `parse` accepts back, so the window can
             // send `kind` straight to `save_storage_target`.
-            assert_eq!(StorageKind::parse(spelling), Some(kind), "{spelling:?} must parse");
+            assert_eq!(
+                StorageKind::parse(spelling),
+                Some(kind),
+                "{spelling:?} must parse"
+            );
             assert!(
                 !spellings.contains(&spelling),
                 "{spelling:?} appears twice in StorageKind::ALL"
@@ -1019,7 +1051,10 @@ mod tests {
         // And every OFFERED kind carries no gap, so "no reason" stays meaningful. This is the assertion that
         // fails first when a kind is added to the list without an adapter behind it.
         for kind in StorageKind::ALL {
-            assert!(crate::targets::is_implemented(kind), "{kind:?} has an adapter");
+            assert!(
+                crate::targets::is_implemented(kind),
+                "{kind:?} has an adapter"
+            );
             assert!(
                 crate::targets::unimplemented_reason(kind).is_none(),
                 "{kind:?}"
@@ -1063,7 +1098,10 @@ mod tests {
         config.repository = Some("vellow/assets".to_string());
         config.branch = Some("main".to_string());
         config.key_prefix = Some("images".to_string());
-        assert_eq!(config.storage_namespace(), "github:vellow/assets|main|images");
+        assert_eq!(
+            config.storage_namespace(),
+            "github:vellow/assets|main|images"
+        );
     }
 
     #[test]
@@ -1144,7 +1182,10 @@ mod tests {
         // `/api/v1`, so a relative one cannot resolve. Both spellings §13.12 allows are accepted.
         config.instance = Some("lsky.example.com".to_string());
         assert!(
-            config.validate().unwrap_err().contains("http:// 或 https://"),
+            config
+                .validate()
+                .unwrap_err()
+                .contains("http:// 或 https://"),
             "{:?}",
             config.validate()
         );
@@ -1204,7 +1245,10 @@ mod tests {
         let config = s3();
         let json = serde_json::to_string(&config).unwrap();
         assert!(json.contains("keychain:storage/s3-main"));
-        assert!(!json.contains("secret"), "no secret value may appear: {json}");
+        assert!(
+            !json.contains("secret"),
+            "no secret value may appear: {json}"
+        );
         assert!(!json.contains("AKIA"), "no access key may appear: {json}");
         assert!(config.has_credential());
     }
@@ -1212,7 +1256,10 @@ mod tests {
     #[test]
     fn the_object_key_joins_the_prefix_and_the_file_name() {
         let config = s3();
-        assert_eq!(object_key(&config, "photo-a8k3xq.webp").unwrap(), "uploads/photo-a8k3xq.webp");
+        assert_eq!(
+            object_key(&config, "photo-a8k3xq.webp").unwrap(),
+            "uploads/photo-a8k3xq.webp"
+        );
 
         let mut no_prefix = config.clone();
         no_prefix.key_prefix = None;
@@ -1220,7 +1267,10 @@ mod tests {
 
         let mut trailing = config.clone();
         trailing.key_prefix = Some("uploads/".to_string());
-        assert_eq!(object_key(&trailing, "photo.webp").unwrap(), "uploads/photo.webp");
+        assert_eq!(
+            object_key(&trailing, "photo.webp").unwrap(),
+            "uploads/photo.webp"
+        );
     }
 
     #[test]
@@ -1252,7 +1302,10 @@ mod tests {
         let mut config = s3();
         config.public_url_prefix = String::new();
         let error = public_url(&config, "uploads/x.webp").unwrap_err();
-        assert!(error.to_string().contains("no public URL prefix"), "{error}");
+        assert!(
+            error.to_string().contains("no public URL prefix"),
+            "{error}"
+        );
     }
 
     #[test]
@@ -1274,7 +1327,11 @@ mod tests {
         assert!(store.put("uploads/x.webp", b"one").unwrap().was_created());
         let second = store.put("uploads/x.webp", b"two").unwrap();
         assert!(!second.was_created(), "the object already exists");
-        assert_eq!(second.object().size_bytes, 3, "the ORIGINAL size is reported");
+        assert_eq!(
+            second.object().size_bytes,
+            3,
+            "the ORIGINAL size is reported"
+        );
     }
 
     #[test]
@@ -1330,7 +1387,10 @@ mod tests {
 
         store.delete_remote("uploads/a.webp").unwrap();
         assert!(store.head("uploads/a.webp").unwrap().is_none());
-        assert!(store.head("uploads/b.webp").unwrap().is_some(), "the other object survives");
+        assert!(
+            store.head("uploads/b.webp").unwrap().is_some(),
+            "the other object survives"
+        );
     }
 
     #[test]
@@ -1353,8 +1413,14 @@ mod tests {
             Box::new(LocalFileStore::new(config, dir.path())),
         );
         let capabilities = target.capabilities();
-        assert!(capabilities.can_delete_remotely, "one object, explicitly asked for");
-        assert!(capabilities.verified, "a directory needs no protocol verification");
+        assert!(
+            capabilities.can_delete_remotely,
+            "one object, explicitly asked for"
+        );
+        assert!(
+            capabilities.verified,
+            "a directory needs no protocol verification"
+        );
 
         let key = target
             .store("photo.webp", b"BYTES")
@@ -1379,7 +1445,8 @@ mod tests {
         assert!(capabilities.can_delete_remotely, "one object at a time");
         assert!(capabilities.can_test_connection);
         // The trait has put, head, test_connection and delete_remote and nothing else.
-        let _: fn(&MemoryStore, &str, &[u8]) -> Result<PutOutcome> = |s, key, bytes| s.put(key, bytes);
+        let _: fn(&MemoryStore, &str, &[u8]) -> Result<PutOutcome> =
+            |s, key, bytes| s.put(key, bytes);
     }
 
     #[test]
@@ -1389,7 +1456,14 @@ mod tests {
 
         store.put("uploads/photo.webp", b"bytes").unwrap();
         assert!(dir.path().join("uploads").join("photo.webp").is_file());
-        assert_eq!(store.head("uploads/photo.webp").unwrap().unwrap().size_bytes, 5);
+        assert_eq!(
+            store
+                .head("uploads/photo.webp")
+                .unwrap()
+                .unwrap()
+                .size_bytes,
+            5
+        );
 
         // The adapter joins the key onto its root, so an escaping key has to climb out of it.
         let error = store.put("../../../escape.webp", b"x").unwrap_err();
@@ -1408,10 +1482,8 @@ mod tests {
     #[test]
     fn a_target_wraps_a_config_and_an_adapter() {
         let store = Arc::new(MemoryFileStore::new());
-        let target = StorageTarget::new(
-            s3(),
-            Box::new(MemoryStore::with_store(s3(), store.clone())),
-        );
+        let target =
+            StorageTarget::new(s3(), Box::new(MemoryStore::with_store(s3(), store.clone())));
         assert_eq!(target.namespace(), "s3:veloct-assets|uploads");
         let outcome = target.store("photo-a8k3xq.webp", b"bytes").unwrap();
         assert_eq!(outcome.object().key, "uploads/photo-a8k3xq.webp");
@@ -1439,6 +1511,9 @@ mod tests {
         let config = s3();
         let json = serde_json::to_string(&config).unwrap();
         assert!(json.contains("\"kind\":\"s3\""));
-        assert_eq!(serde_json::from_str::<StorageConfig>(&json).unwrap(), config);
+        assert_eq!(
+            serde_json::from_str::<StorageConfig>(&json).unwrap(),
+            config
+        );
     }
 }

@@ -238,3 +238,74 @@
     }
   }
 }
+
+/* ClientRouter starts same-document transitions, including inside preview iframes.
+   Keep cross-document opt-in for full-page links and browsers that support it. */
+
+@view-transition {
+  navigation: auto;
+}
+
+/* 无动画 — an instant switch, and also what a reduced-motion reader gets from the rule at the end. */
+html[data-page-transition='none']::view-transition-old(root),
+html[data-page-transition='none']::view-transition-new(root) {
+  animation: none;
+}
+
+/* 溶解 — a plain cross-fade, slower and softer than the default so it reads as a dissolve. */
+html[data-page-transition='dissolve']::view-transition-old(root) {
+  animation: veloct-dissolve-out 240ms ease-out both;
+}
+
+html[data-page-transition='dissolve']::view-transition-new(root) {
+  animation: veloct-dissolve-in 240ms ease-out both;
+}
+
+/* 上浮 — the incoming page settles up into place while the outgoing one lifts away. */
+html[data-page-transition='rise']::view-transition-old(root) {
+  animation: veloct-rise-out 240ms ease-out both;
+}
+
+html[data-page-transition='rise']::view-transition-new(root) {
+  animation: veloct-rise-in 240ms ease-out both;
+}
+
+@keyframes veloct-dissolve-out {
+  to { opacity: 0; }
+}
+
+@keyframes veloct-dissolve-in {
+  from { opacity: 0; }
+}
+
+@keyframes veloct-rise-out {
+  to { opacity: 0; transform: translateY(-8px); }
+}
+
+@keyframes veloct-rise-in {
+  from { opacity: 0; transform: translateY(12px); }
+}
+
+/* The blanket reduced-motion rule above matches elements, not pseudo-elements, so the transition
+   snapshots have to be named here or a reader who asked for less motion would still get all of it. */
+/* Astro's animation fallback for browsers without startViewTransition. */
+html[data-page-transition='rise'][data-astro-transition-fallback='old'] body {
+  animation: veloct-rise-out 240ms ease-out both;
+}
+html[data-page-transition='rise'][data-astro-transition-fallback='new'] body {
+  animation: veloct-rise-in 240ms ease-out;
+}
+html[data-page-transition='dissolve'][data-astro-transition-fallback='old'] body {
+  animation: veloct-dissolve-out 240ms ease-out both;
+}
+html[data-page-transition='dissolve'][data-astro-transition-fallback='new'] body {
+  animation: veloct-dissolve-in 240ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html::view-transition-old(root),
+  html::view-transition-new(root),
+  html[data-astro-transition-fallback] body {
+    animation: none !important;
+  }
+}

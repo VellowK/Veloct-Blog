@@ -1,6 +1,27 @@
 fn main() {
-    tauri_build::build();
+    prepare_project_template();
+    println!("cargo:rerun-if-changed=icons-logo/icon.ico");
+    println!("cargo:rerun-if-changed=icons-logo/icon.png");
+    tauri_build::try_build(
+        tauri_build::Attributes::new().windows_attributes(
+            tauri_build::WindowsAttributes::new().window_icon_path("icons-logo/icon.ico"),
+        ),
+    ).expect("failed to build application resources");
     link_the_windows_resource_into_tests();
+}
+
+fn prepare_project_template() {
+    let manifest = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap());
+    let repo = manifest.parent().unwrap();
+    for source in ["scripts/prepare-template.mjs", "site/src", "site/scripts", "site/package.json", "site/package-lock.json", "site/astro.config.mjs", "site/.gitignore"] {
+        println!("cargo:rerun-if-changed={}", repo.join(source).display());
+    }
+    let status = std::process::Command::new("node")
+        .arg(repo.join("scripts/prepare-template.mjs"))
+        .current_dir(repo)
+        .status()
+        .expect("Node is required to stage the bundled project template");
+    assert!(status.success(), "clean project template staging failed");
 }
 
 /// Give the TEST executables the same Windows resource the application binary already gets.

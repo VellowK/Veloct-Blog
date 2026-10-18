@@ -1,105 +1,19 @@
 ---
-// The home page.
-//
-// handoff.md section 6.4 lists the required templates and section 6.6 fixes the Hero structure.
-// This page composes the Hero with the newest published articles.
-
+// Profile homepage: the old global sidebar is never mounted here. Managed home Markdown remains
+// intact for later reuse; profile description and introduction are deliberately separate settings.
 import { getCollection } from 'astro:content';
 import BaseLayout from '../layouts/BaseLayout.astro';
-import Hero from '../components/Hero.astro';
-import { readSiteConfig } from '../lib/site-config.mjs';
-import { byNewest, formatDate, readingStats, wordCloud, isProduction, groupByTag } from '../lib/format.ts';
-import { articleRoute, WipRoute } from '../lib/content.ts';
+import ProfileHome from '../components/ProfileHome.astro';
+import { readSiteConfig, projectRoot } from '../lib/site-config.mjs';
+import { blogActivity, readGithubActivity } from '../lib/profile-home.mjs';
 
 const site = readSiteConfig();
-const isProd = isProduction;
-
-const all = await getCollection('articles');
-// The home page lists published articles only. A WIP is never listed here, whatever its state:
-// the WIP waterfall exists for that, and a draft must not appear as though it were finished.
-const articles = all
-  .filter((entry) => articleRoute(entry, { isProduction: isProd }).kind === WipRoute.Article)
-  .sort(byNewest);
-
-const recent = articles.slice(0, 6);
-const tags = wordCloud(articles);
-
-// A publishing heat map, derived from the articles themselves so it cannot disagree with the list.
-const heatmap = {};
-for (const entry of articles) {
-  const day = String(entry.data.published_at ?? entry.data.created_at).slice(0, 10);
-  if (!day) continue;
-  heatmap[day] = (heatmap[day] ?? 0) + 1;
-}
-
-const jsonLd = {
-  '@context': 'https://schema.org',
-  '@type': 'WebSite',
-  name: site.name,
-  url: site.url,
-  description: site.description,
-  ...(site.author?.name
-    ? { author: { '@type': 'Person', name: site.author.name } }
-    : {}),
-};
+const blog = blogActivity([...(await getCollection('articles')), ...(await getCollection('knowledge'))]);
+const github = readGithubActivity(projectRoot, site.homepage.githubUsername);
+const jsonLd = { '@context': 'https://schema.org', '@type': 'WebSite', name: site.name,
+  url: site.url, description: site.description,
+  ...(site.author?.name ? { author: { '@type': 'Person', name: site.author.name } } : {}) };
 ---
-
-<BaseLayout
-  title={site.name}
-  description={site.description}
-  canonical="/"
-  jsonLd={jsonLd}
-  wordCloud={tags}
-  heatmap={heatmap}
->
-  <Hero />
-
-  <section class="mt-10" aria-labelledby="veloct-recent">
-    <div class="mb-4 flex items-baseline justify-between">
-      <h2 id="veloct-recent" class="font-serif text-xl">最新文章</h2>
-      <a href="/article/" class="text-sm">全部文章</a>
-    </div>
-
-    {recent.length === 0 ? (
-      <p class="card p-6 muted">还没有已发布的文章。</p>
-    ) : (
-      <ul class="space-y-4">
-        {recent.map((entry) => {
-          const stats = readingStats(entry.body);
-          return (
-            <li class="card p-5">
-              <a href={`/article/${entry.data.slug}/`} class="no-underline">
-                <h3 class="font-serif text-lg text-ink-100">{entry.data.title}</h3>
-              </a>
-              {entry.data.summary && (
-                <p class="mt-2 text-sm text-ink-300">{entry.data.summary}</p>
-              )}
-              <p class="mt-3 flex flex-wrap items-center gap-x-3 text-xs muted">
-                <time datetime={entry.data.published_at ?? entry.data.created_at}>
-                  {formatDate(entry.data.published_at ?? entry.data.created_at)}
-                </time>
-                <span>{stats.words} 字</span>
-                <span>约 {stats.minutes} 分钟</span>
-                {entry.data.category && <span>{entry.data.category}</span>}
-              </p>
-            </li>
-          );
-        })}
-      </ul>
-    )}
-  </section>
-
-  {tags.length > 0 && (
-    <section class="mt-10" aria-labelledby="veloct-tags">
-      <h2 id="veloct-tags" class="mb-4 font-serif text-xl">标签</h2>
-      <div class="flex flex-wrap gap-2">
-        {tags.slice(0, 24).map((entry) => (
-          <a
-            href={`/tags/${encodeURIComponent(entry.tag)}/`}
-            class="card px-3 py-1 text-sm no-underline"
-          >{entry.tag} <span class="muted">{entry.count}</span></a>
-        ))}
-      </div>
-    </section>
-  )}
+<BaseLayout title={site.name} description={site.description} canonical="/" jsonLd={jsonLd} wide showRightSidebar={false}>
+  <ProfileHome site={site} blog={blog} github={github} />
 </BaseLayout>

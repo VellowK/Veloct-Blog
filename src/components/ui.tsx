@@ -22,6 +22,7 @@
  */
 
 import type { ReactNode } from 'react';
+import { Feedback } from './Notifications';
 
 // ---------------------------------------------------------------------------------------------------
 // Icons: geometry only, stroked with `currentColor` so a colour can never be baked into one.
@@ -80,6 +81,14 @@ const ICONS = {
     </>
   ),
   sparkle: <path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z" />,
+  menu: (
+    <>
+      <path d="M4 7h16M4 12h16M4 17h16" />
+      <circle cx="8" cy="7" r="1" />
+      <circle cx="15" cy="12" r="1" />
+      <circle cx="10" cy="17" r="1" />
+    </>
+  ),
   sliders: (
     <>
       <path d="M4 8h16" />
@@ -88,6 +97,14 @@ const ICONS = {
       <circle cx="15" cy="16" r="2" />
     </>
   ),
+  settings: (
+    <>
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-1.7 2.9-.2-.1a1.7 1.7 0 0 0-1.8 0l-.2.1h-3.4l-.1-.2a1.7 1.7 0 0 0-1.5-1h-.2a1.7 1.7 0 0 0-1.5 1l-.1.2H5.7L4 17l.1-.1a1.7 1.7 0 0 0 .3-1.9l-.1-.2v-3.4l.2-.1a1.7 1.7 0 0 0 1-1.5v-.2a1.7 1.7 0 0 0-1-1.5l-.2-.1V4.6l2.9-1.7.1.1a1.7 1.7 0 0 0 1.9.3l.2-.1h3.4l.1.2a1.7 1.7 0 0 0 1.5 1h.2a1.7 1.7 0 0 0 1.5-1l.1-.2h3.4L21 6l-.1.1a1.7 1.7 0 0 0-.3 1.9l.1.2v3.4l-.2.1a1.7 1.7 0 0 0-1 1.5v.2a1.7 1.7 0 0 0 1 1.5l.2.1" />
+    </>
+  ),
+  collapse: <path d="m15 18-6-6 6-6" />,
+  expand: <path d="m9 18 6-6-6-6" />,
 } satisfies Record<string, ReactNode>;
 
 export type IconName = keyof typeof ICONS;
@@ -248,6 +265,9 @@ export function StateBlock({
   /** A block inside a card rather than a page-level statement. */
   inline?: boolean;
 }) {
+  if (!inline && (tone === 'success' || (onDismiss && (tone === 'error' || tone === 'warning' || tone === 'info')))) {
+    return <Feedback tone={tone} title={title} message={description ?? title} actions={actions} />;
+  }
   const resolved = role === 'none' ? undefined : (role ?? STATE_ROLE[tone]);
   return (
     <div className={`state state--${tone}${inline ? ' state--inline' : ''}`} role={resolved}>

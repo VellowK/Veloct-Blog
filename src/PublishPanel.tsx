@@ -47,17 +47,13 @@ export default function PublishPanel({
   enabled,
   projectPath,
   onPublished,
+  onInitializeProject,
 }: {
   enabled: boolean;
-  /**
-   * The open project's path, or `null`.
-   *
-   * Only used to know when the project CHANGED: the Rust side stops and forgets an install when
-   * another project replaces this one, so a panel that only watched `enabled` would keep showing the
-   * closed project's install, its output and its `site_dir`.
-   */
+  /** The open project's path, or null. */
   projectPath: string | null;
   onPublished?: () => void;
+  onInitializeProject?: () => Promise<void>;
 }) {
   const [releases, setReleases] = useState<ReleaseView[]>([]);
   const [result, setResult] = useState<PublishView | null>(null);
@@ -159,6 +155,20 @@ export default function PublishPanel({
     }
   }, []);
 
+  const initializeProject = useCallback(async () => {
+    if (!onInitializeProject) return;
+    setInstallBusy(true);
+    setInstallError(null);
+    try {
+      await onInitializeProject();
+      await loadInstall();
+    } catch (caught) {
+      setInstallError(describeError(caught));
+    } finally {
+      setInstallBusy(false);
+    }
+  }, [loadInstall, onInitializeProject]);
+
   const cancelInstall = useCallback(async () => {
     setInstallBusy(true);
     try {
@@ -217,7 +227,14 @@ export default function PublishPanel({
           tone="error"
           title="依赖安装没有开始"
           description={installError}
-          onDismiss={() => setInstallError(null)}
+          actions={
+            <>
+              {installError.includes('no site directory') && onInitializeProject && (
+                <button type="button" onClick={() => void initializeProject()} disabled={installBusy}>初始化项目站点模板</button>
+              )}
+              <button type="button" onClick={() => setInstallError(null)}>关闭</button>
+            </>
+          }
         />
       )}
 

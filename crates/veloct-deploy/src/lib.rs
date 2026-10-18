@@ -24,6 +24,8 @@
 #![forbid(unsafe_code)]
 
 pub mod adapter;
+pub mod edgeone;
+pub use edgeone::EdgeOnePagesAdapter;
 pub mod pipeline;
 pub mod seo;
 pub mod target;

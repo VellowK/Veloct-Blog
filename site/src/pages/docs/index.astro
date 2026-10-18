@@ -9,6 +9,9 @@ import { getCollection } from 'astro:content';
 import BaseLayout from '../../layouts/BaseLayout.astro';
 import { readSiteConfig } from '../../lib/site-config.mjs';
 import { extractParagraphs } from '../../lib/knowledge.ts';
+import { readLinkedKnowledge } from '../../lib/linked-knowledge.mjs';
+import LinkedKnowledgeTree from '../../components/LinkedKnowledgeTree.astro';
+const linked = readLinkedKnowledge();
 
 const site = readSiteConfig();
 const entries = await getCollection('knowledge');
@@ -36,7 +39,7 @@ const totalParagraphs = documents.reduce((total, doc) => total + doc.paragraphCo
   <h1 class="font-serif text-2xl">知识库</h1>
   <p class="mt-2 muted">{documents.length} 个条目 · {totalParagraphs} 个可引用段落</p>
 
-  {documents.length === 0 ? (
+  {documents.length === 0 && linked.length === 0 ? (
     <p class="card mt-6 p-6 muted">知识库还是空的。</p>
   ) : (
     <ul class="mt-6 space-y-3">
@@ -57,4 +60,13 @@ const totalParagraphs = documents.reduce((total, doc) => total + doc.paragraphCo
       ))}
     </ul>
   )}
+  {linked.length > 0 && <section class="mt-8" aria-label="链接知识库">
+    <h2 class="font-serif text-xl">链接知识库</h2>
+    <p class="mt-2 muted">这里只展示目录，点击条目将在新标签页打开源站。私有文档需要源站登录和访问权限。</p>
+    <div class="mt-4 space-y-4">{linked.map((item) => <article class="card p-4">
+      <h3 class="font-serif text-lg"><a href={item.source_url} target="_blank" rel="noopener noreferrer">{item.name} ↗</a></h3>
+      <p class="mt-1 text-xs muted">{item.provider === 'yuque' ? '语雀' : '飞书'} · 目录快照</p>
+      <LinkedKnowledgeTree nodes={item.nodes} />
+    </article>)}</div>
+  </section>}
 </BaseLayout>

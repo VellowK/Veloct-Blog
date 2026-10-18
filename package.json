@@ -5,6 +5,8 @@
   "type": "module",
   "description": "Veloct desktop workbench (React + TypeScript + Vite), rendered by the Tauri shell",
   "scripts": {
+    "prepare:template": "node scripts/prepare-template.mjs",
+    "test:template": "vitest run scripts/prepare-template.test.mjs",
     "dev:ui": "vite",
     "build:ui": "tsc --noEmit && vite build",
     "preview:ui": "vite preview",
@@ -21,7 +23,8 @@
     "@tiptap/pm": "^3.31.3",
     "@tiptap/react": "^3.31.3",
     "@tiptap/starter-kit": "^3.31.3",
-    "lowlight": "^3.3.0"
+    "lowlight": "^3.3.0",
+    "yaml": "2.8.1"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.12.1",

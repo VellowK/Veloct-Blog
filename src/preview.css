@@ -1,0 +1,253 @@
+/* Preview owns its canvas; the global page/card layout remains unchanged. */
+.content.content--preview {
+  align-items: stretch;
+  gap: var(--space-sm);
+  padding: 0;
+  overflow: hidden;
+}
+
+.content--preview > .page {
+  max-width: none;
+  padding: var(--space-sm) var(--space-md) 0;
+}
+
+.preview-panel {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--color-surface-dark);
+  isolation: isolate;
+}
+
+.preview-panel__viewport {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  contain: size layout;
+}
+
+.preview-panel__footprint {
+  /* Clip the unscaled iframe layout box, not just its transformed pixels. */
+  overflow: hidden;
+}
+
+.preview-panel__footprint {
+  position: relative;
+  margin-inline: auto;
+  background: var(--color-canvas);
+}
+
+.preview-panel__footprint--mobile {
+  box-shadow: var(--shadow-modal);
+}
+
+.preview-panel__footprint iframe {
+  display: block;
+  max-width: none;
+  border: 0;
+  transform-origin: top left;
+  background: var(--color-canvas);
+}
+
+.preview-panel__state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100%;
+  padding: var(--space-lg);
+  padding-bottom: 96px;
+}
+
+.preview-panel__state > .state {
+  width: min(100%, 480px);
+}
+
+.preview-panel__error {
+  position: absolute;
+  z-index: 2;
+  inset: var(--space-md) var(--space-md) auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  border: 1px solid var(--color-error);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-card);
+  box-shadow: var(--shadow-modal);
+  font-size: var(--text-caption);
+}
+
+.preview-toolbar {
+  position: absolute;
+  z-index: 3;
+  left: 50%;
+  bottom: var(--space-lg);
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  max-width: calc(100% - 24px);
+  padding: var(--space-xs);
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-xl);
+  background: var(--color-surface-dark-elevated);
+  box-shadow: var(--shadow-modal);
+  white-space: nowrap;
+}
+
+.preview-toolbar__devices {
+  display: flex;
+  gap: var(--space-xxs);
+}
+
+.preview-toolbar button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-xs);
+  height: 36px;
+  padding: 0 var(--space-sm);
+  border-color: transparent;
+  background: transparent;
+  font-size: var(--text-caption);
+  color: var(--color-muted);
+}
+
+.preview-toolbar button[aria-pressed='true'] {
+  color: var(--color-ink);
+  border-color: var(--color-hairline);
+  background: var(--color-surface-cream-strong);
+}
+
+.preview-toolbar button:hover:not(:disabled) {
+  color: var(--color-ink);
+  background: var(--color-surface-soft);
+}
+
+.preview-toolbar__divider {
+  height: 22px;
+  width: 1px;
+  background: var(--color-hairline);
+}
+
+.preview-toolbar__zoom select {
+  width: 80px;
+  height: 36px;
+  padding: 0 var(--space-xs);
+  color: var(--color-body-strong);
+  background: var(--color-surface-dark-elevated);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  font: inherit;
+  font-size: var(--text-caption);
+  cursor: pointer;
+}
+
+.preview-toolbar__zoom select:hover {
+  border-color: var(--color-hairline);
+}
+
+.preview-toolbar__status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: 0 var(--space-xs);
+  font-size: var(--text-caption);
+  color: var(--color-muted);
+}
+
+.preview-toolbar__status > span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-muted-soft);
+}
+
+.preview-toolbar__status.is-running > span {
+  background: var(--color-success);
+}
+
+.preview-toolbar__sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Site information keeps the form and the real site visible together. */
+.content.content--site-info {
+  align-items: stretch;
+  overflow: hidden;
+}
+
+.content--site-info > .settings-page {
+  max-width: none;
+  overflow: hidden;
+}
+
+.site-info-workspace {
+  display: grid;
+  grid-template-columns: minmax(300px, 2fr) minmax(0, 3fr);
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+  grid-template-rows: minmax(0, 1fr);
+  gap: var(--space-lg);
+}
+
+.site-info-workspace__settings {
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.site-info-workspace > .preview-panel {
+  border-radius: var(--radius-md);
+}
+
+@media (max-width: 900px) {
+  .content.content--site-info {
+    overflow-y: auto;
+  }
+
+  .content--site-info > .settings-page {
+    flex: 0 0 auto;
+    overflow: visible;
+  }
+
+  .site-info-workspace {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .site-info-workspace__settings {
+    overflow: visible;
+  }
+
+  .site-info-workspace > .preview-panel {
+    height: 560px;
+  }
+}
+
+@media (max-width: 900px) {
+  .preview-toolbar {
+    gap: var(--space-xxs);
+    bottom: var(--space-sm);
+  }
+
+  .preview-toolbar__devices button > span,
+  .preview-toolbar__status {
+    display: none;
+  }
+
+  .preview-toolbar button {
+    padding-inline: var(--space-xs);
+  }
+}

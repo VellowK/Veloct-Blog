@@ -1,0 +1,23 @@
+---
+import { calendarCells } from '../lib/profile-home.mjs';
+interface Props { title: string; days: Record<string, number>; end: string; github?: boolean; href?: string; notice?: string; showHeading?: boolean; }
+const { title, days, end, github = false, href = '', notice = '', showHeading = true } = Astro.props;
+const cells = calendarCells(days, end, github);
+const columns = Math.ceil(cells.length / 7);
+const datedCells = cells.filter(cell => cell.date);
+const total = datedCells.reduce((sum, cell) => sum + cell.value, 0);
+const active = datedCells.filter(cell => cell.level > 0).length;
+const months = datedCells.filter(cell => cell.date.endsWith('-01'));
+const range = `${datedCells[0].date.slice(5).replace('-', '.')} — ${end.slice(5).replace('-', '.')}`;
+---
+<section class:list={['activity-card', github && 'activity-card--github']} aria-label={title} data-activity={github ? 'github' : 'blog'}>
+  {showHeading && <header class="activity-card__heading"><h2>{title} <span>近 365 天</span></h2>{href ? <a href={href} target="_blank" rel="noopener noreferrer">GitHub ↗</a> : <span>{github ? `${active} 个活跃日` : `${total} 篇创作 · ${active} 个活跃日`}</span>}</header>}
+  <div class="activity-card__scroll">
+    <svg class="activity-grid" viewBox={`0 0 ${columns * 12 + 24} 108`} role="img" aria-label={`${title}，过去 365 天${github ? `有 ${active} 个活跃日` : `共 ${total} 篇公开创作`}`}>
+      <text x="0" y="40">一</text><text x="0" y="64">三</text><text x="0" y="88">五</text>
+      {months.map(cell => <text x={cell.column * 12 + 23} y="10">{Number(cell.date.slice(5, 7))}月</text>)}
+      {datedCells.map(cell => <rect x={cell.column * 12 + 23} y={cell.row * 12 + 19} width="9" height="9" rx="2" data-level={cell.level} data-date={cell.date}><title>{github ? `${cell.date} · 贡献活跃度 ${cell.level}/4` : `${cell.date} · ${cell.value} 篇创作`}</title></rect>)}
+    </svg>
+  </div>
+  <footer class="activity-card__footer"><p>{notice || (github ? 'GitHub 公开可见的贡献活跃度' : '公开文章与知识条目 · 按创建日期')}<span class="activity-range">{range}</span></p><div class="activity-legend" aria-label="颜色由少到多"><span>少</span>{[0, 1, 2, 3, 4].map(level => <i data-level={level} />)}<span>多</span></div></footer>
+</section>

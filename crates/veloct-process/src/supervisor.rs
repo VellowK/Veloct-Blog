@@ -359,6 +359,8 @@ impl PreviewSupervisor {
                     role.label(),
                     spec.port
                 );
+                let tail = spawned.handle.output_tail();
+                let reason = if tail.trim().is_empty() { reason } else { format!("{reason}: {}", tail.trim()) };
                 return self.record_failure(role, spec.port, reason);
             }
 

@@ -1,0 +1,54 @@
+---
+// The home Hero.
+//
+// handoff.md section 6.6 fixes this structure: title, subtitle and CTA on the left, the personal
+// avatar on the right, and the avatar is a ROUNDED RECTANGLE — never a circle. That last point is
+// stated as a hard requirement, so the radius is a deliberate token rather than a default.
+
+import { readSiteConfig } from '../lib/site-config.mjs';
+
+const site = readSiteConfig();
+const hero = site.hero ?? {};
+const avatar = site.author?.avatar ?? '';
+const name = site.author?.name ?? site.name;
+
+const title = hero.title || site.name;
+const subtitle = hero.subtitle || site.description;
+const ctaLabel = hero.ctaLabel;
+const ctaHref = hero.ctaHref;
+---
+
+<section class="card-raised mt-4 overflow-hidden p-6 md:p-10">
+  <div class="flex flex-col items-start gap-8 md:flex-row md:items-center md:justify-between">
+    <div class="min-w-0 flex-1">
+      <h1 class="font-serif text-3xl leading-tight md:text-5xl">{title}</h1>
+      {subtitle && <p class="mt-4 max-w-prose text-ink-300 md:text-lg">{subtitle}</p>}
+      {ctaLabel && ctaHref && (
+        <a
+          href={ctaHref}
+          class="mt-6 inline-flex items-center gap-2 rounded-lg bg-accent-600 px-4 py-2 text-sm font-medium text-ink-950 hover:bg-accent-500"
+        >{ctaLabel}</a>
+      )}
+    </div>
+
+    <div class="shrink-0">
+      {avatar ? (
+        <img
+          src={avatar}
+          alt={name}
+          width="144"
+          height="144"
+          loading="eager"
+          decoding="async"
+          /* Rounded rectangle, not a circle: handoff.md section 6.6. */
+          class="h-28 w-28 rounded-2xl border border-ink-700 object-cover md:h-36 md:w-36"
+        />
+      ) : (
+        <div
+          class="grid h-28 w-28 place-items-center rounded-2xl border border-ink-700 bg-ink-850 font-serif text-4xl text-accent-400 md:h-36 md:w-36"
+          aria-hidden="true"
+        >{name.slice(0, 1)}</div>
+      )}
+    </div>
+  </div>
+</section>

@@ -30,6 +30,7 @@ use std::path::{Path, PathBuf};
 use veloct_core::{Result, VeloctError};
 
 pub mod serve;
+pub mod preview_preferences;
 
 /// The name Tauri gives the bundled runtime, without the target triple.
 pub const NODE_SIDECAR_STEM: &str = "veloct-node";

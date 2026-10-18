@@ -34,7 +34,8 @@
  * the save path's own `config_from_request` and calls the crate's `validate`, and shows whatever it answers.
  */
 
-import { describeError } from './api';
+import { describeError, type S3Policy } from './api';
+import { joinAddress, s3Defaults, policyFromForm, type S3FormDraft } from './s3Form';
 import type {
   AttachmentView,
   ObjectView,
@@ -346,6 +347,9 @@ export function kindNotice(option: StorageKindOption | undefined): KindNotice | 
 
 /** The form's state: every field it can carry, as text, plus the kind it is for. */
 export interface StorageTargetDraft {
+  hiddenFromUpload?: boolean;
+  uploadPriority?: number;
+  s3?: S3FormDraft;
   id: string;
   name: string;
   kind: string;
@@ -365,6 +369,9 @@ export interface StorageTargetDraft {
 
 /** What `save_storage_target` is asked for. A property that is absent was not asked for at all. */
 export interface StorageTargetSaveRequest {
+  hiddenFromUpload?: boolean;
+  uploadPriority?: number;
+  s3Policy?: S3Policy;
   id: string;
   name: string;
   kind: string;
@@ -421,6 +428,9 @@ export function draftFromTarget(view: StorageTargetView): StorageTargetDraft {
     accessKey: view.access_key ?? '',
     instance: view.instance ?? '',
     credential: '',
+    ...(view.hidden_from_upload !== undefined ? { hiddenFromUpload: view.hidden_from_upload } : {}),
+    ...(view.upload_priority !== undefined ? { uploadPriority: view.upload_priority } : {}),
+    ...(view.s3_policy ? { s3: { ...s3Defaults(true, view.endpoint ?? '', view.public_url_prefix), ...view.s3_policy } } : {}),
   };
 }
 
@@ -445,6 +455,15 @@ export function buildSaveRequest(draft: StorageTargetDraft): StorageTargetSaveRe
     request[key] = value;
   }
 
+  if (draft.hiddenFromUpload !== undefined) request.hiddenFromUpload = draft.hiddenFromUpload;
+  if (draft.uploadPriority !== undefined) request.uploadPriority = draft.uploadPriority;
+  if (normaliseKind(draft.kind) === 's3' && draft.s3) {
+    request.s3Policy = policyFromForm(draft.s3);
+    const endpoint = joinAddress(draft.s3.endpointProtocol, draft.endpoint);
+    const cdn = joinAddress(draft.s3.cdnProtocol, draft.publicUrlPrefix);
+    if (endpoint) request.endpoint = endpoint; else delete request.endpoint;
+    if (cdn) request.publicUrlPrefix = cdn; else delete request.publicUrlPrefix;
+  }
   return request;
 }
 
@@ -600,7 +619,7 @@ export function remoteCleanup(
   }
 
   const recorded = attachment.remote_key
-    ? objects.find((object) => object.key === attachment.remote_key)
+    ? objects.find((object) => object.key === attachment.remote_key && (!attachment.remote_url || object.url === attachment.remote_url))
     : undefined;
   const storageTargetId = recorded?.storage_target_id ?? attachment.storage_target_id;
   const target = targets.find((candidate) => candidate.id === storageTargetId);

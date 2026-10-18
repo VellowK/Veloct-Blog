@@ -3,9 +3,11 @@
 A local-first, single-user, single-site desktop workbench for building and publishing one static
 personal website.
 
-`handoff.md` is the product contract and it is locked. This README explains how the repository is
-arranged, how to build and test it on this machine, and where the decisions that `handoff.md`
-leaves open are recorded.
+**Next AI: start with [NEXT_AI.md](<NEXT_AI.md>)**, then [PROCESSING.md](<PROCESSING.md>) for current requirements and [UPDATE.md](<UPDATE.md>) for the final tested artifacts. The application repository contains substantial uncommitted/untracked work; the Git HEAD alone is not the handover.
+
+[handoff.md](<handoff.md>) is the locked product contract; explicit later owner requirements take precedence without silently rewriting it. Older [process archives](<docs/archive/>) and earlier verification sections are historical evidence, not current status. This README explains the repository structure and build commands; it does not claim the latest test package was installed or published.
+
+**2026-10-18 handover:** all requested product work is complete; wait for the owner's next task rather than automatically fixing old issues. This handover round edits documentation only, with no new product test/build. The latest functional round is homepage avatar/cover → attachment pool → preferred cloud target. Full-workspace verification has one known Windows install-cancellation test failure; it is not all green. Exact results, boundaries and signed local test packages are recorded in [NEXT_AI.md](<NEXT_AI.md>).
 
 ## Two directories, not one
 
@@ -25,9 +27,13 @@ project is self-contained and its releases stay reproducible.
 |---|---|
 | Article / page / knowledge body | Markdown files under `content/` and `knowledge/` |
 | Work metadata and body | `works/<stable-id>/work.json` and `works/<stable-id>/site/` |
-| Site, deployment, AI configuration | SQLite |
+| Site appearance / profile-home settings | The user's project `data/site.json`; managed by `SiteSettingsService`, preserving unknown keys |
+| GitHub activity | Explicitly synced `data/github-activity.json` snapshot; static builds do not fetch it |
+| Deployment targets | User project `.veloct/deploy-targets.json`; credentials are OS-store handles, not secrets |
+| Attachment storage targets / sync | User project `.veloct/storage-targets.json` / `.veloct/attachment-sync.json`; credentials stay in the OS store |
+| Removed AI page creation | No desktop UI/API/commands remain; the shared crate and historical data are retained, not an active feature |
 | A release | `.veloct/releases/<id>/release.json` + the git tag `release/<id>` + its commit |
-| Attachment identity | the remote object record plus the Markdown AST reference set |
+| Attachment identity / references | Pool/object records, Markdown AST references and saved homepage avatar/cover references; changing a site image must not erase article references |
 | Credentials | the operating system credential store — never SQLite, config, logs or backups |
 
 SQLite's content tables are a **derived index**. Dropping them and rebuilding from Markdown must
@@ -49,7 +55,7 @@ crates/
   veloct-logging     structured events, redaction at the source, rotation, the log page's backend
   veloct-release     release manifest, build inputs, target snapshot, fingerprint, publish
   veloct-deploy      logical targets with main/works sub-targets and adapters
-  veloct-ai          providers, per-feature model mapping, global fallback
+  veloct-ai          retained shared/legacy library; AI page-creation desktop feature was removed
   veloct-attach      cache pool, reference set, dedup, storage adapters
   veloct-github      the GitHub Contents API, once: §13.13's attachment target and §17.4's backup
                      target are one protocol in two contracts (ADR-0015)
@@ -70,37 +76,31 @@ handoff.md           the locked product contract
 Three environment quirks are handled by `scripts/cargo.ps1`. Use it; a bare `cargo` will fail.
 
 ```powershell
-# Rust — the recorded total INCLUDES veloct-desktop: 1509 passed, 0 failed, 16 ignored.
-# The checklist is PROCESSING.md section 3.1; the runs behind the numbers are 02-test-matrix.md section J.
-# Sum the `test result:` lines yourself: `--no-fail-fast` makes every binary report its own, and the
-# 47 of them add up to 1509/0/16. The 16 ignored are 7 real-process tests and 9 live-vendor ones,
-# each named in PROCESSING.md section 1.
+# Rust — run the full workspace checks when Rust code changes. This handover does not claim a fresh result.
 powershell -ExecutionPolicy Bypass -File scripts/cargo.ps1 test --workspace --no-fail-fast
 powershell -ExecutionPolicy Bypass -File scripts/cargo.ps1 clippy --workspace --all-targets
 
 # Frontend and site (npm.ps1 is blocked here, so use npm.cmd).
-# The root package is the desktop workbench and has NO `build` script: `npm.cmd run build` here
-# exits 1 with "Missing script: build". The workbench builds with `build:ui`; the Astro template
-# builds inside site/, which has its own package.json.
+# The root package builds the desktop workbench with `build:ui`; the Astro template builds in site/.
 npm.cmd install
-npm.cmd run test:ui          # 181 passed (5 files: frontmatter 24, storageTargetForm 51, workForm 40,
-                             # networkImageForm 50, siteInstallForm 16)
+npm.cmd run test:ui -- --run
 npm.cmd run build:ui
-cd site; npm.cmd install; npm.cmd run build; node scripts/verify-build.mjs   # 52/52 checks
+cd site; npm.cmd install; npm.cmd run build
 ```
 
 The desktop package, in the order that matters:
 
 ```powershell
-# A green build is NOT evidence that a package works: install it and run it (PROCESSING.md section 2.10).
+# A green build is not installation evidence: report install/run results only for the exact tested package.
 powershell -ExecutionPolicy Bypass -File scripts/build-sidecar.ps1 -Check   # the committed launcher is current
 powershell -ExecutionPolicy Bypass -File scripts/build-installer.ps1        # builds, packages, and lets the BUNDLER sign
-# CHECK the artefact rather than assuming it: the final setup signing talks to a timestamp server, and a
-# transient failure exits NON-ZERO while leaving an UNSIGNED setup .exe on disk (PROCESSING.md section 2.15.1).
+# The standalone EXE can be NotSigned after bundling: if so, sign it, then independently check both final files.
+# powershell -ExecutionPolicy Bypass -File scripts/sign-artifacts.ps1
 powershell -ExecutionPolicy Bypass -File scripts/sign-artifacts.ps1 -Installer -Check
+# A signed nst*.tmp is NOT the final installer: require bundler exit 0 and the final file's timestamp/hash.
 ```
 
-**What the signature does and does not buy** (PROCESSING.md section 5.10.4): the certificate is LOCAL and
+**What the signature does and does not buy** (see PROCESSING.md): the certificate is LOCAL and
 SELF-SIGNED, so it proves integrity and gives a publisher name once `src-tauri/signing/veloct-codesign.cer` is
 installed into a machine's Trusted Publishers — and it does **not** remove SmartScreen's warning on a machine
 that has not done that. That is what a purchased certificate is for, not code.
@@ -111,11 +111,12 @@ came out `NotSigned`. The supported fix is now IN PLACE rather than merely named
 `scripts/build-installer.ps1` discovers the certificate (its `-SignThumbprint`, then `VELOCT_SIGN_THUMBPRINT`,
 then the store by subject) and passes Tauri's own `bundle.windows.certificateThumbprint` (plus
 `digestAlgorithm` and a timestamp server) to the BUNDLER, so the signature is applied during the build.
-Verified by installing the package and checking what LANDS: `veloct-desktop.exe`, `veloct-astro-sidecar.exe`
-and `uninstall.exe` all verify `Valid` under `CN=VellowChire Code Signing, O=Veloct`, and `veloct-node.exe`
-keeps its own vendor signature `CN=OpenJS Foundation`. The COMMITTED launcher stays unsigned on purpose,
-because `build-sidecar.ps1 -Check` compares it byte for byte against a fresh unsigned build (PROCESSING.md
-section 2.2).
+Historical installation checks found `veloct-desktop.exe`, `veloct-astro-sidecar.exe` and `uninstall.exe`
+`Valid` under `CN=VellowChire Code Signing, O=Veloct`; `veloct-node.exe` keeps its vendor signature
+`CN=OpenJS Foundation`. Those are NOT installation results for every newer package: the latest handover
+only records final-file signature checks, not a new install/uninstall. The COMMITTED launcher stays
+unsigned on purpose because `build-sidecar.ps1 -Check` compares it byte for byte against a fresh unsigned
+build. Do not kill a running user application to release locked build files; ask the user to close it.
 
 Why the wrapper exists:
 
@@ -133,11 +134,16 @@ Why the wrapper exists:
 
 | File | Purpose |
 |---|---|
-| `handoff.md` | The locked product contract. Always wins. |
-| `docs/spec/00-architecture.md` | ADRs: the technology and layout choices `handoff.md` leaves open. |
-| `docs/spec/01-data-model.md` | On-disk layout, frontmatter contract, SQLite schema, status machines. |
-| `docs/spec/02-test-matrix.md` | Every locked behaviour mapped to the test that proves it. |
-| `docs/spec/03-upstream-facts.md` | Live-verified library versions and API shapes, plus what is unverified. |
+| [NEXT_AI.md](<NEXT_AI.md>) | Read first: current completed state, source map, safety boundaries, exact final artifacts, and next-agent steps. |
+| [handoff.md](<handoff.md>) | Locked product contract; explicit later owner requirements take precedence. |
+| [PROCESSING.md](<PROCESSING.md>) | Current product rules, data-safety boundaries and working discipline; old process details are archived. |
+| [ISSUE.md](<ISSUE.md>) | Confirmed failures and evidence gaps first; historical priorities are not an automatic backlog. |
+| [UPDATE.md](<UPDATE.md>) | Per-round changes, failed runs and tested artifacts; not every historical count describes the current tree. |
+| [Architecture](<docs/spec/00-architecture.md>) | ADRs: technology/layout decisions and later requirement amendments. |
+| [Data model](<docs/spec/01-data-model.md>) | On-disk layout, frontmatter contract, SQLite schema, status machines. |
+| [Test matrix](<docs/spec/02-test-matrix.md>) | Behaviour-to-evidence map; latest homepage-image rows are D246–D250. |
+| [Upstream facts](<docs/spec/03-upstream-facts.md>) | Versioned library/API evidence and explicit integration limits. |
+| [Archives](<docs/archive/>) | Historical process snapshots; never treat them as current state or open instructions. |
 
 `docs/spec/02-test-matrix.md` is the completion checklist. A clause stays `P` (planned) until a
 test exists **and** passes in a recorded command; it is never marked done from intention alone.
@@ -148,5 +154,5 @@ test exists **and** passes in a recorded command; it is never marked done from i
 * No invented vendor APIs. An integration that could not be verified is a manual/export target
   labelled as such in the UI, not a fake success.
 * No secret in SQLite, a config file, a log, or a backup.
-* A user cancelling an AI request is `CANCELLED`, not an error, and never triggers the fallback.
+* Removed AI page-creation functionality stays removed; a retained shared crate or historical contract is not permission to restore desktop entry points.
 * A release is rebuilt from its own frozen inputs, never from the current working tree.

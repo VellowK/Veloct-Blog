@@ -32,7 +32,9 @@
  * moved no decision into JSX. Every `lib/` module and every test is untouched by this sample.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { attachmentIssueCount, isImageAttachment, moveSyncTarget, syncUploadControl } from './lib/attachmentSync';
+import type { AttachmentSyncSettings, AttachmentMessages } from './lib/api';
 
 import {
   api,
@@ -59,12 +61,15 @@ import {
   normaliseKind,
   remoteCleanup,
   storageKindOptions,
-  uploadControl,
   validateDraft,
   type StorageFieldKey,
   type StorageTargetDraft,
 } from './lib/storageTargetForm';
 import { Card, Field, PageHeader, StateBlock } from './components/ui';
+import S3ConfigFields from './S3ConfigFields';
+import { s3Defaults, uploadTargets, storageThumbnail } from './lib/s3Form';
+import './s3-config.css';
+import AttachmentFilePicker, { fileAsDataUrl, type PendingFile } from './AttachmentFilePicker';
 
 /** The axes, in the order §13.1 lists them, with the values the crate uses. */
 const AXES: Array<{ key: keyof AttachmentView; label: string; values: Record<string, string> }> = [
@@ -104,11 +109,19 @@ function formatBytes(bytes: number): string {
 export default function AttachmentPanel({
   enabled,
   onInsertMarkdown,
+  mode = 'manage',
+  onOpenSettings,
 }: {
   enabled: boolean;
+  /** Resource operations are separate from storage-target configuration. */
+  mode?: 'manage' | 'settings';
+  /** Opens the independent storage-target settings view. */
+  onOpenSettings?: () => void;
   /** Called with the Markdown for an attachment, so the editor decides what to do with it. */
   onInsertMarkdown?: (markdown: string) => void;
 }) {
+  const live = useRef(false);
+  useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
   const [attachments, setAttachments] = useState<AttachmentView[]>([]);
   const [orphans, setOrphans] = useState<AttachmentOrphans | null>(null);
   const [targets, setTargets] = useState<StorageTargetView[]>([]);
@@ -121,9 +134,12 @@ export default function AttachmentPanel({
    */
   const [kindReport, setKindReport] = useState<StorageKindView[] | null>(null);
   const [objects, setObjects] = useState<ObjectView[]>([]);
+  const [syncSettings, setSyncSettings] = useState<AttachmentSyncSettings>({ target_ids: [] });
+  const [messages, setMessages] = useState<AttachmentMessages>({ upload_errors: [], health_errors: [], checked_at: null });
   const [uploadTarget, setUploadTarget] = useState('');
   const [cacheDirectory, setCacheDirectory] = useState<string>('');
-  const [sourcePath, setSourcePath] = useState('');
+  const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([]);
+  const [fileReading, setFileReading] = useState(false);
   const [target, setTarget] = useState('local');
   const [namespace, setNamespace] = useState('default');
   const [lastAdd, setLastAdd] = useState<AddAttachmentView | null>(null);
@@ -160,20 +176,24 @@ export default function AttachmentPanel({
     if (!enabled) return;
     setReading(true);
     try {
-      const [list, found, directory, storage, remote] = await Promise.all([
+      const [list, found, directory, storage, remote, sync, report] = await Promise.all([
         api.listAttachments(),
         api.attachmentOrphans(),
         api.attachmentCacheDirectory(),
         api.storageTargets(),
         api.attachmentObjects(),
+        api.attachmentSyncSettings(),
+        api.attachmentMessages(),
       ]);
       setAttachments(list);
       setOrphans(found);
       setCacheDirectory(directory);
       setTargets(storage);
       setObjects(remote);
+      setSyncSettings(sync);
+      setMessages(report);
       // The first implemented target is the sensible default, and a target with no adapter is not offered.
-      setUploadTarget((current) => current || storage.find((candidate) => candidate.implemented)?.id || '');
+      setUploadTarget((current) => uploadTargets(storage).some((t) => t.id === current && t.implemented) ? current : uploadTargets(storage).find((candidate) => candidate.implemented)?.id || '');
 
       // §5.3/§5.4's gap, for every kind the BUILD knows — read separately, because a failure here must not
       // blank the whole panel: the form then reports the status as unknown (never as working) and says so.
@@ -211,6 +231,9 @@ export default function AttachmentPanel({
 
   useEffect(() => {
     void reload();
+    const refreshMessages = () => { void api.attachmentMessages().then(setMessages).catch(() => undefined); };
+    window.addEventListener('veloct-attachment-messages', refreshMessages);
+    return () => window.removeEventListener('veloct-attachment-messages', refreshMessages);
   }, [reload]);
 
   const run = useCallback(
@@ -221,6 +244,7 @@ export default function AttachmentPanel({
       try {
         await action();
         await reload();
+        window.dispatchEvent(new Event('veloct-attachment-messages'));
         setNotice(done);
       } catch (caught) {
         setError(describeError(caught));
@@ -233,16 +257,17 @@ export default function AttachmentPanel({
 
   const add = () =>
     run(async () => {
-      if (!sourcePath.trim()) {
-        throw new Error('请填写要添加的文件的完整路径。');
+      if (!pendingFiles.length) throw new Error('请先选择文件并确认预览。');
+      const options = { storageTargetId: target || 'local', namespace: namespace.trim() || 'default' };
+      for (const file of pendingFiles) {
+        const dataBase64 = file.file ? (await fileAsDataUrl(file.file)).split(',')[1]! : null;
+        if (!live.current) return;
+        const result = file.path
+          ? await api.addAttachment({ ...options, sourcePath: file.path })
+          : await api.addAttachmentBytes({ ...options, name: file.name, dataBase64: dataBase64! });
+        setLastAdd(result);
+        setPendingFiles(current => current.filter(candidate => candidate.id !== file.id));
       }
-      const result = await api.addAttachment({
-        sourcePath: sourcePath.trim(),
-        storageTargetId: target.trim() || 'local',
-        namespace: namespace.trim() || 'default',
-      });
-      setLastAdd(result);
-      setSourcePath('');
     }, '已加入附件池。添加不会修改任何文章,请自己决定何时插入 Markdown。');
 
   const syncIndex = () =>
@@ -345,23 +370,25 @@ export default function AttachmentPanel({
   }
 
   return (
-    <div className="page">
+    <div className={`page attachment-panel${mode === 'settings' ? ' attachment-panel--settings' : ''}`}>
       <PageHeader
-        title="附件"
-        description="附件池、存储目标与远程对象。加入附件只写入缓存池,不会改动任何文章——Markdown 由你决定何时插入。"
+        title={mode === 'settings' ? '附件存储设置' : '附件管理'}
+        description={mode === 'settings' ? '管理附件存储目标和系统凭据。' : '集中管理已添加的图片与文件。上传不改动文章;备份失效只提示,不自动切换。'}
         actions={
           <>
+            {mode === 'manage' && onOpenSettings && <button type="button" onClick={onOpenSettings}>存储设置</button>}
             <button type="button" onClick={() => void reload()} disabled={busy || reading}>
               刷新
             </button>
-            <button
+            {mode === 'manage' && <button
               type="button"
               className="primary"
               onClick={() => void syncIndex()}
               disabled={busy || reading}
             >
               同步索引
-            </button>
+            </button>}
+            {mode === 'manage' && <button type="button" disabled={busy || reading} onClick={() => void run(async () => { setMessages(await api.checkAttachmentImages()); }, '图片检测完成,未切换任何地址。')}>检测图片</button>}
           </>
         }
       />
@@ -412,28 +439,62 @@ export default function AttachmentPanel({
             />
           )}
 
+          {mode === 'manage' && <>
+          {attachmentIssueCount(messages) > 0 && <Card title={`附件消息 (${attachmentIssueCount(messages)})`} description="图片失效、连接检测失败或备份上传失败会在这里提示,不会自动替换主地址。">
+            <ul className="plain-list" role="alert">
+              {[...messages.health_errors, ...messages.upload_errors].map((message, index) => <li key={`${message.attachment_id}-${message.target_id}-${index}`}>
+                <strong>{attachments.find((a) => a.id === message.attachment_id)?.original_name ?? message.attachment_id}</strong>
+                <span> · {targets.find((t) => t.id === message.target_id)?.name ?? message.target_id}: {message.message}</span>
+              </li>)}
+            </ul>
+          </Card>}
+          <Card title="上传目标" description={syncSettings.target_ids.length ? '图片按设置中的排序同步上传;此处的单目标用于其他文件。已有主地址不随排序或检测结果改变。' : '未启用多图床同步,上传到下方选择的目标。多图床和存储目标在设置中管理。'}>
+            <div className="form-grid form-grid--single">
+              <Field
+                label="上传到"
+                hint="每个附件的「上传」按钮都写进这个目标。没有适配器的目标不能选,所以它不会变成一个注定失败的动作。"
+              >
+                <select
+                  value={uploadTarget}
+                  onChange={(event) => setUploadTarget(event.target.value)}
+                >
+                  <option value="">(选择目标)</option>
+                  {uploadTargets(targets).map((view) => (
+                    <option key={view.id} value={view.id} disabled={!view.implemented}>
+                      {view.name}
+                      {view.implemented ? '' : '(无适配器)'}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            </div>
+
+            {objects.length > 0 && (
+              <details className="disclosure">
+                <summary>已上传 {objects.length} 个远程对象</summary>
+                <ul className="plain-list">
+                  {objects.map((object) => (
+                    <li key={object.dedup_key}>
+                      <code>{object.key}</code> — {object.url}
+                      <span className="muted">目标:{object.storage_target_id}</span>
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            )}
+
+          </Card>
           <Card
             title="添加文件"
             description="把本地文件复制进缓存池。这一步不会修改任何文章。"
           >
+            <AttachmentFilePicker files={pendingFiles} onChange={setPendingFiles} disabled={busy} onReadingChange={setFileReading} />
             <div className="form-grid">
-              <Field
-                label="文件路径"
-                grow
-                hint="完整路径;可以粘贴,也可以先在文件管理器里复制。"
-              >
-                <input
-                  value={sourcePath}
-                  onChange={(event) => setSourcePath(event.target.value)}
-                  placeholder="D:/图片/photo.png"
-                  spellCheck={false}
-                />
-              </Field>
-              <Field
-                label="存储目标"
-                hint="写进附件记录的目标标识;上传时按这个标识和路径前缀分区去重(§13.5)。"
-              >
-                <input value={target} onChange={(event) => setTarget(event.target.value)} />
+              <Field label="存储目标" hint="选择附件所属目标；这里只加入本地缓存，不会立即上传。隐藏的策略不会出现在上传选择中。">
+                <select value={target} disabled={busy} onChange={event => setTarget(event.target.value)}>
+                  <option value="local">仅本地缓存</option>
+                  {uploadTargets(targets).filter(view => view.id !== 'local').map(view => <option key={view.id} value={view.id} disabled={!view.implemented}>{view.name}{view.implemented ? '' : '（无适配器）'}</option>)}
+                </select>
               </Field>
               <Field label="命名空间" hint="同一个目标下再分一层;留空时按 default 处理。">
                 <input value={namespace} onChange={(event) => setNamespace(event.target.value)} />
@@ -441,7 +502,7 @@ export default function AttachmentPanel({
             </div>
 
             <div className="card-foot">
-              <button type="button" className="primary" onClick={() => void add()} disabled={busy}>
+              <button type="button" className="primary" onClick={() => void add()} disabled={busy || fileReading || pendingFiles.length === 0}>
                 加入附件池
               </button>
             </div>
@@ -479,17 +540,16 @@ export default function AttachmentPanel({
               <StateBlock
                 tone="empty"
                 title="还没有附件"
-                description="在上面的「添加文件」里填一个完整路径。附件会先留在缓存池里,直到你把它上传到某个存储目标。"
+                description="在上面的文件框中选择、拖拽或粘贴文件，确认预览后加入附件池；需要时再单独上传。"
               />
             ) : (
               <ul className="row-list">
                 {attachments.map((attachment) => {
                   // §13.2.2's reason, consulted before the attempt: a disabled button with no explanation is
                   // exactly what this reason exists to prevent.
-                  const control = uploadControl({
-                    eligibility: eligibility[attachment.id] ?? null,
-                    storageTargetId: uploadTarget,
-                  });
+                  const control = syncUploadControl(attachment, syncSettings, uploadTarget, eligibility[attachment.id] ?? null);
+                  const issues = [...messages.upload_errors, ...messages.health_errors].filter((m) => m.attachment_id === attachment.id);
+                  const replicas = objects.filter((o) => o.content_hash === attachment.content_hash);
                   // §13.8's explicit cleanup, on the target the object's own record names.
                   const cleanup = remoteCleanup(attachment, objects, targets);
                   return (
@@ -500,7 +560,10 @@ export default function AttachmentPanel({
                       <div className="row-main">
                         <p className="row-title" title={attachment.id}>
                           {attachment.original_name}
+                          {issues.length > 0 && <span className="attachment-message-bubble" title={issues.map((m) => m.message).join('；')} aria-label={`${issues.length} 条附件消息`}>{issues.length}</span>}
                         </p>
+                        {isImageAttachment(attachment.original_name) && attachment.remote_url && <img className="attachment-thumbnail" src={storageThumbnail(attachment.remote_url, targets.find(t => t.id === attachment.storage_target_id)) ?? attachment.remote_url} alt={attachment.original_name} loading="lazy" referrerPolicy="no-referrer" onError={() => { setMessages((current) => ({ ...current, health_errors: current.health_errors.some((m) => m.attachment_id === attachment.id && m.url === attachment.remote_url) ? current.health_errors : [...current.health_errors, { attachment_id: attachment.id, target_id: attachment.storage_target_id, url: attachment.remote_url, message: '图片/缩略图加载失败，请运行检测确认；原始链接未改写，未切换备份。' }] })); }} />}
+                        {replicas.length > 0 && <details><summary>{replicas.length} 个已上传副本（主地址固定）</summary><ul className="plain-list">{replicas.map((r) => <li key={r.dedup_key}><span>{r.url === attachment.remote_url ? '主地址' : '备份'} · {targets.find((t) => t.id === r.storage_target_id)?.name ?? r.storage_target_id}: </span><code>{r.url}</code></li>)}</ul></details>}
                         <p className="row-meta">
                           {formatBytes(attachment.size_bytes)} · 目标{' '}
                           <code>{attachment.storage_target_id}</code> · 命名空间{' '}
@@ -535,19 +598,19 @@ export default function AttachmentPanel({
                           className="primary"
                           onClick={() =>
                             void run(async () => {
-                              if (!uploadTarget) throw new Error('请先选择一个存储目标。');
-                              const result = await api.uploadAttachment(attachment.id, uploadTarget);
-                              setNotice(
-                                result.reused
-                                  ? `相同内容已存在于目标,复用了远程对象:${result.remote_url}`
-                                  : `已上传:${result.remote_url}`,
-                              );
-                            }, '上传完成。Markdown 已指向远程地址,插入后保存即可。')
+                              const results = await api.syncUploadAttachment(attachment.id, uploadTarget);
+                              const failures = results.filter((r) => r.error);
+                              if (failures.length) {
+                                await reload();
+                                window.dispatchEvent(new Event('veloct-attachment-messages'));
+                                throw new Error(`${results.length - failures.length}/${results.length} 个目标成功。${failures.map((r) => `${r.target_id}: ${r.error}`).join('；')}。可重试同步,已成功对象会复用,主地址不会切换。`);
+                              }
+                            }, '上传完成。已有主地址保持不变,其他副本仅作备份;文章内容未改动。')
                           }
                           disabled={busy || control.disabled}
                           title={control.reason ?? '上传到这个目标'}
                         >
-                          上传
+                          {isImageAttachment(attachment.original_name) && syncSettings.target_ids.length > 0 ? '同步 / 重试备份' : '上传'}
                         </button>
                         <button
                           type="button"
@@ -643,6 +706,21 @@ export default function AttachmentPanel({
             )}
           </Card>
 
+          </>}
+          {mode === 'settings' && <>
+          <Card title="多图床同步上传" description="勾选参与同步的图床,用上移/下移调整优先级。首次上传选最前面的成功地址作为主地址,其他地址仅备份;以后重排、重试或检测失败都不会自动切换主地址。取消全部勾选则使用单目标上传。">
+            {targets.length === 0 && <p className="muted">请先在下方新建存储目标。</p>}
+            <ol className="plain-list sync-target-list">
+              {[...syncSettings.target_ids.map((id) => targets.find((t) => t.id === id)).filter((t): t is StorageTargetView => Boolean(t)), ...targets.filter((t) => !syncSettings.target_ids.includes(t.id))].map((t) => {
+                const index = syncSettings.target_ids.indexOf(t.id);
+                const saveOrder = (ids: string[]) => void run(async () => { await api.saveAttachmentSyncSettings({ target_ids: ids }); }, '同步顺序已保存,已有主地址不变。');
+                return <li key={t.id} className="sync-target-row">
+                  <label><input type="checkbox" checked={index >= 0} disabled={busy || !t.implemented} onChange={(event) => saveOrder(event.target.checked ? [...syncSettings.target_ids, t.id] : syncSettings.target_ids.filter((id) => id !== t.id))} /> {t.name} <small className="muted">{t.kind}{index === 0 ? ' · 优先主地址' : index > 0 ? ' · 备份' : ''}</small></label>
+                  <div><button type="button" aria-label={`上移 ${t.name}`} disabled={busy || index <= 0} onClick={() => saveOrder(moveSyncTarget(syncSettings.target_ids, t.id, -1))}>上移</button><button type="button" aria-label={`下移 ${t.name}`} disabled={busy || index < 0 || index === syncSettings.target_ids.length - 1} onClick={() => saveOrder(moveSyncTarget(syncSettings.target_ids, t.id, 1))}>下移</button></div>
+                </li>;
+              })}
+            </ol>
+          </Card>
           <Card
             title="存储目标"
             description="附件上传到哪里去。没有适配器的类型也可以保存配置,但现在无法上传到它(§5.3/§5.4)。"
@@ -661,6 +739,8 @@ export default function AttachmentPanel({
                       <p className="row-title">
                         {view.name}
                         <span className="axis">{view.kind}</span>
+                        {view.hidden_from_upload && <span className="axis">上传界面隐藏</span>}
+                        {!!view.upload_priority && <span className="axis">优先级 {view.upload_priority}</span>}
                         {!view.implemented && (
                           <span className="axis axis-failed">本构建无适配器</span>
                         )}
@@ -746,40 +826,6 @@ export default function AttachmentPanel({
               </ul>
             )}
 
-            <div className="form-grid form-grid--single">
-              <Field
-                label="上传到"
-                hint="每个附件的「上传」按钮都写进这个目标。没有适配器的目标不能选,所以它不会变成一个注定失败的动作。"
-              >
-                <select
-                  value={uploadTarget}
-                  onChange={(event) => setUploadTarget(event.target.value)}
-                >
-                  <option value="">(选择目标)</option>
-                  {targets.map((view) => (
-                    <option key={view.id} value={view.id} disabled={!view.implemented}>
-                      {view.name}
-                      {view.implemented ? '' : '(无适配器)'}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-            </div>
-
-            {objects.length > 0 && (
-              <details className="disclosure">
-                <summary>已上传 {objects.length} 个远程对象</summary>
-                <ul className="plain-list">
-                  {objects.map((object) => (
-                    <li key={object.dedup_key}>
-                      <code>{object.key}</code> — {object.url}
-                      <span className="muted">目标:{object.storage_target_id}</span>
-                    </li>
-                  ))}
-                </ul>
-              </details>
-            )}
-
             <div className="subform">
               <h3 className="subform-title">
                 {editingId === null ? '新建存储目标' : `修改存储目标:${editingId}`}
@@ -810,7 +856,7 @@ export default function AttachmentPanel({
                     }}
                   />
                 </Field>
-                <Field label="名称" hint="显示用的名字,不影响任何路径或地址。">
+                <Field label={normaliseKind(draft.kind) === 's3' ? '名称 *' : '名称'} hint="显示用的名字,不影响任何路径或地址。">
                   <input
                     value={draft.name}
                     spellCheck={false}
@@ -826,7 +872,8 @@ export default function AttachmentPanel({
                     onChange={(event) => {
                       const change = changeKind(draft, event.target.value);
                       setDirty(true);
-                      setDraft(change.draft);
+                      setDraft(normaliseKind(change.draft.kind) === 's3' && !change.draft.s3
+                        ? { ...change.draft, region: change.draft.region || 'auto', s3: s3Defaults() } : change.draft);
                       setHiddenFilled(change.hiddenFilled);
                     }}
                   >
@@ -848,7 +895,8 @@ export default function AttachmentPanel({
                 />
               )}
 
-              {formFields.length > 0 && (
+              {normaliseKind(draft.kind) === 's3' && <S3ConfigFields draft={draft} disabled={busy} onChange={value => { setDirty(true); setDraft(value); }} />}
+              {normaliseKind(draft.kind) !== 's3' && formFields.length > 0 && (
                 <div className="form-grid">
                   {formFields.map((field) => (
                     <Field key={field.key} label={field.label} hint={field.hint}>
@@ -880,6 +928,11 @@ export default function AttachmentPanel({
                 >
                   {editingId === null ? '创建目标' : '保存修改'}
                 </button>
+                {normaliseKind(draft.kind) === 's3' && <button type="button" disabled={busy} onClick={() => void run(async () => {
+                  const reason = await validateDraft(draft, api.validateStorageTarget);
+                  if (reason) throw new Error(reason);
+                  await api.testStorageTarget(buildSaveRequest(draft));
+                }, '对象存储验证通过：桶可访问。未保存配置或上传文件；公开域名、条件写入与缩略图效果仍需按服务商权限验证。')}>验证对象存储</button>}
                 {editingId !== null && (
                   <button type="button" onClick={cancelEdit} disabled={busy}>
                     取消修改
@@ -893,7 +946,8 @@ export default function AttachmentPanel({
             </div>
           </Card>
 
-          {orphans && (orphans.safe.length > 0 || orphans.needs_confirmation.length > 0) && (
+          </>}
+          {mode === 'manage' && orphans && (orphans.safe.length > 0 || orphans.needs_confirmation.length > 0) && (
             <Card
               title="可以清理的附件"
               description="第 13.2.4 节把「可以安全删除」和「需要你确认」当作两件事;这里也分成两段,因为它们的处理方式不同。"

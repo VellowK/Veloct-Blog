@@ -23,8 +23,8 @@
 use std::path::{Path, PathBuf};
 
 use veloct_attach::{
-    Attachment, AttachmentId, AttachmentState, AttachmentTransaction, CachePool, DedupKey, InsertOutcome,
-    ReferenceIndex, StorageTargetId,
+    Attachment, AttachmentId, AttachmentState, AttachmentTransaction, CachePool, DedupKey,
+    InsertOutcome, ReferenceIndex, StorageTargetId,
 };
 use veloct_core::{Clock, Result, VeloctError};
 use veloct_storage::open as open_database;
@@ -93,7 +93,13 @@ impl AttachmentView {
             .remote_url
             .clone()
             .unwrap_or_else(|| format!("/{CACHE_DIR}/{}", self.cache_path));
-        format!("![{}]({})", self.original_name, src)
+        let prefix =
+            if mime_type_for(&self.original_name).is_some_and(|mime| mime.starts_with("image/")) {
+                "!"
+            } else {
+                ""
+            };
+        format!("{prefix}[{}]({})", self.original_name, src)
     }
 }
 
@@ -135,6 +141,10 @@ pub struct ObjectView {
     pub key: String,
     pub url: String,
     pub bytes: u64,
+    #[serde(default)]
+    pub content_hash: String,
+    #[serde(default)]
+    pub storage_namespace: String,
     /// The target the object is ACTUALLY on.
     ///
     /// Exposed because an upload may name a target other than the one the attachment was added for, and a
@@ -180,11 +190,13 @@ impl AttachmentService {
             None => AttachmentTransaction::new(),
         };
 
-        Ok(Self {
+        let mut service = Self {
             project_root,
             transaction,
             state_path,
-        })
+        };
+        service.refresh_site_image_references()?;
+        Ok(service)
     }
 
     /// The cache directory, created if needed.
@@ -256,7 +268,27 @@ impl AttachmentService {
         veloct_attach::validate_original_name(&original_name)?;
 
         let bytes = std::fs::read(source).map_err(|error| VeloctError::io(source, error))?;
-        let content_hash = veloct_core::sha256_hex(&bytes);
+        self.add_bytes(&original_name, &bytes, target_id, namespace, now, entropy)
+    }
+
+    /// Browser/clipboard bytes use exactly the same cache, size and dedup transaction as local paths.
+    pub fn add_bytes(
+        &mut self,
+        original_name: &str,
+        bytes: &[u8],
+        target_id: &str,
+        namespace: &str,
+        now: &str,
+        entropy: &[u8; veloct_attach::SUFFIX_LENGTH],
+    ) -> Result<(AttachmentView, AddOutcome)> {
+        veloct_attach::validate_original_name(original_name)?;
+        if bytes.len() as u64 > MAX_ATTACHMENT_BYTES {
+            return Err(VeloctError::Invalid(format!(
+                "attachment exceeds the {MAX_ATTACHMENT_BYTES} byte limit"
+            )));
+        }
+        let original_name = original_name.to_string();
+        let content_hash = veloct_core::sha256_hex(bytes);
 
         let target = StorageTargetId::new(target_id);
         let pool = self.transaction.pool();
@@ -284,7 +316,7 @@ impl AttachmentService {
             // record is still the truth, so the file is restored rather than a duplicate created.
             if !cache_file.is_file() {
                 veloct_core::workdir::ensure_parent(&cache_file)?;
-                std::fs::write(&cache_file, &bytes)
+                std::fs::write(&cache_file, bytes)
                     .map_err(|error| VeloctError::io(&cache_file, error))?;
             }
             let view = AttachmentView::of(&existing, self.transaction.references());
@@ -298,7 +330,7 @@ impl AttachmentService {
             id: AttachmentId::new(veloct_core::ids::StableId::new().to_text()),
             original_name,
             content_hash,
-            size_bytes: metadata.len(),
+            size_bytes: bytes.len() as u64,
             cache_path,
             // §13.1's axes start where the file actually is: cached, not uploaded, not referenced yet.
             state: AttachmentState::default(),
@@ -313,9 +345,10 @@ impl AttachmentService {
 
         // The bytes go to the cache through the library's own path check, so a crafted `cache_path` cannot
         // be the way out of the project directory.
-        let checked = veloct_attach::checked_cache_path(&self.project_root, &attachment.cache_path)?;
+        let checked =
+            veloct_attach::checked_cache_path(&self.project_root, &attachment.cache_path)?;
         veloct_core::workdir::ensure_parent(&checked)?;
-        std::fs::write(&checked, &bytes).map_err(|error| VeloctError::io(&checked, error))?;
+        std::fs::write(&checked, bytes).map_err(|error| VeloctError::io(&checked, error))?;
 
         let inserted = self.transaction.pool_mut().insert(attachment);
         // The insert can still find an existing record; the pool is the authority on dedup, and asking it
@@ -363,12 +396,11 @@ impl AttachmentService {
         let attachment_id = AttachmentId::new(id);
         // The transaction needs the project root to find the cached bytes it is about to send. Setting it here
         // rather than at construction means a restored transaction gets it too.
-        self.transaction = std::mem::replace(
-            &mut self.transaction,
-            AttachmentTransaction::new(),
-        )
-        .with_cache_root(self.project_root.clone());
-        let outcome = self.transaction.upload(&attachment_id, target, now)?;
+        self.transaction = std::mem::replace(&mut self.transaction, AttachmentTransaction::new())
+            .with_cache_root(self.project_root.clone());
+        let outcome = self.transaction.upload(&attachment_id, target, now);
+        self.save()?;
+        let outcome = outcome?;
         // The state is durable BEFORE the caller sees the outcome, so a crash between the upload and the
         // Markdown edit cannot lose the knowledge that the object exists.
         self.save()?;
@@ -388,6 +420,31 @@ impl AttachmentService {
         })
     }
 
+    /// Add a backup without changing the chosen primary or document references.
+    pub fn upload_replica(
+        &mut self,
+        id: &str,
+        target: &veloct_attach::StorageTarget,
+        now: &str,
+    ) -> Result<UploadView> {
+        self.transaction = std::mem::replace(&mut self.transaction, AttachmentTransaction::new())
+            .with_cache_root(self.project_root.clone());
+        let outcome = self
+            .transaction
+            .upload_replica(&AttachmentId::new(id), target, now);
+        self.save()?;
+        let outcome = outcome?;
+        let attachment = self
+            .get(id)
+            .ok_or_else(|| VeloctError::Invalid(format!("no attachment {id}")))?;
+        Ok(UploadView {
+            attachment,
+            reused: outcome.reused,
+            remote_url: outcome.object.public_url,
+            remote_key: outcome.object.key,
+        })
+    }
+
     /// Remove ONE remote object from the target that actually holds it (`handoff.md` §13.8).
     ///
     /// `remove` deletes the record and the cached bytes and deliberately leaves the remote file alone; this
@@ -403,7 +460,9 @@ impl AttachmentService {
         target: &veloct_attach::StorageTarget,
     ) -> Result<RemoteDeleteView> {
         let attachment_id = AttachmentId::new(id);
-        let outcome = self.transaction.delete_remote_object(&attachment_id, target)?;
+        let outcome = self
+            .transaction
+            .delete_remote_object(&attachment_id, target)?;
         // Durable BEFORE the caller sees it: a crash between the remote delete and the state write would
         // otherwise leave the record claiming an object that no longer exists.
         self.save()?;
@@ -457,6 +516,8 @@ impl AttachmentService {
                 key: record.key.clone(),
                 url: record.public_url.clone(),
                 bytes: record.size_bytes,
+                content_hash: record.content_hash.clone(),
+                storage_namespace: record.storage_namespace.clone(),
                 storage_target_id: record.storage_target_id.as_str().to_string(),
             })
             .collect()
@@ -485,11 +546,10 @@ impl AttachmentService {
 
         let view = AttachmentView::of(&attachment, self.transaction.references());
         let cache_file = attachment.cache_file(&self.project_root);
-        let still_used = self
-            .transaction
-            .pool()
-            .iter()
-            .any(|other| other.id != attachment.id && other.cache_path == attachment.cache_path);
+        let still_used =
+            self.transaction.pool().iter().any(|other| {
+                other.id != attachment.id && other.cache_path == attachment.cache_path
+            });
 
         self.transaction.pool_mut().remove(&attachment_id)?;
         if !still_used && cache_file.is_file() {
@@ -520,6 +580,70 @@ impl AttachmentService {
             .into_iter()
             .map(|attachment| AttachmentView::of(attachment, references))
             .collect()
+    }
+
+    /// Saved homepage URLs are references too, including after a crash between saving config/index.
+    /// Invalid site JSON keeps the existing index rather than treating its images as unused.
+    pub fn refresh_site_image_references(&mut self) -> Result<()> {
+        let Some(raw) =
+            veloct_core::workdir::read_text_optional(&self.project_root.join("data/site.json"))?
+        else {
+            return Ok(());
+        };
+        let Ok(config) = serde_json::from_str::<serde_json::Value>(&raw) else {
+            return Ok(());
+        };
+        if !config.is_object() {
+            return Ok(());
+        }
+        for (pointer, content_id) in [
+            ("/author/avatar", "site-settings:author.avatar"),
+            ("/homepage/cover", "site-settings:homepage.cover"),
+        ] {
+            let url = match config.pointer(pointer) {
+                Some(value) => match value.as_str() {
+                    Some(url) => url,
+                    None => continue,
+                },
+                None => "",
+            };
+            let mut wanted: Vec<String> = self
+                .list()
+                .into_iter()
+                .filter(|attachment| {
+                    !url.is_empty()
+                        && (attachment.remote_url.as_deref() == Some(url)
+                            || self.transaction.objects().iter().any(|(_, object)| {
+                                object.content_hash == attachment.content_hash
+                                    && object.public_url == url
+                            }))
+                })
+                .map(|attachment| attachment.id)
+                .collect();
+            let mut current: Vec<String> = self
+                .transaction
+                .references()
+                .ids()
+                .into_iter()
+                .filter(|id| {
+                    self.transaction.references().get(id).is_some_and(|set| {
+                        set.targets()
+                            .iter()
+                            .any(|target| target.content_id == content_id)
+                    })
+                })
+                .map(|id| id.as_str().to_owned())
+                .collect();
+            wanted.sort();
+            current.sort();
+            if wanted != current {
+                self.forget_document(content_id)?;
+                for id in wanted {
+                    self.record_reference(&id, content_id, None)?;
+                }
+            }
+        }
+        Ok(())
     }
 
     /// The reference index, so a caller can record which documents cite an attachment.
@@ -562,7 +686,10 @@ impl AttachmentService {
 
     /// Forget every reference from one document, so deleting an article does not leave dangling citations.
     pub fn forget_document(&mut self, content_id: &str) -> Result<usize> {
-        let removed = self.transaction.references_mut().forget_document(content_id);
+        let removed = self
+            .transaction
+            .references_mut()
+            .forget_document(content_id);
 
         // The reference axis follows, for every attachment that no longer has one. The pool is iterated by id
         // rather than mutated in place, because the count has to be read from the index while the pool is
@@ -701,16 +828,11 @@ impl AttachmentService {
         let placeholders = if ids.is_empty() {
             "''".to_string()
         } else {
-            ids.iter()
-                .map(|_| "?")
-                .collect::<Vec<_>>()
-                .join(",")
+            ids.iter().map(|_| "?").collect::<Vec<_>>().join(",")
         };
         let sql = format!("DELETE FROM attachments WHERE id NOT IN ({placeholders})");
-        let params: Vec<&dyn rusqlite::ToSql> = ids
-            .iter()
-            .map(|id| id as &dyn rusqlite::ToSql)
-            .collect();
+        let params: Vec<&dyn rusqlite::ToSql> =
+            ids.iter().map(|id| id as &dyn rusqlite::ToSql).collect();
         connection
             .execute(&sql, params.as_slice())
             .map_err(|error| {
@@ -760,6 +882,75 @@ mod tests {
         let path = dir.join(name);
         std::fs::write(&path, bytes).unwrap();
         path
+    }
+
+    #[test]
+    fn pasted_bytes_use_the_same_cache_dedup_and_persistence_without_source_files() {
+        let dir = project();
+        let mut service = AttachmentService::open(dir.path()).unwrap();
+        let (first, outcome) = service
+            .add_bytes(
+                "粘贴.png",
+                b"clipboard bytes",
+                "local",
+                "default",
+                NOW,
+                &[1, 2, 3, 4, 5, 6],
+            )
+            .unwrap();
+        assert_eq!(outcome, AddOutcome::Added);
+        assert_eq!(first.original_name, "粘贴.png");
+        assert_eq!(first.size_bytes, 15);
+        assert_eq!(first.upload_status, "PENDING");
+        assert_eq!(
+            std::fs::read(dir.path().join(CACHE_DIR).join(&first.cache_path)).unwrap(),
+            b"clipboard bytes"
+        );
+        let (again, outcome) = service
+            .add_bytes(
+                "copy.png",
+                b"clipboard bytes",
+                "local",
+                "default",
+                NOW,
+                &[6, 5, 4, 3, 2, 1],
+            )
+            .unwrap();
+        assert_eq!(outcome, AddOutcome::Reused);
+        assert_eq!(again.id, first.id);
+        assert_eq!(AttachmentService::open(dir.path()).unwrap().list().len(), 1);
+        assert!(
+            std::fs::read_dir(dir.path().join("content/articles"))
+                .unwrap()
+                .next()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn pasted_bytes_refuse_paths_and_oversized_content_without_creating_records() {
+        let dir = project();
+        let mut service = AttachmentService::open(dir.path()).unwrap();
+        for name in ["../outside.png", "folder/a.png", "", "a\\b.png"] {
+            assert!(
+                service
+                    .add_bytes(name, b"x", "local", "default", NOW, &[1; 6])
+                    .is_err()
+            );
+        }
+        assert!(
+            service
+                .add_bytes(
+                    "large.bin",
+                    &vec![0; MAX_ATTACHMENT_BYTES as usize + 1],
+                    "local",
+                    "default",
+                    NOW,
+                    &[1; 6]
+                )
+                .is_err()
+        );
+        assert!(service.list().is_empty());
     }
 
     #[test]
@@ -816,7 +1007,10 @@ mod tests {
         assert_eq!(first_outcome, AddOutcome::Added);
         assert_eq!(second_outcome, AddOutcome::Reused);
         assert_eq!(first.id, second.id, "the same record");
-        assert_eq!(first.cache_path, second.cache_path, "and the same cache path");
+        assert_eq!(
+            first.cache_path, second.cache_path,
+            "and the same cache path"
+        );
         assert_eq!(service.list().len(), 1, "one record, not two");
     }
 
@@ -886,7 +1080,13 @@ mod tests {
         let dir = project();
         let mut service = AttachmentService::open(dir.path()).unwrap();
         let error = service
-            .add_file(Path::new("D:/definitely/not/here.png"), "local", "default", NOW, &[1, 2, 3, 4, 5, 6])
+            .add_file(
+                Path::new("D:/definitely/not/here.png"),
+                "local",
+                "default",
+                NOW,
+                &[1, 2, 3, 4, 5, 6],
+            )
             .unwrap_err();
         assert!(error.to_string().contains("not/here.png"), "{error}");
         assert!(service.list().is_empty());
@@ -944,9 +1144,11 @@ mod tests {
         // constant's own value cannot show.
         std::fs::write(&source, b"ok").unwrap();
         let mut service = AttachmentService::open(dir.path()).unwrap();
-        assert!(service
-            .add_file(&source, "local", "default", NOW, &[1, 2, 3, 4, 5, 6])
-            .is_ok());
+        assert!(
+            service
+                .add_file(&source, "local", "default", NOW, &[1, 2, 3, 4, 5, 6])
+                .is_ok()
+        );
     }
 
     #[test]
@@ -1002,7 +1204,12 @@ mod tests {
         assert!(!cached.exists(), "the bytes went with the record");
         assert!(service.list().is_empty());
         // And it is gone from the durable state too.
-        assert!(AttachmentService::open(dir.path()).unwrap().list().is_empty());
+        assert!(
+            AttachmentService::open(dir.path())
+                .unwrap()
+                .list()
+                .is_empty()
+        );
     }
 
     #[test]
@@ -1022,13 +1229,18 @@ mod tests {
             .add_file(&source, "local", "default", NOW, &[1, 2, 3, 4, 5, 6])
             .unwrap();
 
-        service.record_reference(&view.id, "01ARTICLE", None).unwrap();
+        service
+            .record_reference(&view.id, "01ARTICLE", None)
+            .unwrap();
         let referenced = service.get(&view.id).unwrap();
         assert_eq!(referenced.reference_status, "APPLIED");
         assert_eq!(referenced.reference_count, 1);
         // The upload axis did NOT move, which is the whole point of keeping the axes apart.
         assert_eq!(referenced.upload_status, "PENDING");
-        assert!(service.safe_orphans().is_empty(), "a referenced file is not an orphan");
+        assert!(
+            service.safe_orphans().is_empty(),
+            "a referenced file is not an orphan"
+        );
     }
 
     #[test]
@@ -1042,7 +1254,9 @@ mod tests {
             .unwrap();
 
         service.record_reference(&view.id, "01A", None).unwrap();
-        service.record_reference(&view.id, "01B", Some("01P")).unwrap();
+        service
+            .record_reference(&view.id, "01B", Some("01P"))
+            .unwrap();
         assert_eq!(service.get(&view.id).unwrap().reference_count, 2);
     }
 
@@ -1100,7 +1314,8 @@ mod tests {
             .unwrap();
 
         let clock = veloct_core::FixedClock::new(
-            time::OffsetDateTime::parse(NOW, &time::format_description::well_known::Rfc3339).unwrap(),
+            time::OffsetDateTime::parse(NOW, &time::format_description::well_known::Rfc3339)
+                .unwrap(),
         );
         assert_eq!(service.sync_index(&clock).unwrap(), 1);
 
@@ -1135,7 +1350,9 @@ mod tests {
         let (view, _) = service
             .add_file(&source, "local", "default", NOW, &[1, 2, 3, 4, 5, 6])
             .unwrap();
-        service.record_reference(&view.id, "01A", Some("01P")).unwrap();
+        service
+            .record_reference(&view.id, "01A", Some("01P"))
+            .unwrap();
 
         let reopened = AttachmentService::open(dir.path()).unwrap();
         let stored = reopened.get(&view.id).unwrap();
@@ -1237,7 +1454,10 @@ mod tests {
     }
 
     /// A target whose protocol has no adapter, so its `capabilities().can_delete_remotely` is false.
-    fn unsupported_target(kind: veloct_attach::StorageKind, id: &str) -> veloct_attach::StorageTarget {
+    fn unsupported_target(
+        kind: veloct_attach::StorageKind,
+        id: &str,
+    ) -> veloct_attach::StorageTarget {
         let client = std::sync::Arc::new(veloct_core::http::FakeHttpClient::new())
             as std::sync::Arc<dyn veloct_core::http::HttpClient>;
         let config = veloct_attach::StorageConfig::new(id, "no adapter", kind);
@@ -1267,12 +1487,19 @@ mod tests {
         let remote = dir.path().join("remote-root").join(&upload.remote_key);
         assert!(remote.is_file(), "{}", remote.display());
         assert_eq!(std::fs::read(&remote).unwrap(), b"BYTES");
-        assert!(upload.remote_url.starts_with("https://example.com/files/"), "{}", upload.remote_url);
+        assert!(
+            upload.remote_url.starts_with("https://example.com/files/"),
+            "{}",
+            upload.remote_url
+        );
 
         // The attachment's UPLOAD axis moved and the reference axis did not (section 13.1).
         assert_eq!(upload.attachment.upload_status, "SUCCEEDED");
         assert_eq!(upload.attachment.reference_status, "NOT_APPLIED");
-        assert_eq!(upload.attachment.remote_url.as_deref(), Some(upload.remote_url.as_str()));
+        assert_eq!(
+            upload.attachment.remote_url.as_deref(),
+            Some(upload.remote_url.as_str())
+        );
 
         // Adding a picture and uploading it must not rewrite an article.
         assert_eq!(
@@ -1304,7 +1531,10 @@ mod tests {
         service.upload(&view.id, &target, NOW).unwrap();
 
         let after = service.markdown_for(&view.id).unwrap();
-        assert!(after.starts_with("![photo.png](https://example.com/files/"), "{after}");
+        assert!(
+            after.starts_with("![photo.png](https://example.com/files/"),
+            "{after}"
+        );
         assert!(!after.contains(CACHE_DIR), "{after}");
     }
 
@@ -1377,8 +1607,11 @@ mod tests {
 
         let client = std::sync::Arc::new(veloct_core::http::FakeHttpClient::new())
             as std::sync::Arc<dyn veloct_core::http::HttpClient>;
-        let config =
-            veloct_attach::StorageConfig::new("sftp", "my server", veloct_attach::StorageKind::Sftp);
+        let config = veloct_attach::StorageConfig::new(
+            "sftp",
+            "my server",
+            veloct_attach::StorageKind::Sftp,
+        );
         let target = veloct_attach::target_from_config(config, None, client, None).unwrap();
 
         let error = service.upload(&view.id, &target, NOW).unwrap_err();
@@ -1416,11 +1649,13 @@ mod tests {
             .add_file(&source, "github", "default", NOW, &[1, 2, 3, 4, 5, 6])
             .unwrap();
 
-        let client = std::sync::Arc::new(
-            veloct_core::http::FakeHttpClient::new().always(201, "{}"),
+        let client =
+            std::sync::Arc::new(veloct_core::http::FakeHttpClient::new().always(201, "{}"));
+        let mut config = veloct_attach::StorageConfig::new(
+            "github",
+            "my repo",
+            veloct_attach::StorageKind::GitHub,
         );
-        let mut config =
-            veloct_attach::StorageConfig::new("github", "my repo", veloct_attach::StorageKind::GitHub);
         config.repository = Some("vellow/assets".to_string());
         config.branch = Some("main".to_string());
         let target = veloct_attach::target_from_config(
@@ -1440,9 +1675,14 @@ mod tests {
             "{}",
             upload.remote_url
         );
-        assert!(service.objects().iter().any(|object| object.url == upload.remote_url
-            && object.storage_target_id == "github"),
-            "the object records the target it is actually on, so a cleanup can name it");
+        assert!(
+            service
+                .objects()
+                .iter()
+                .any(|object| object.url == upload.remote_url
+                    && object.storage_target_id == "github"),
+            "the object records the target it is actually on, so a cleanup can name it"
+        );
     }
 
     #[test]
@@ -1504,7 +1744,9 @@ mod tests {
             .add_file(&source, "local", "default", NOW, &[1, 2, 3, 4, 5, 6])
             .unwrap();
         // A citation exists, so the test can show that the cleanup leaves the user's records alone.
-        service.record_reference(&view.id, "article-a", None).unwrap();
+        service
+            .record_reference(&view.id, "article-a", None)
+            .unwrap();
 
         let target = project_local_target(dir.path(), "local");
         let upload = service.upload(&view.id, &target, NOW).unwrap();
@@ -1531,7 +1773,10 @@ mod tests {
         assert!(markdown.contains(CACHE_DIR), "{markdown}");
 
         // The object record is gone; the cached bytes and the reference records are NOT.
-        assert!(service.objects().is_empty(), "no object is recorded any more");
+        assert!(
+            service.objects().is_empty(),
+            "no object is recorded any more"
+        );
         assert!(
             dir.path().join(CACHE_DIR).join(&view.cache_path).is_file(),
             "the cached bytes are the user's own file and are left alone"
@@ -1561,12 +1806,13 @@ mod tests {
 
         // A second, genuinely different target with its own directory.
         let other = project_local_target(dir.path(), "local-b");
-        let error = service
-            .delete_remote_object(&view.id, &other)
-            .unwrap_err();
+        let error = service.delete_remote_object(&view.id, &other).unwrap_err();
         assert!(error.to_string().contains("local-a"), "{error}");
 
-        assert!(remote.is_file(), "the object on the real target still exists");
+        assert!(
+            remote.is_file(),
+            "the object on the real target still exists"
+        );
         assert_eq!(service.objects().len(), 1, "and its record is still there");
         assert!(service.get(&view.id).unwrap().remote_url.is_some());
     }
@@ -1587,7 +1833,9 @@ mod tests {
         // The RETIRED §13.10 kind cannot delete remotely either (ADR-0017), and its reason names the removal:
         // a user with a target saved before that decision is told the target is gone, not that a protocol failed.
         let retired = unsupported_target(veloct_attach::StorageKind::Sftp, "server");
-        let error = service.delete_remote_object(&view.id, &retired).unwrap_err();
+        let error = service
+            .delete_remote_object(&view.id, &retired)
+            .unwrap_err();
         assert_eq!(error.code(), "NOT_CONFIGURED");
         assert!(
             error.hint().unwrap_or_default().contains("移除"),
@@ -1624,9 +1872,15 @@ mod tests {
         // Section 13.7: the same content reuses the same remote name, so the re-upload cannot orphan the URL
         // an article may already cite.
         assert_eq!(second.remote_key, first.remote_key);
-        assert_eq!(std::fs::read(root.join(&second.remote_key)).unwrap(), b"BYTES");
+        assert_eq!(
+            std::fs::read(root.join(&second.remote_key)).unwrap(),
+            b"BYTES"
+        );
         assert_eq!(service.objects().len(), 1, "exactly one object again");
-        assert_eq!(service.get(&view.id).unwrap().remote_url.as_deref(), Some(second.remote_url.as_str()));
+        assert_eq!(
+            service.get(&view.id).unwrap().remote_url.as_deref(),
+            Some(second.remote_url.as_str())
+        );
     }
 
     #[test]
@@ -1652,10 +1906,15 @@ mod tests {
         let (never, _) = service
             .add_file(&never_source, "local", "default", NOW, &[7, 8, 9, 1, 2, 3])
             .unwrap();
-        assert!(never.remote_key.is_none(), "the fixture must have nothing recorded");
+        assert!(
+            never.remote_key.is_none(),
+            "the fixture must have nothing recorded"
+        );
         assert!(never.remote_url.is_none());
 
-        let error = service.delete_remote_object(&never.id, &target).unwrap_err();
+        let error = service
+            .delete_remote_object(&never.id, &target)
+            .unwrap_err();
         assert!(
             error.to_string().contains("no recorded remote object"),
             "the refusal must name why: {error}"

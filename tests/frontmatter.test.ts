@@ -15,8 +15,10 @@ import { describe, expect, it } from 'vitest';
 import {
   bodiesDifferMeaningfully,
   frontmatterFields,
+  frontmatterSummary,
   joinSource,
   replaceBody,
+  replaceSummary,
   splitSource,
 } from '../src/lib/frontmatter';
 
@@ -132,7 +134,50 @@ describe('replaceBody', () => {
   });
 });
 
-describe('frontmatterFields', () => {
+describe('summary frontmatter editing', () => {
+  it('round trips special characters, quotes, colons, and newlines without changing body or other keys', () => {
+    const source = '---\r\nid: 01ABC\r\nsummary: old\r\ncustom: keep # this\r\n---\r\nBody stays exact\r\n';
+    const summary = "A '# title: \\\nsecond line";
+    const edited = replaceSummary(source, summary);
+    const { frontmatter, body } = splitSource(edited);
+    expect(frontmatterSummary(frontmatter)).toBe(summary);
+    expect(edited).toContain('id: 01ABC\r\n');
+    expect(edited).toContain('custom: keep # this\r\n');
+    expect(body).toBe('Body stays exact\r\n');
+    expect(frontmatter).toContain(`summary: ${JSON.stringify(summary)}\r\n`);
+  });
+
+  it('reads and replaces a block scalar without leaving its continuation attached', () => {
+    const source = '---\nsummary: >-\n  old first\n  old second\nid: 01ABC\n---\nBody\n';
+    expect(frontmatterSummary(splitSource(source).frontmatter)).toBe('old first old second');
+    const edited = replaceSummary(source, 'new: # summary');
+    expect(frontmatterSummary(splitSource(edited).frontmatter)).toBe('new: # summary');
+    expect(edited).toContain('id: 01ABC');
+    expect(splitSource(edited).body).toBe('Body\n');
+  });
+
+  it('preserves comments and handles block content including blank and hash lines', () => {
+    for (const ending of ['\n', '\r\n']) {
+      const source = ['---', 'id: stable # keep', 'summary: |-', '  first', '', '  # literal content', '  last', 'custom:', '  nested: untouched', '# trailing comment', '---', 'Body'].join(ending);
+      const edited = replaceSummary(source, 'new');
+      expect(frontmatterSummary(splitSource(edited).frontmatter)).toBe('new');
+      expect(edited).toContain(['custom:', '  nested: untouched', '# trailing comment'].join(ending));
+      expect(edited).toContain('id: stable # keep');
+      expect(edited).not.toContain('literal content');
+      expect(splitSource(edited).body).toBe('Body');
+    }
+    const source = '---\nid: stable\nsummary: "old" # keep comment\nother: true\n---\nBody';
+    expect(replaceSummary(source, 'new')).toContain('summary: "new" # keep comment');
+  });
+
+  it('adds a summary when absent and leaves source without frontmatter untouched', () => {
+    const source = '---\nid: 01ABC\n---\nBody';
+    expect(frontmatterSummary(splitSource(replaceSummary(source, 'new')).frontmatter)).toBe('new');
+    expect(replaceSummary('Body', 'new')).toBe('Body');
+  });
+});
+
+ describe('frontmatterFields', () => {
   it('reads the top-level keys for display', () => {
     const fields = frontmatterFields(splitSource(SOURCE).frontmatter);
     const keys = fields.map((field) => field.key);

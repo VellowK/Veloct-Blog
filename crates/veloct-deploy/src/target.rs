@@ -357,7 +357,8 @@ impl TargetKind {
 
     /// Whether the adapter's protocol has been verified. See [`Self::is_automatic`].
     pub fn is_verified(self) -> bool {
-        matches!(self, Self::CloudflarePages | Self::OnePanel)
+        // EdgeOne verified against the official Makers SDK 0.1.0 (contract 0.1.39).
+        true
     }
 
     /// A label for the UI.
@@ -438,9 +439,17 @@ impl TargetConfig {
             TargetKind::OnePanel => {
                 // A 1Panel target only exports, so it needs nothing to be configured.
             }
-            _ => {
-                if self.project.as_deref().unwrap_or("").trim().is_empty() {
-                    return Err(format!("{} needs a project", self.kind.label()));
+            TargetKind::EdgeOneMainland | TargetKind::EdgeOneInternational => {
+                if !crate::edgeone::identifier(self.project.as_deref().unwrap_or_default()) {
+                    return Err("EdgeOne 需要项目 ID，而不是项目名称或网址。".into());
+                }
+                if let Some(works) = &self.works_project {
+                    if !crate::edgeone::identifier(works) {
+                        return Err("EdgeOne 作品站需要有效的项目 ID。".into());
+                    }
+                    if Some(works) == self.project.as_ref() {
+                        return Err("主站与作品站必须使用不同的 EdgeOne 项目 ID，避免互相覆盖。".into());
+                    }
                 }
             }
         }
@@ -845,8 +854,8 @@ mod tests {
         // source, so it is an export target that says so rather than an adapter that pretends.
         assert!(TargetKind::CloudflarePages.is_verified());
         assert!(TargetKind::OnePanel.is_verified());
-        assert!(!TargetKind::EdgeOneMainland.is_verified());
-        assert!(!TargetKind::EdgeOneInternational.is_verified());
+        assert!(TargetKind::EdgeOneMainland.is_verified());
+        assert!(TargetKind::EdgeOneInternational.is_verified());
     }
 
     #[test]

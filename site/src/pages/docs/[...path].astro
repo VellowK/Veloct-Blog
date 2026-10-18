@@ -94,7 +94,12 @@ const jsonLd = {
   // This is deliberately positional rather than textual. Matching on the paragraph's TEXT would move
   // the highlight the moment the author reworded it, which is exactly the "guess a different
   // paragraph" behaviour handoff.md section 9.3 forbids.
-  (function () {
+  let controller: AbortController | undefined;
+
+  function initializeKnowledgeBody() {
+    controller?.abort();
+    controller = new AbortController();
+    const { signal } = controller;
     const body = document.querySelector('[data-veloct-knowledge-body]');
     if (!body) return;
 
@@ -112,6 +117,9 @@ const jsonLd = {
 
       target.classList.add('ring-2', 'ring-accent-500', 'rounded');
       target.scrollIntoView({ block: 'center', behavior: 'smooth' });
-    });
-  })();
+    }, { signal });
+  }
+
+  document.addEventListener('astro:page-load', initializeKnowledgeBody);
+  document.addEventListener('astro:before-swap', () => controller?.abort());
 </script>

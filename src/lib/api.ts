@@ -37,7 +37,112 @@ export interface AppInfo {
   site_template_version: string;
 }
 
+export type AliasPolicy = 'redirect' | 'canonical_only' | 'disabled';
+
+/**
+ * The effect the PUBLISHED SITE uses between two navigations.
+ *
+ * It is part of the site's configuration rather than of this application's local storage, and that is
+ * the point: the thing that animates is the reader's browser, so a value this window kept to itself
+ * could never reach it. `rise` settles the new page up into place, `dissolve` cross-fades, `none`
+ * switches instantly.
+ */
+export type PageTransition = 'rise' | 'dissolve' | 'none';
+
+export interface SeoSettings {
+  allow_indexing: boolean;
+  engines: string[];
+  keywords?: string;
+  html_injection?: string;
+}
+
+export interface FilingSettings {
+  icp: string;
+  icpUrl: string;
+  police: string;
+  policeUrl: string;
+  moe: string;
+  moeUrl: string;
+}
+
+export interface AuthorSettings {
+  name: string;
+  bio: string;
+  avatar: string;
+  [key: string]: unknown;
+}
+
+export interface SocialContact {
+  label: string;
+  url: string;
+  /** Public account/contact ID, not a secret. */
+  id?: string;
+  /**
+   * A platform key from `socialPlatforms.ts`.
+   *
+   * It is the whole contract between the form and the template: the site looks the key up to decide
+   * which glyph to draw. Optional, because a contact typed by hand — or saved by a build that predates
+   * the catalogue — has no glyph and must still render as text rather than disappear.
+   */
+  icon?: string;
+  [key: string]: unknown;
+}
+
+export interface HeroSettings {
+  /** Empty means the homepage title follows the site name. */
+  title: string;
+  [key: string]: unknown;
+}
+
+export interface HomepageSettings {
+  cover: string;
+  githubUsername: string;
+  showBlogHeatmap: boolean;
+  showGithubHeatmap: boolean;
+  [key: string]: unknown;
+}
+
+export interface SiteSettings {
+  name: string;
+  description: string;
+  url: string;
+  base: string;
+  language: string;
+  author: AuthorSettings;
+  social: SocialContact[];
+  hero: HeroSettings;
+  homepage?: HomepageSettings;
+  articleDisplayCount: number;
+  archiveDisplayCount: number;
+  categoryDisplayCount: number;
+  tagDisplayCount: number;
+  aliasPolicy: AliasPolicy;
+  pageTransition: PageTransition;
+  seo: SeoSettings;
+  filing: FilingSettings;
+}
+
+export interface SiteSettingsView {
+  settings: SiteSettings;
+  revision: FileRevision | null;
+}
+
+export interface SaveSiteSettingsView {
+  settings: SiteSettings;
+  revision: FileRevision;
+  changed: boolean;
+}
+
 export interface ProjectView {
+  /**
+   * Templates the safe upgrade SKIPPED because the user had edited them.
+   *
+   * The command still reports them and `AppState` still writes each one to the run log — that is
+   * where the owner asked for them to be readable, instead of as a banner on the pages. The field is
+   * therefore absent from the window's rendering on purpose rather than by oversight, and a caller
+   * that needs to surface it has the data here.
+   */
+  template_warnings?: string[];
   path: string;
   name: string;
   opened_at: string;
@@ -46,6 +151,7 @@ export interface ProjectView {
 }
 
 export interface RibbonEntry {
+  created_at?: string;
   kind: ContentKind;
   id: string;
   slug: string;
@@ -176,110 +282,6 @@ export interface LogPage {
   error: number;
   /** Every category present, so the filter is built from what actually happened. */
   categories: string[];
-}
-
-// ---------------------------------------------------------------------------------------------
-// The AI subsystem and the page creator (handoff.md sections 8 and 11).
-// ---------------------------------------------------------------------------------------------
-
-/** An image the model asked for but did not generate (section 8.1). */
-export interface ImagePlaceholder {
-  description: string;
-  /** The 1-based body line, so the dialog can point at it. */
-  line: number;
-}
-
-/**
- * A generated page, parsed by the project's own parser.
- *
- * Nothing has been written: this is the thing being previewed between §8.1's "the AI generates the page"
- * and "the user confirms".
- */
-export interface PageDraft {
-  title: string;
-  slug: string;
-  summary: string | null;
-  tags: string[];
-  category: string | null;
-  kind: 'page' | 'article' | 'knowledge';
-  body: string;
-  /** The whole document with the frontmatter VELOCT assigned. This is what a confirm writes. */
-  source: string;
-  placeholders: ImagePlaceholder[];
-  /** Parser diagnostics, so a structural problem is seen BEFORE the page exists. */
-  diagnostics: string[];
-  provider_id: string | null;
-  model_id: string | null;
-  used_fallback: boolean;
-}
-
-export interface PageDraftView {
-  draft: PageDraft;
-  prompt_feature: string;
-}
-
-export interface AiProviderView {
-  id: string;
-  name: string;
-  protocol: string;
-  base_url: string;
-  /** The HANDLE, never a credential (section 12.2). */
-  credential_ref: string | null;
-  /** Whether one is stored. The value is never sent to the frontend. */
-  has_credential: boolean;
-  enabled: boolean;
-  usable: boolean;
-}
-
-export interface AiModelView {
-  provider_id: string;
-  model_id: string;
-  label: string;
-  context_window: number | null;
-  /**
-   * `fetched` or `manual` (section 11.2).
-   *
-   * Shown because the difference is a promise: a fetched model can disappear when the provider stops
-   * offering it, and a hand-added one cannot.
-   */
-  source: string;
-}
-
-/** What a model refresh did (section 11.2). */
-export interface ModelRefreshView {
-  provider_id: string;
-  /** How many models the provider reported. */
-  fetched: number;
-  /** How many hand-added models the refresh kept. */
-  kept_manual: number;
-  models: AiModelView[];
-  message: string;
-}
-
-/** A provider connection test (section 11.5). Never carries the credential. */
-export interface ConnectionTestView {
-  ok: boolean;
-  models: number;
-  message: string;
-}
-
-export interface AiFeatureView {
-  id: string;
-  label: string;
-  provider_id: string | null;
-  model_id: string | null;
-  configured: boolean;
-}
-
-export interface AiSettingsView {
-  providers: AiProviderView[];
-  models: AiModelView[];
-  features: AiFeatureView[];
-  fallback_provider_id: string | null;
-  fallback_model_id: string | null;
-  page_create_ready: boolean;
-  /** Why it is not ready, when it is not, so the dialog can say what to do. */
-  blocked_reason: string | null;
 }
 
 /** What a publish produced (handoff.md sections 14 and 19.3). */
@@ -561,6 +563,16 @@ export interface DeployOutcomeView {
 }
 
 /** One configured storage target (handoff.md sections 13.10-13.13). */
+export interface S3Policy {
+  access_style: 'auto' | 'path' | 'virtual_hosted';
+  rename: 'legacy' | 'original' | 'uuid' | 'timestamp' | 'original_random' | 'date_random' | 'date_time_random' | 'random' | 'custom';
+  duplicate: 'legacy_reuse' | 'random_alphanumeric' | 'random_alphabetic' | 'error';
+  random_length: number;
+  filename_template: string;
+  url_suffixes: Array<{ extensions: string; suffix: string }>;
+  thumbnail: string;
+}
+
 export interface StorageTargetView {
   id: string;
   name: string;
@@ -589,6 +601,9 @@ export interface StorageTargetView {
   /** The HANDLE, never a value (section 12). */
   credential_ref: string | null;
   has_credential: boolean;
+  hidden_from_upload?: boolean;
+  upload_priority?: number;
+  s3_policy?: S3Policy | null;
 }
 
 /**
@@ -635,8 +650,15 @@ export interface UploadEligibility {
   reason: string | null;
 }
 
+export interface AttachmentSyncSettings { target_ids: string[] }
+export interface AttachmentMessage { attachment_id: string; target_id: string; url: string | null; message: string }
+export interface AttachmentMessages { upload_errors: AttachmentMessage[]; health_errors: AttachmentMessage[]; checked_at: string | null }
+export interface SyncAttempt { target_id: string; url: string | null; reused: boolean; error: string | null }
+
 /** One recorded remote object. */
 export interface ObjectView {
+  content_hash: string;
+  storage_namespace: string;
   dedup_key: string;
   key: string;
   url: string;
@@ -874,6 +896,9 @@ export interface NetworkImageChoiceResultView {
  * question: a validation that judged a different object than the save would be a rule about nothing.
  */
 export interface StorageTargetRequestOptions {
+  hiddenFromUpload?: boolean;
+  uploadPriority?: number;
+  s3Policy?: S3Policy;
   id: string;
   name: string;
   kind: string;
@@ -907,12 +932,26 @@ function storageTargetRequest(options: StorageTargetRequestOptions) {
     region: options.region ?? null,
     bucket: options.bucket ?? null,
     access_key: options.accessKey ?? null,
+    hidden_from_upload: options.hiddenFromUpload ?? false,
+    upload_priority: options.uploadPriority ?? 0,
+    s3_policy: options.s3Policy ?? null,
     instance: options.instance ?? null,
     credential: options.credential ?? null,
   };
 }
 
+export type KnowledgeProvider = 'yuque' | 'feishu';
+export interface KnowledgeOutlineNode { id: string; title: string; url: string | null; children: KnowledgeOutlineNode[] }
+export interface LinkedKnowledge { id: string; name: string; provider: KnowledgeProvider; source_url: string; nodes: KnowledgeOutlineNode[]; synced_at: string; has_credential: boolean }
+export interface LinkedKnowledgeView { items: LinkedKnowledge[]; revision: FileRevision | null }
+export interface LinkKnowledgeInput { name: string; provider: KnowledgeProvider; source_url: string; token?: string; app_id?: string; app_secret?: string }
+
 export const api = {
+  linkedKnowledge: () => invoke<LinkedKnowledgeView>('linked_knowledge'),
+  linkKnowledge: (input: LinkKnowledgeInput, baseline: FileRevision | null) => invoke<LinkedKnowledgeView>('link_knowledge', { input, baseline }),
+  refreshLinkedKnowledge: (id: string, baseline: FileRevision | null) => invoke<LinkedKnowledgeView>('refresh_linked_knowledge', { id, baseline }),
+  unlinkKnowledge: (id: string, baseline: FileRevision | null) => invoke<LinkedKnowledgeView>('unlink_knowledge', { id, baseline }),
+  openLinkedKnowledge: (id: string, nodeId: string | null = null) => invoke<void>('open_linked_knowledge', { id, nodeId }),
   appInfo: () => invoke<AppInfo>('app_info'),
 
   nowRfc3339: () => invoke<string>('now_rfc3339'),
@@ -934,7 +973,24 @@ export const api = {
       siteTemplateVersion: options.siteTemplateVersion,
     }),
 
+  /** Add missing bundled site/config files only. Never replaces project content or identity. */
+  initializeCurrentProject: () => invoke<ProjectView>('initialize_current_project'),
+
   currentProject: () => invoke<ProjectView | null>('current_project'),
+
+  siteSettings: () => invoke<SiteSettingsView>('site_settings'),
+
+  saveSiteSettings: (settings: SiteSettings, baseline: FileRevision | null) =>
+    invoke<SaveSiteSettingsView>('save_site_settings', { settings, baseline }),
+
+  /**
+   * Cache a cropped PNG in the attachment pool, upload to the preferred attachment target, and
+   * return its public URL. Cover follows the same path. Bare base64, never an arbitrary file path.
+   * Upload and saving site settings remain separate: a failed upload cannot replace the old URL.
+   */
+  saveSiteAvatar: (dataBase64: string) => invoke<string>('save_site_avatar', { dataBase64 }),
+  saveSiteCover: (dataBase64: string) => invoke<string>('save_site_cover', { dataBase64 }),
+  syncGithubActivity: (username: string) => invoke<{ username: string; fetchedAt: string; days: Array<{ date: string; level: number }> }>('sync_github_activity', { username }),
 
   listDocuments: () => invoke<RibbonEntry[]>('list_documents'),
 
@@ -1019,9 +1075,12 @@ export const api = {
   startPreview: (role?: 'site' | 'works') =>
     invoke<PreviewView>('start_preview', { role: role ?? null }),
 
-  stopPreview: () => invoke<PreviewView>('stop_preview'),
+  stopPreview: (role?: 'site' | 'works') => invoke<PreviewView>('stop_preview', { role: role ?? null }),
 
   previewStatus: () => invoke<PreviewView>('preview_status'),
+
+  previewDocumentReady: (kind: ContentKind, id: string, siteUrl: string) =>
+    invoke<boolean>('preview_document_ready', { kind, id, siteUrl }),
 
   /**
    * Read the project's log.
@@ -1029,114 +1088,6 @@ export const api = {
    * The filtering happens on the Rust side, so the page does not receive the whole log to show part of
    * it. The entries arriving are already redacted either way (handoff.md section 18.1).
    */
-  /** The AI configuration. Never carries a credential value (section 12.1). */
-  aiSettings: () => invoke<AiSettingsView>('ai_settings'),
-  /**
-   * Add or update a provider.
-   *
-   * The credential is a separate parameter because it goes to the OS store and the row keeps only a handle.
-   * A single object with the secret inside would invite persisting it (section 12.2).
-   */
-  saveAiProvider: (options: {
-    id: string;
-    name: string;
-    protocol: string;
-    baseUrl: string;
-    enabled: boolean;
-    /** Omitted or empty means "leave the stored credential alone". */
-    credential?: string;
-  }) =>
-    invoke<void>('save_ai_provider', {
-      id: options.id,
-      name: options.name,
-      protocol: options.protocol,
-      baseUrl: options.baseUrl,
-      enabled: options.enabled,
-      credential: options.credential ?? null,
-    }),
-
-  deleteAiProvider: (id: string) => invoke<void>('delete_ai_provider', { id }),
-
-  /**
-   * Fetch a provider's model list and store it (section 11.2).
-   *
-   * The refresh REPLACES the models the provider reports and keeps the ones added by hand, so a model the
-   * provider stopped offering cannot stay selectable. `kept_manual` says how many survived.
-   */
-  refreshAiModels: (providerId: string) =>
-    invoke<ModelRefreshView>('refresh_ai_models', { providerId }),
-
-  /** Add a model by hand (section 11.2). A later refresh keeps it. */
-  addAiModel: (providerId: string, modelId: string, displayName?: string | null) =>
-    invoke<AiModelView[]>('add_ai_model', {
-      providerId,
-      modelId,
-      displayName: displayName ?? null,
-    }),
-
-  /** Remove one stored model, so a hand-added typo is not permanent. */
-  deleteAiModel: (providerId: string, modelId: string) =>
-    invoke<void>('delete_ai_model', { providerId, modelId }),
-
-  /**
-   * Test a provider's connection with its REAL configuration (section 11.5).
-   *
-   * A test with a placeholder credential would pass while the real call failed, so this exercises the
-   * provider's own model-list endpoint and reports the provider's own reason.
-   */
-  testAiProvider: (providerId: string) =>
-    invoke<ConnectionTestView>('test_ai_provider', { providerId }),
-
-  /** Map a feature to a model, or clear it by passing nulls (section 11.3). */
-  setAiFeature: (options: {
-    featureId: string;
-    label?: string;
-    providerId: string | null;
-    modelId: string | null;
-  }) =>
-    invoke<void>('set_ai_feature', {
-      featureId: options.featureId,
-      label: options.label ?? null,
-      providerId: options.providerId,
-      modelId: options.modelId,
-    }),
-
-  /** Set the single global fallback (section 11.4). */
-  setAiFallback: (providerId: string | null, modelId: string | null) =>
-    invoke<void>('set_ai_fallback', { providerId, modelId }),
-
-  /**
-   * Generate a page draft.
-   *
-   * NOTHING is written. Section 8.1 puts the preview before the creation, and this call is the generation
-   * step rather than the create step.
-   */
-  generatePage: (options: {
-    title: string;
-    brief: string;
-    kind?: 'page' | 'article' | 'knowledge';
-    tags?: string[];
-    category?: string;
-    withImagePlaceholders?: boolean;
-  }) =>
-    invoke<PageDraftView>('generate_page', {
-      title: options.title,
-      brief: options.brief,
-      kind: options.kind ?? null,
-      tags: options.tags ?? null,
-      category: options.category ?? null,
-      withImagePlaceholders: options.withImagePlaceholders ?? null,
-    }),
-
-  /**
-   * Create the page from a confirmed draft.
-   *
-   * This IS the confirmation. The Rust side re-parses and refuses a document with a structural error, so
-   * section 8.1's "without confirmation, a page must not be created" holds even if a caller skips the view.
-   */
-  createPageFromDraft: (source: string, kind: ContentKind) =>
-    invoke<DocumentView>('create_page_from_draft', { source, kind }),
-
   /**
    * Publish the project.
    *
@@ -1179,6 +1130,22 @@ export const api = {
   }) =>
     invoke<AddAttachmentView>('add_attachment', {
       sourcePath: options.sourcePath,
+      storageTargetId: options.storageTargetId,
+      namespace: options.namespace,
+    }),
+
+  previewAttachment: (sourcePath: string) =>
+    invoke<{ name: string; size: number; data_url: string | null }>('preview_attachment_file', { sourcePath }),
+
+  addAttachmentBytes: (options: {
+    name: string;
+    dataBase64: string;
+    storageTargetId: string;
+    namespace: string;
+  }) =>
+    invoke<AddAttachmentView>('add_attachment_bytes', {
+      name: options.name,
+      dataBase64: options.dataBase64,
       storageTargetId: options.storageTargetId,
       namespace: options.namespace,
     }),
@@ -1307,6 +1274,9 @@ export const api = {
   validateStorageTarget: (options: StorageTargetRequestOptions) =>
     invoke<void>('validate_storage_target', { request: storageTargetRequest(options) }),
 
+  testStorageTarget: (options: StorageTargetRequestOptions) =>
+    invoke<string>('test_storage_target', { request: storageTargetRequest(options) }),
+
   saveStorageTarget: (options: StorageTargetRequestOptions) =>
     invoke<void>('save_storage_target', { request: storageTargetRequest(options) }),
 
@@ -1330,6 +1300,12 @@ export const api = {
    * Section 13.3's second step: the bytes reach the target and the object record is written, and the Markdown is
    * still untouched. The caller applies the URL afterwards.
    */
+  attachmentSyncSettings: () => invoke<AttachmentSyncSettings>('attachment_sync_settings'),
+  saveAttachmentSyncSettings: (settings: AttachmentSyncSettings) => invoke<void>('save_attachment_sync_settings', { settings }),
+  attachmentMessages: () => invoke<AttachmentMessages>('attachment_messages'),
+  checkAttachmentImages: () => invoke<AttachmentMessages>('check_attachment_images'),
+  syncUploadAttachment: (id: string, storageTargetId: string) => invoke<SyncAttempt[]>('sync_upload_attachment', { id, storageTargetId }),
+
   uploadAttachment: (id: string, storageTargetId: string) =>
     invoke<UploadView>('upload_attachment', { id, storageTargetId }),
 
@@ -1363,10 +1339,11 @@ export const api = {
     invoke<BackupArchiveView[]>('list_backups', { directory: directory ?? null }),
 
   /** Apply the retention policy (section 17.6). */
-  pruneBackups: (options?: { directory?: string; keep?: number }) =>
+  pruneBackups: (options?: { directory?: string; keep?: number; expiresAfterDays?: number }) =>
     invoke<number>('prune_backups', {
       directory: options?.directory ?? null,
       keep: options?.keep ?? null,
+      expiresAfterDays: options?.expiresAfterDays ?? null,
     }),
 
   /**

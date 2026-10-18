@@ -15,6 +15,8 @@
  * a block would produce a file the content layer would refuse.
  */
 
+import { isScalar, parseDocument } from 'yaml';
+
 export interface SplitSource {
   /** The verbatim frontmatter block INCLUDING both `---` lines and the trailing newline. */
   frontmatter: string;
@@ -83,6 +85,44 @@ export function joinSource(frontmatter: string, body: string): string {
 export function replaceBody(source: string, body: string): string {
   const { frontmatter } = splitSource(source);
   return joinSource(frontmatter, body);
+}
+
+/** Read YAML scalars without guessing quoting, comments or block chomping. */
+export function frontmatterSummary(frontmatter: string): string {
+  const opening = frontmatter.match(OPENING);
+  if (!opening) return '';
+  const yaml = frontmatter.slice(opening[0].length).replace(/^---[ \t]*\r?\n?$/m, '');
+  const document = parseDocument(yaml);
+  if (document.errors.length) return '';
+  const value = document.get('summary');
+  return typeof value === 'string' ? value : '';
+}
+
+/** Splice only summary's scalar range; never reserialize IDs or unknown metadata. */
+export function replaceSummary(source: string, summary: string): string {
+  const { frontmatter, body, hasFrontmatter } = splitSource(source);
+  if (!hasFrontmatter) return source;
+  const opening = frontmatter.match(OPENING)!;
+  const tail = frontmatter.slice(opening[0].length);
+  const closing = /^---[ \t]*\r?\n?$/m.exec(tail);
+  if (!closing) return source;
+  const yaml = tail.slice(0, closing.index);
+  const document = parseDocument(yaml);
+  if (document.errors.length) return source;
+  const encoded = JSON.stringify(summary);
+  const lineEnding = opening[0].endsWith('\r\n') ? '\r\n' : '\n';
+  const node = document.get('summary', true);
+  let nextYaml: string;
+  if (node === undefined) {
+    nextYaml = `${yaml}summary: ${encoded}${lineEnding}`;
+  } else {
+    if (!isScalar(node) || !node.range) return source;
+    const [start, end] = node.range;
+    const oldValue = yaml.slice(start, end);
+    const separator = oldValue.endsWith('\n') ? lineEnding : '';
+    nextYaml = `${yaml.slice(0, start)}${encoded}${separator}${yaml.slice(end)}`;
+  }
+  return joinSource(`${opening[0]}${nextYaml}${tail.slice(closing.index)}`, body);
 }
 
 /**

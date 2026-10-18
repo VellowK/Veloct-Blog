@@ -5,6 +5,9 @@
 // `data/links.json`, which the application exports from SQLite (the configuration truth source).
 
 import BaseLayout from '../../layouts/BaseLayout.astro';
+import { readManagedPage } from '../../lib/pages.ts';
+
+const { entry, Content, headings } = await readManagedPage('links');
 import { readFriendLinks, readSiteConfig } from '../../lib/site-config.mjs';
 
 const site = readSiteConfig();
@@ -12,11 +15,15 @@ const links = readFriendLinks();
 ---
 
 <BaseLayout
-  title={`友情链接 · ${site.name}`}
-  description={`${site.name} 的友情链接`}
+  title={`${entry?.data.title ?? '友情链接'} · ${site.name}`}
+  description={entry?.data.summary ?? `${site.name} 的友情链接`}
+  updatedAt={entry?.data.updated_at ?? null}
+  headings={headings}
   canonical="/links/"
 >
-  <h1 class="font-serif text-2xl">友情链接</h1>
+  <h1 class="font-serif text-2xl">{entry?.data.title ?? '友情链接'}</h1>
+  {entry?.data.summary && <p class="mt-2 muted">{entry.data.summary}</p>}
+  {Content && <div class="prose-veloct mt-6"><Content /></div>}
 
   {links.length === 0 ? (
     <p class="card mt-6 p-6 muted">还没有添加友情链接。</p>

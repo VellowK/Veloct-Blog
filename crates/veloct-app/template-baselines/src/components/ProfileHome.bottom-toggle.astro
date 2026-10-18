@@ -1,0 +1,80 @@
+---
+import ActivityHeatmap from './ActivityHeatmap.astro';
+import SocialIcon from './SocialIcon.astro';
+import { findSocialPlatform } from '../lib/social-platforms';
+import { profileContacts, safePublicUrl, calendarEnd } from '../lib/profile-home.mjs';
+import '../styles/profile-home.css';
+interface Props { site: any; blog: Record<string, number>; github: { username: string; fetchedAt: string; days: Record<string, number> } | null; }
+const { site, blog, github } = Astro.props;
+const contacts = profileContacts(site.social);
+const name = site.author.name || site.name;
+const cover = safePublicUrl(site.homepage.cover, true);
+const avatar = safePublicUrl(site.author.avatar, true);
+// Live preview follows today; published releases retain their reproducible frozen build date.
+const end = calendarEnd([...Object.keys(blog), ...Object.keys(github?.days || {})], import.meta.env.DEV ? new Date().toISOString() : import.meta.env.VELOCT_BUILD_TIME);
+const githubUrl = site.homepage.githubUsername ? `https://github.com/${encodeURIComponent(site.homepage.githubUsername)}` : '';
+---
+<article class="profile-home" data-profile-home>
+  <header class="profile-header">
+    <div class="profile-cover"><img src={cover || undefined} hidden={!cover} data-veloct-draft-image="homepage.cover" alt="" fetchpriority="high" /></div>
+    <div class="profile-identity">
+      <div class="profile-avatar"><img src={avatar || undefined} hidden={!avatar} alt={`${name} 的头像`} data-veloct-editable="author.avatar" data-veloct-draft-image="author.avatar" /><span hidden={Boolean(avatar)} data-avatar-fallback aria-hidden="true">{name.slice(0, 1)}</span></div>
+      <div class="profile-identity__text"><p class="profile-eyebrow">PERSONAL SPACE</p><h1 data-veloct-editable="author.name">{name}</h1><p class="profile-description" data-veloct-editable="description">{site.description}</p></div>
+    </div>
+  </header>
+  <div class:list={['profile-content', !contacts.length && 'profile-content--no-contacts']}>
+    <div class="profile-activity" data-activity-switcher data-active={site.homepage.showBlogHeatmap ? 'blog' : 'github'}>
+      <div class="profile-calendar-panels">
+        {site.homepage.showBlogHeatmap && <div id="profile-calendar-blog" class="profile-calendar-panel" data-activity-panel="blog"><ActivityHeatmap title="博客创作" days={blog} end={end} /></div>}
+        {site.homepage.showGithubHeatmap && <div id="profile-calendar-github" class="profile-calendar-panel" data-activity-panel="github" hidden={site.homepage.showBlogHeatmap}><ActivityHeatmap title="GitHub 贡献" days={github?.days || {}} end={end} github href={githubUrl} notice={github ? `最近同步 ${github.fetchedAt.slice(0, 10)} · 活跃度等级，不代表提交数量` : githubUrl ? '尚未同步此账号，请在桌面设置中同步 GitHub 日历。' : '在桌面设置中关联 GitHub 用户名并同步贡献日历。'} /></div>}
+      </div>
+      {site.homepage.showBlogHeatmap && site.homepage.showGithubHeatmap && <button type="button" class="activity-toggle" data-activity-toggle aria-controls="profile-calendar-blog profile-calendar-github"><span aria-hidden="true">⇄</span> <span data-activity-toggle-label>切换至 GitHub 贡献</span></button>}
+      {!site.homepage.showBlogHeatmap && !site.homepage.showGithubHeatmap && <div class="profile-activity__empty"><span>日常、创作与灵感</span><p>欢迎来到我的个人空间。</p></div>}
+    </div>
+    {contacts.length > 0 && <section class="profile-contacts" aria-label="联系方式"><h2>与我联系</h2><div class="profile-contact-grid">
+      {contacts.map(contact => {
+        const label = contact.id ? `${contact.label}：${contact.id}` : contact.label;
+        const glyph = findSocialPlatform(contact.icon) ? <SocialIcon name={contact.icon} size={25} /> : <span class="profile-contact__letter" aria-hidden="true">{contact.label.slice(0, 1)}</span>;
+        return contact.url ? <a class="profile-contact" href={contact.url} target={/^https?:/.test(contact.url) ? '_blank' : undefined} rel="noopener noreferrer" aria-label={label} title={label}>{glyph}<span class="profile-contact__tooltip">{label}</span></a>
+          : <button type="button" class="profile-contact" data-copy-contact={contact.id} aria-label={`复制 ${label}`} title={`点击复制 ${label}`}>{glyph}<span class="profile-contact__tooltip">{label}</span></button>;
+      })}
+    </div><p class="profile-contact-status" aria-live="polite">点击图标访问或复制 ID</p></section>}
+  </div>
+  <section class="profile-about" aria-labelledby="profile-about-heading"><header><span class="profile-section-mark"></span><h2 id="profile-about-heading">个人介绍</h2></header><p data-veloct-editable="author.bio">{site.author.bio || '还没有填写个人介绍。'}</p></section>
+</article>
+<script>
+  // Delegation survives Astro page navigation without accumulating per-node listeners.
+  if (!document.documentElement.dataset.profileContactListener) {
+    document.documentElement.dataset.profileContactListener = '1';
+    window.addEventListener('message', event => {
+      if (!new URLSearchParams(location.search).has('veloct_editor') || event.source !== window.parent || event.data?.type !== 'veloct-site-draft') return;
+      const settings = event.data.settings ?? {};
+      for (const image of document.querySelectorAll<HTMLImageElement>('[data-veloct-draft-image]')) {
+        const value = image.dataset.veloctDraftImage === 'homepage.cover' ? settings.homepage?.cover : settings.author?.avatar;
+        const safe = typeof value === 'string' && !/[\\\s\u0000-\u001f]/.test(value) && ((value.startsWith('/') && !value.startsWith('//')) || /^https?:\/\//i.test(value));
+        if (safe) image.src = value; else image.removeAttribute('src');
+        image.hidden = !safe;
+        const fallback = image.parentElement?.querySelector<HTMLElement>('[data-avatar-fallback]');
+        if (fallback) { fallback.hidden = safe; fallback.textContent = (settings.author?.name || settings.name || '').slice(0, 1); }
+      }
+    });
+    document.addEventListener('click', async event => {
+      const toggle = (event.target as Element | null)?.closest<HTMLButtonElement>('[data-activity-toggle]');
+      if (toggle) {
+        const region = toggle.closest<HTMLElement>('[data-activity-switcher]');
+        if (!region) return;
+        const active = region.dataset.active === 'blog' ? 'github' : 'blog';
+        region.dataset.active = active;
+        for (const panel of region.querySelectorAll<HTMLElement>('[data-activity-panel]')) panel.hidden = panel.dataset.activityPanel !== active;
+        const label = toggle.querySelector('[data-activity-toggle-label]');
+        if (label) label.textContent = active === 'blog' ? '切换至 GitHub 贡献' : '切换至 博客创作';
+        return;
+      }
+      const button = (event.target as Element | null)?.closest<HTMLButtonElement>('[data-copy-contact]');
+      if (!button) return;
+      const status = button.closest('.profile-contacts')?.querySelector('.profile-contact-status');
+      try { await navigator.clipboard.writeText(button.dataset.copyContact || ''); if (status) status.textContent = 'ID 已复制'; }
+      catch { if (status) status.textContent = `无法自动复制，请手动复制：${button.dataset.copyContact || ''}`; }
+    });
+  }
+</script>

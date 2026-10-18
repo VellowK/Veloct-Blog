@@ -10,13 +10,15 @@
 // state on every navigation. That script is deliberately tiny and inline for that reason.
 
 import { readNavigation, readSiteConfig } from '../lib/site-config.mjs';
+import { findSocialPlatform } from '../lib/social-platforms';
+import SocialIcon from './SocialIcon.astro';
 
 const site = readSiteConfig();
 const nav = readNavigation();
 
 const social = site.social ?? [];
 const avatar = site.author?.avatar ?? '';
-const name = site.author?.name ?? site.name;
+const name = site.author?.name || site.name;
 const bio = site.author?.bio ?? '';
 
 const current = Astro.url.pathname;
@@ -35,13 +37,13 @@ function isActive(href: string) {
   <div class="flex items-center justify-between gap-2 p-3">
     <a href="/" class="flex min-w-0 items-center gap-2" data-sidebar-expanded-only>
       {avatar ? (
-        <img src={avatar} alt="" width="32" height="32" class="h-8 w-8 shrink-0 rounded-lg object-cover" />
+        <img src={avatar} alt="" width="32" height="32" data-veloct-editable="author.avatar" class="h-8 w-8 shrink-0 rounded-lg object-cover" />
       ) : (
         <span class="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-ink-800 font-serif text-accent-400">
           {name.slice(0, 1)}
         </span>
       )}
-      <span class="truncate font-serif text-lg">{name}</span>
+      <span class="truncate font-serif text-lg" data-veloct-editable="author.name">{name}</span>
     </a>
     <button
       type="button"
@@ -59,7 +61,7 @@ function isActive(href: string) {
   </div>
 
   {bio && (
-    <p class="px-3 pb-3 text-sm muted" data-sidebar-expanded-only>{bio}</p>
+    <p class="px-3 pb-3 text-sm muted" data-veloct-editable="author.bio" data-sidebar-expanded-only>{bio}</p>
   )}
 
   <nav class="flex-1 overflow-y-auto p-2">
@@ -95,21 +97,42 @@ function isActive(href: string) {
 
   {social.length > 0 && (
     <div class="flex flex-wrap gap-2 border-t border-ink-800 p-3" data-sidebar-expanded-only>
-      {social.map((entry) => (
-        <a
-          href={entry.url}
-          class="rounded-lg px-2 py-1 text-xs text-ink-400 hover:bg-ink-850 hover:text-accent-400"
-          rel="me noopener noreferrer"
-          target="_blank"
-        >{entry.label}</a>
-      ))}
+      {social.map((entry) => {
+        // The label is the user's own when they wrote one, and the platform's ordinary name when
+        // they only picked a platform. A contact with neither keeps whatever it has, so an entry the
+        // catalogue does not know is still rendered rather than silently dropped.
+        const name = entry.label || findSocialPlatform(entry.icon)?.label || '';
+        const text = `${name}${entry.id ? `: ${entry.id}` : ''}`;
+        return entry.url ? (
+          <a
+            href={entry.url}
+            class="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-ink-400 hover:bg-ink-850 hover:text-accent-400"
+            rel="me noopener noreferrer"
+            target="_blank"
+            title={text}
+          >
+            <SocialIcon name={entry.icon} />
+            <span>{text}</span>
+          </a>
+        ) : (
+          <span class="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-ink-400" title={text}>
+            <SocialIcon name={entry.icon} />
+            <span>{text}</span>
+          </span>
+        );
+      })}
     </div>
   )}
 </aside>
 
 <script>
-  // Applied before paint by the inline head script in the layout; this only wires the toggle.
-  (function () {
+  // Processed scripts run once; bind the current page's DOM after every router navigation.
+  let controller: AbortController | undefined;
+
+  function initializeSidebar() {
+    controller?.abort();
+    controller = new AbortController();
+    const { signal } = controller;
     const KEY = 'veloct.sidebar.collapsed';
     const sidebar = document.getElementById('veloct-left-sidebar');
     const toggle = document.getElementById('veloct-sidebar-toggle');
@@ -125,6 +148,11 @@ function isActive(href: string) {
     }
 
     let collapsed = sidebar.classList.contains('w-16');
+    try {
+      collapsed = localStorage.getItem(KEY) === '1';
+    } catch {
+      // Keep the server/inline state when storage is unavailable.
+    }
     apply(collapsed);
 
     toggle.addEventListener('click', () => {
@@ -135,6 +163,9 @@ function isActive(href: string) {
       } catch {
         // A storage-denied context (private mode) must not break the toggle.
       }
-    });
-  })();
+    }, { signal });
+  }
+
+  document.addEventListener('astro:page-load', initializeSidebar);
+  document.addEventListener('astro:before-swap', () => controller?.abort());
 </script>

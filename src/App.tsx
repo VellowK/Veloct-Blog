@@ -1,10 +1,9 @@
 /**
  * The workbench shell.
  *
- * `handoff.md` §4.1 asks for a three-part layout, and §5.1 requires the preview to be the REAL Astro
- * project rather than a second renderer. So the preview pane is an iframe pointed at the dev server the
- * Rust supervisor started, and there is no Markdown rendering in this application at all — the moment
- * there were two renderers, they would disagree, and the preview would stop predicting the site.
+ * The owner's latest writing-workflow request keeps only the full-width WYSIWYG editor: a second
+ * reading pane duplicates what the editor already shows. The separate site/appearance views still
+ * use the REAL Astro project for final theme/layout verification.
  *
  * The editor is a WYSIWYG Tiptap surface over the Markdown body (`Editor.tsx`). What is here is the shell
  * around it: the autosave contract, the conflict handling and the live preview — the three things that are
@@ -16,9 +15,8 @@
  * and Halo's admin console is the structural reference. Four regions, each with ONE job:
  *
  *  1. **A persistent left sidebar** (`aside.sidebar`) — the brand, the open project, the navigation, and the
- *     content browser. EVERY top-level view lives in the navigation, grouped (`内容` / `资源` / `发布与部署` /
- *     `维护` / `AI`); no feature was dropped to make the layout tidy, and the AI surfaces that used to be
- *     loose buttons are navigation entries that open their modal.
+ *     content browser. Every supported top-level view lives in the navigation; removed features have
+ *     no navigation entries or command surface.
  *  2. **A top bar** (`header.topbar`) — the current page's CONTEXT as a breadcrumb (project › section ›
  *     document) plus the controls that must be reachable from anywhere: the preview start/stop, and the
  *     save / automatic-backup / index-issue chips that used to be crammed into a 28px status strip.
@@ -41,11 +39,11 @@
  *    open at once and the render order silently decided which one you saw. A single `view` fixes that.
  *  * **Clicking a document now returns to the editor.** It used to load the document behind whichever panel
  *    was open, so the click appeared to do nothing.
- *  * **The split handle is measured on the workspace** rather than on the preview pane. `--editor-share` is a
- *    percentage of the workspace, so measuring the ratio anywhere else made the handle move at the wrong
- *    speed — roughly 3× the pointer. Same property, same grid, correct frame of reference.
+ *  * **Writing has one full-width pane.** The WYSIWYG surface and its optional MD source mode share the
+ *    same editor; final site preview is a separate view, never a second writing column.
  */
 
+import { open as chooseDirectory } from '@tauri-apps/plugin-dialog';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
@@ -55,23 +53,31 @@ import {
   type ContentKind,
   type DocumentView,
   type AutoBackupStateView,
-  type AiSettingsView,
   type PreviewView,
   type ProjectView,
   type RibbonEntry,
   type SaveView,
   type WipTransition,
+  type SiteSettings,
 } from './lib/api';
-import Editor from './Editor';
+import Editor, { type EditorHandle } from './Editor';
+import DocumentResourcePanel from './DocumentResourcePanel';
 import AttachmentPanel from './AttachmentPanel';
 import BackupPanel from './BackupPanel';
+import SiteSettingsPanel from './SiteSettingsPanel';
+import NavigationPanel, { type CustomMenu } from './NavigationPanel';
 import DeployPanel from './DeployPanel';
 import LogView from './LogView';
-import PageCreator, { AiSettingsPanel } from './PageCreator';
+import { useNavigationHistory } from './lib/navigationHistory';
+import { Feedback, notify, type NoticeTone } from './components/Notifications';
 import PublishPanel from './PublishPanel';
 import WorksPanel from './WorksPanel';
 import NetworkImagePanel from './NetworkImagePanel';
-import { Chip, Icon, PageHeader, SpikeMark, StateBlock, type IconName } from './components/ui';
+import Dashboard from './Dashboard';
+import PreviewPanel from './PreviewPanel';
+import LinkedKnowledgePanel from './LinkedKnowledgePanel';
+import brandLogo from '../src-tauri/icons-logo/128x128@2x.png';
+import { Chip, Icon, PageHeader, StateBlock, type IconName } from './components/ui';
 import {
   dueReason,
   hashText,
@@ -85,17 +91,24 @@ import {
 } from './lib/autosave';
 
 const PREVIEW_POLL_MS = 2_000;
+const PREVIEW_IDLE_MS = 5 * 60_000;
 
 /** Every top-level view. Nothing that used to be a button is missing from this list. */
 type ViewId =
+  | 'dashboard'
+  | 'articles'
+  | 'pages'
+  | 'knowledge'
+  | 'preview'
   | 'editor'
   | 'logs'
   | 'publish'
   | 'attachments'
-  | 'network-images'
   | 'works'
   | 'backups'
-  | 'deploy';
+  | 'settings'
+  | 'appearance'
+  | 'navigation';
 
 interface NavEntry {
   id: ViewId;
@@ -108,52 +121,69 @@ interface NavEntry {
 
 const NAV_GROUPS: Array<{ label: string; entries: NavEntry[] }> = [
   {
-    label: '内容',
+    label: '仪表盘',
     entries: [
-      { id: 'editor', label: '编辑器', icon: 'edit', title: '编辑选中的内容' },
-      { id: 'logs', label: '运行日志', icon: 'logs', title: '运行日志(handoff.md 第 18 节)' },
+      { id: 'dashboard', label: '仪表盘', icon: 'grid', title: '查看内容概览与近期文档' },
     ],
   },
   {
-    label: '资源',
+    label: '工作区',
     entries: [
-      { id: 'attachments', label: '附件', icon: 'clip', title: '附件池(handoff.md 第 13 节)' },
-      {
-        id: 'network-images',
-        label: '网络图片',
-        icon: 'image',
-        title: '网络图片浏览:搜索免费图库并写入远程 URL(handoff.md 第 13.14 节)',
-      },
-      { id: 'works', label: '作品', icon: 'grid', title: '作品系统:导入、封面与独立 Origin(handoff.md 第 10 节)' },
+      { id: 'preview', label: '页面预览', icon: 'grid', title: '打开站点预览页' },
+      { id: 'articles', label: '文章管理', icon: 'edit', title: '管理和编辑文章' },
+      { id: 'pages', label: '页面管理', icon: 'grid', title: '管理和编辑页面' },
+      { id: 'knowledge', label: '知识库管理', icon: 'archive', title: '管理和编辑知识库' },
+      { id: 'attachments', label: '附件管理', icon: 'clip', title: '管理上传的图片与文件' },
+      { id: 'works', label: '作品管理', icon: 'grid', title: '导入和管理独立作品' },
     ],
   },
   {
-    label: '发布与部署',
+    label: '其他选项',
     entries: [
-      { id: 'publish', label: '发布', icon: 'tag', title: '检查改动、构建一次并打标签(handoff.md 第 19.3 节)' },
-      { id: 'deploy', label: '部署', icon: 'deploy', title: '部署目标(handoff.md 第 10 与 14 节)' },
+      { id: 'appearance', label: '外观', icon: 'sparkle', title: '管理站点信息与站点美化' },
+      { id: 'publish', label: '构建与发布', icon: 'tag', title: '检查改动、构建一次并打标签(handoff.md 第 19.3 节)' },
     ],
   },
   {
     label: '维护',
     entries: [
+      { id: 'navigation', label: '菜单管理', icon: 'menu', title: '管理网站左侧菜单' },
       { id: 'backups', label: '备份与恢复', icon: 'archive', title: '备份与恢复(handoff.md 第 17 节)' },
+      { id: 'logs', label: '运行日志', icon: 'logs', title: '查看运行日志(handoff.md 第 18 节)' },
     ],
   },
 ];
 
-/** The two AI surfaces are modals rather than pages, so they are navigation entries with no active state. */
-const AI_ENTRIES: Array<{ label: string; icon: IconName; title: string; opens: 'creator' | 'settings' }> = [
-  {
-    label: 'AI 建页',
-    icon: 'sparkle',
-    title: '由 AI 生成整页,确认前不会创建任何文件',
-    opens: 'creator',
-  },
-  { label: 'AI 设置', icon: 'sliders', title: '模型与提供方设置(handoff.md 第 8 与 11 节)', opens: 'settings' },
+const ALL_ENTRIES: NavEntry[] = [
+  ...NAV_GROUPS.flatMap((group) => group.entries),
+  { id: 'editor', label: '编辑器', icon: 'edit', title: '编辑文档' },
+  { id: 'settings', label: '设置', icon: 'sliders', title: '应用与站点设置' },
 ];
+const CONTENT_VIEWS: Record<ContentKind, ViewId> = { article: 'articles', page: 'pages', knowledge: 'knowledge' };
 
-const ALL_ENTRIES: NavEntry[] = NAV_GROUPS.flatMap((group) => group.entries);
+const PROJECT_HISTORY_KEY = 'veloct.project-history';
+const LAST_PROJECT_KEY = 'veloct.last-project';
+const SIDEBAR_COLLAPSED_KEY = 'veloct.sidebar-collapsed';
+
+function readProjectHistory(): Array<{ path: string; name: string }> {
+  try {
+    const value: unknown = JSON.parse(localStorage.getItem(PROJECT_HISTORY_KEY) ?? '[]');
+    return Array.isArray(value)
+      ? value.filter((item): item is { path: string; name: string } =>
+          typeof item?.path === 'string' && typeof item?.name === 'string',
+        ).slice(0, 8)
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function rememberProject(path: string, name: string) {
+  const history = [{ path, name }, ...readProjectHistory().filter((item) => item.path !== path)].slice(0, 8);
+  localStorage.setItem(PROJECT_HISTORY_KEY, JSON.stringify(history));
+  localStorage.setItem(LAST_PROJECT_KEY, path);
+  return history;
+}
 
 const KIND_LABEL: Record<ContentKind | 'all', string> = {
   all: '全部',
@@ -263,31 +293,144 @@ function useAutosave(
   return { state, hash, onChange, saveNow: () => save('manual') };
 }
 
+function ContentManager({
+  kind,
+  documents,
+  onSelect,
+  onCreate,
+  onDelete,
+}: {
+  kind: ContentKind;
+  documents: RibbonEntry[];
+  onSelect: (entry: RibbonEntry) => void;
+  onCreate: () => void;
+  onDelete: (entry: RibbonEntry) => Promise<void>;
+}) {
+  const [pendingDelete, setPendingDelete] = useState<RibbonEntry | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const deletingRef = useRef(false);
+  useEffect(() => {
+    setPendingDelete(null);
+    setDeleteError(null);
+  }, [kind]);
+  const confirmDelete = async () => {
+    if (!pendingDelete || deletingRef.current) return;
+    deletingRef.current = true;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await onDelete(pendingDelete);
+      setPendingDelete(null);
+    } catch (caught) {
+      setDeleteError(describeError(caught));
+    } finally {
+      deletingRef.current = false;
+      setDeleting(false);
+    }
+  };
+  const entries = documents.filter((entry) => entry.kind === kind);
+  return (
+    <div className="page content-manager">
+      <PageHeader
+        title={`${KIND_LABEL[kind]}管理`}
+        description={`管理${KIND_LABEL[kind]}内容,选择一项进入编辑器。`}
+        actions={<button type="button" className="primary" onClick={onCreate}>新建{KIND_LABEL[kind]}</button>}
+      />
+      {entries.length === 0 ? (
+        <StateBlock tone="empty" title={`还没有${KIND_LABEL[kind]}`} description={`新建一篇${KIND_LABEL[kind]}开始编辑。`} actions={<button type="button" className="primary" onClick={onCreate}>新建{KIND_LABEL[kind]}</button>} />
+      ) : (
+        <ul className="manager-list">
+          {entries.map((entry) => (
+            <li className="manager-row" key={`${entry.kind}:${entry.id}`}>
+              <button type="button" className="manager-item" disabled={deleting} onClick={() => onSelect(entry)}>
+                <span className="manager-item-title">{entry.title}</span>
+                <span className="manager-item-meta"><span className={`badge ${entry.wip_state}`}>{entry.wip_state}</span>{!entry.is_buildable && <span className="badge draft-only">不进入构建</span>}</span>
+              </button>
+              <div className="inline-delete" onKeyDown={(event) => { if (event.key === 'Escape' && !deleting) { setPendingDelete(null); setDeleteError(null); } }}>
+                <div className="inline-delete__actions">
+                  <span className="inline-delete__cancel">
+                    {pendingDelete?.id === entry.id && <button type="button" disabled={deleting} onClick={() => { setPendingDelete(null); setDeleteError(null); }}>取消</button>}
+                  </span>
+                  {pendingDelete?.id === entry.id ? (
+                    <button key="confirm" type="button" autoFocus className="danger inline-delete__button is-confirming" disabled={deleting} aria-label={`确认删除${KIND_LABEL[entry.kind]}：${entry.title}`} title="永久删除本地内容，无法撤销；已发布的网站需重新部署才会更新" onClick={() => void confirmDelete()}>{deleting ? '删除中…' : '确认删除'}</button>
+                  ) : (
+                    <button key="delete" type="button" className="danger inline-delete__button" disabled={deleting} aria-label={`删除${KIND_LABEL[entry.kind]}：${entry.title}`} onClick={() => { setPendingDelete(entry); setDeleteError(null); }}>删除</button>
+                  )}
+                </div>
+                {pendingDelete?.id === entry.id && <span className="inline-delete__hint" role={deleteError ? 'alert' : 'status'}>{deleteError ?? '永久删除，无法撤销'}</span>}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 export default function App() {
   const [project, setProject] = useState<ProjectView | null>(null);
   const [documents, setDocuments] = useState<RibbonEntry[]>([]);
   const [document, setDocument] = useState<DocumentView | null>(null);
   const [source, setSource] = useState('');
+  const editorHandle = useRef<EditorHandle>(null);
+  const [resourceSidebarOpen, setResourceSidebarOpen] = useState(true);
   const [preview, setPreview] = useState<PreviewView | null>(null);
+  const [previewBusy, setPreviewBusy] = useState(false);
+  const [previewReady, setPreviewReady] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  // State alone cannot lock two calls made before React's next render.
+  const previewBusyRef = useRef(false);
+  const previewOperationRef = useRef(0);
+  const previewAutoAttemptRef = useRef<string | null>(null);
   const [issues, setIssues] = useState<string[]>([]);
   const [status, setStatus] = useState('正在启动…');
+  const reportStatus = (message: string, tone: NoticeTone = 'info') => { setStatus(message); notify(message, tone); };
   const [error, setError] = useState<string | null>(null);
   const [conflict, setConflict] = useState<SaveView | null>(null);
   const [pathInput, setPathInput] = useState('');
-  const [filter, setFilter] = useState<ContentKind | 'all'>('all');
+  const [projectHistory, setProjectHistory] = useState(() => readProjectHistory());
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === 'true');
+  const [settingsSection, setSettingsSection] = useState<'site' | 'deploy' | 'attachments' | 'network-images' | 'backup'>('site');
+  const [appearanceSection, setAppearanceSection] = useState<'info' | 'beautify' | 'filing'>('info');
+  const [previewRevision, setPreviewRevision] = useState(0);
+  const [siteDraft, setSiteDraft] = useState<SiteSettings | null>(null);
+  const [attachmentIssueCount, setAttachmentIssueCount] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    let checking = false;
+    setAttachmentIssueCount(0);
+    if (!project) return;
+    const refreshMessages = async (check = false) => {
+      if (checking) return;
+      checking = true;
+      try {
+        const report = await (check ? api.checkAttachmentImages() : api.attachmentMessages());
+        if (!cancelled) {
+          setAttachmentIssueCount(new Set([...report.upload_errors, ...report.health_errors].map((m) => m.attachment_id)).size);
+          if (check) window.dispatchEvent(new Event('veloct-attachment-messages'));
+        }
+      } catch { /* Connection errors belong in the attachment manager, not a global modal. */ }
+      finally { checking = false; }
+    };
+    const refresh = () => { void refreshMessages(); };
+    void refreshMessages().then(() => { if (!cancelled) void refreshMessages(true); });
+    const timer = window.setInterval(() => { if (!window.document.hidden) void refreshMessages(true); }, 300_000);
+    window.addEventListener('veloct-attachment-messages', refresh);
+    return () => { cancelled = true; window.clearInterval(timer); window.removeEventListener('veloct-attachment-messages', refresh); };
+  }, [project?.path]);
+
   /** The single active view. Mutually exclusive, which seven booleans could not guarantee. */
-  const [view, setView] = useState<ViewId>('editor');
+  const [view, setView] = useState<ViewId>('dashboard');
+  const [customMenus, setCustomMenus] = useState<CustomMenu[]>([
+    { id: 'home', label: '首页', url: '/', visible: true, builtin: true },
+    { id: 'articles', label: '文章', url: '/article/', visible: true, builtin: true },
+    { id: 'pages', label: '页面', url: '/about/', visible: true, builtin: true },
+    { id: 'archive', label: '归档', url: '/archive/', visible: true, builtin: true },
+    { id: 'links', label: '友链', url: '/links/', visible: true, builtin: true },
+  ]);
   // The automatic backup rule (handoff.md section 17.5).
   const [autoBackup, setAutoBackup] = useState<AutoBackupStateView | null>(null);
-  // The editor/preview split, draggable (handoff.md section 4.2). Stored as a percentage so it survives
-  // a window resize, and clamped so a pane can never be dragged to nothing and become unrecoverable.
-  const [splitPercent, setSplitPercent] = useState(50);
-  // The AI surface (handoff.md sections 8 and 11).
-  const [aiSettings, setAiSettings] = useState<AiSettingsView | null>(null);
-  const [showPageCreator, setShowPageCreator] = useState(false);
-  const [showAiSettings, setShowAiSettings] = useState(false);
-  const splitRef = useRef<HTMLDivElement | null>(null);
-  const draggingRef = useRef(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -303,7 +446,18 @@ export default function App() {
     void (async () => {
       try {
         const info = await api.appInfo();
-        const current = await api.currentProject();
+        let current = await api.currentProject();
+        if (!current) {
+          const lastPath = localStorage.getItem(LAST_PROJECT_KEY);
+          if (lastPath) {
+            try {
+              current = await api.openProject(lastPath);
+              setProjectHistory(rememberProject(current.path, current.name));
+            } catch {
+              localStorage.removeItem(LAST_PROJECT_KEY);
+            }
+          }
+        }
         setProject(current);
         setStatus(`${info.name} ${info.version}`);
         if (current) await refresh();
@@ -314,35 +468,42 @@ export default function App() {
     })();
   }, [refresh]);
 
-  // The preview state comes from the supervisor, which polls the child's liveness. Doing the polling
-  // here rather than in an event listener is deliberate: a crashed sidecar delivers no event.
+  // Poll child liveness, but never let an older poll overwrite a start/stop response.
+  // Changing projects also invalidates any response still in flight for the old project.
   useEffect(() => {
-    const timer = window.setInterval(() => {
-      void api
-        .previewStatus()
-        .then(setPreview)
-        .catch(() => {
-          // A failed poll is not worth a message on every tick; the status bar simply stays as it was.
-        });
-    }, PREVIEW_POLL_MS);
-    return () => window.clearInterval(timer);
-  }, []);
-
-  useEffect(() => {
-    if (project) void api.previewStatus().then(setPreview).catch(() => undefined);
-  }, [project]);
-
-  const reloadAiSettings = useCallback(async () => {
-    try {
-      setAiSettings(await api.aiSettings());
-    } catch (caught) {
-      setError(describeError(caught));
-    }
-  }, []);
-
-  useEffect(() => {
-    if (project) void reloadAiSettings();
-  }, [project, reloadAiSettings]);
+    let cancelled = false;
+    let polling = false;
+    setPreviewReady(false);
+    setPreview(null);
+    setPreviewError(null);
+    previewAutoAttemptRef.current = null;
+    if (!project) return;
+    const ask = async () => {
+      if (polling || previewBusyRef.current) return;
+      polling = true;
+      const operation = previewOperationRef.current;
+      try {
+        const next = await api.previewStatus();
+        if (!cancelled && operation === previewOperationRef.current) {
+          setPreview(next);
+          setPreviewReady(true);
+        }
+      } catch (caught) {
+        if (!cancelled && operation === previewOperationRef.current) {
+          setPreviewError(`无法读取预览状态：${describeError(caught)}`);
+          setPreviewReady(true);
+        }
+      } finally {
+        polling = false;
+      }
+    };
+    void ask();
+    const timer = window.setInterval(() => void ask(), PREVIEW_POLL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [project?.path]);
 
   // The automatic backup poll. A MINUTE is the right granularity: the rule works in ten-minute spans, and a
   // tighter loop would ask the same question sixty times for no benefit. The command returns whether anything
@@ -396,16 +557,32 @@ export default function App() {
 
   const autosave = useAutosave(document, source, onSaved, setError);
 
-  const openProject = async () => {
-    if (!pathInput.trim()) return;
+  const openProject = async (requestedPath = pathInput.trim()) => {
     try {
-      const opened = await api.openProject(pathInput.trim());
+      let selectedPath = requestedPath;
+      if (!selectedPath) {
+        const choice = await chooseDirectory({ directory: true, multiple: false, title: '选择 Veloct 项目文件夹' });
+        if (typeof choice !== 'string') return;
+        selectedPath = choice;
+        setPathInput(choice);
+      }
+      const opened = await api.openProject(selectedPath);
       setProject(opened);
+      setProjectHistory(rememberProject(opened.path, opened.name));
       setError(null);
+      setDocument(null);
+      setSource('');
       await refresh();
     } catch (caught) {
       setError(describeError(caught));
     }
+  };
+
+  const toggleSidebar = () => {
+    setSidebarCollapsed((collapsed) => {
+      localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(!collapsed));
+      return !collapsed;
+    });
   };
 
   const selectDocument = async (entry: RibbonEntry) => {
@@ -414,9 +591,23 @@ export default function App() {
       setDocument(loaded);
       setSource(loaded.source);
       setConflict(null);
+      setView('editor');
     } catch (caught) {
       setError(describeError(caught));
     }
+  };
+
+  const deleteDocument = async (entry: RibbonEntry) => {
+    await api.deleteDocument(entry.kind, entry.id);
+    if (document?.kind === entry.kind && document.id === entry.id) {
+      setDocument(null);
+      setSource('');
+      setConflict(null);
+    }
+    setDocuments((current) => current.filter((item) => item.kind !== entry.kind || item.id !== entry.id));
+    reportStatus(`已删除${KIND_LABEL[entry.kind]}“${entry.title}”`, 'success');
+    setPreviewRevision((revision) => revision + 1);
+    await refresh();
   };
 
   const createDocument = async (kind: ContentKind) => {
@@ -456,37 +647,122 @@ export default function App() {
     if (!conflict?.disk_source) return;
     setSource(conflict.disk_source);
     setConflict(null);
-    setStatus('已采用磁盘版本');
+    reportStatus('已采用磁盘版本');
   };
 
-  const startPreview = async () => {
+  const projectPathRef = useRef(project?.path);
+  projectPathRef.current = project?.path;
+
+  const changePreview = useCallback(async (start: boolean) => {
+    const projectPath = project?.path;
+    if (!projectPath || previewBusyRef.current) return;
+    previewBusyRef.current = true;
+    previewOperationRef.current += 1;
+    setPreviewBusy(true);
+    setPreviewError(null);
     try {
-      setPreview(await api.startPreview('site'));
+      const next = await (start ? api.startPreview('site') : api.stopPreview('site'));
+      if (projectPathRef.current === projectPath) {
+        setPreview(next);
+        setPreviewReady(true);
+        if (!start) setStatus('预览已停止');
+      }
     } catch (caught) {
-      const command = asCommandError(caught);
-      setError(command.hint ? `${command.message} — ${command.hint}` : command.message);
+      if (projectPathRef.current === projectPath) {
+        const command = asCommandError(caught);
+        const message = command.hint ? `${command.message} — ${command.hint}` : command.message;
+        setPreviewError(message);
+        setStatus(`站点预览：${message}`);
+      }
+    } finally {
+      previewBusyRef.current = false;
+      setPreviewBusy(false);
     }
-  };
+  }, [project?.path]);
 
-  const visible = documents.filter((entry) => filter === 'all' || entry.kind === filter);
+  const startPreview = useCallback(() => changePreview(true), [changePreview]);
+
+  const projectScope = useRef(project?.path ?? null);
+  projectScope.current = project?.path ?? null;
+  const route = {
+    view,
+    settingsSection: view === 'settings' ? settingsSection : null,
+    appearanceSection: view === 'appearance' ? appearanceSection : null,
+    doc: view === 'editor' && document ? { kind: document.kind, id: document.id } : null,
+  };
+  const navigation = useNavigationHistory(route, project?.path ?? null, async previous => {
+    const scope = projectScope.current;
+    if (previous.doc && (document?.id !== previous.doc.id || document?.kind !== previous.doc.kind)) {
+      const loaded = await api.readDocument(previous.doc.kind, previous.doc.id);
+      if (scope !== projectScope.current) return;
+      setDocument(loaded); setSource(loaded.source); setConflict(null);
+    }
+    if (previous.settingsSection) setSettingsSection(previous.settingsSection);
+    if (previous.appearanceSection) setAppearanceSection(previous.appearanceSection);
+    setView(previous.view);
+  }, caught => setError(describeError(caught)));
 
   const previewState = preview?.site.state ?? 'stopped';
-  const previewLabel = (() => {
-    switch (previewState) {
-      case 'running':
-        return `预览运行中 :${preview?.site.state === 'running' ? preview.site.port : ''}`;
-      case 'starting':
-        return '预览启动中…';
-      case 'crashed':
-        return '预览已崩溃';
-      case 'exited':
-        return '预览已停止';
-      default:
-        return '预览未启动';
-    }
-  })();
+  const previewRetrying = preview?.site.state === 'crashed' && preview.site.will_retry;
+  // Markdown writing no longer consumes Astro. Only the actual site/appearance views keep it alive.
+  // Polling updates must not reset an idle timeout.
+  const showingSiteInfo = view === 'appearance' && appearanceSection === 'info';
+  const previewInUse = view === 'preview' || showingSiteInfo;
+  const previewInUseRef = useRef(previewInUse);
+  previewInUseRef.current = previewInUse;
 
-  const currentEntry = ALL_ENTRIES.find((entry) => entry.id === view);
+  useEffect(() => {
+    if (view !== 'preview' && !showingSiteInfo) {
+      previewAutoAttemptRef.current = null;
+      return;
+    }
+    const projectPath = project?.path;
+    if (!projectPath || !previewReady || previewBusy || previewState === 'running'
+      || previewState === 'starting' || previewRetrying) return;
+    // One automatic attempt per visit, not a retry loop on every two-second poll.
+    // A failed start stays visible and can be retried explicitly from the error state.
+    if (previewAutoAttemptRef.current === projectPath) return;
+    previewAutoAttemptRef.current = projectPath;
+    void startPreview();
+  }, [view, showingSiteInfo, project?.path, previewReady, previewBusy, previewState, previewRetrying, startPreview]);
+
+  useEffect(() => {
+    if (!project || previewInUse || previewBusy
+      || (previewState !== 'running' && previewState !== 'starting' && !previewRetrying)) return;
+    const timer = window.setTimeout(() => {
+      // Recheck at the boundary in case navigation and the timeout happen together.
+      if (!previewInUseRef.current && !previewBusyRef.current) {
+        setStatus('预览空闲已满 5 分钟，正在自动停止');
+        void changePreview(false);
+      }
+    }, PREVIEW_IDLE_MS);
+    return () => window.clearTimeout(timer);
+    // Use liveness, not the polled object/state: starting → running is not a new idle period.
+  }, [project?.path, previewInUse, previewBusy,
+    previewState === 'running' || previewState === 'starting' || previewRetrying, changePreview]);
+  useEffect(() => {
+    if (!project?.path) return;
+    const key = `veloct.navigation:${project.path}`;
+    try {
+      const saved = JSON.parse(localStorage.getItem(key) ?? 'null');
+      if (Array.isArray(saved)) setCustomMenus(saved);
+    } catch { /* use built-in defaults */ }
+  }, [project?.path]);
+
+  const updateCustomMenus = (menus: CustomMenu[]) => {
+    setCustomMenus(menus);
+    if (project?.path) localStorage.setItem(`veloct.navigation:${project.path}`, JSON.stringify(menus));
+  };
+
+  const activeNavId: ViewId = view === 'editor' && document
+    ? CONTENT_VIEWS[document.kind]
+    : view;
+  const currentEntry = ALL_ENTRIES.find((entry) => entry.id === activeNavId);
+  const sectionLabel = view === 'appearance'
+    ? { info: '站点信息', beautify: '站点美化', filing: '备案管理' }[appearanceSection]
+    : view === 'settings'
+      ? { site: '站点设置', deploy: '部署目标', attachments: '附件存储', 'network-images': '网络图片', backup: '备份设置' }[settingsSection]
+      : null;
   const savedLabel = autosave.state.saving
     ? '保存中…'
     : autosave.hash === autosave.state.savedHash
@@ -500,10 +776,13 @@ export default function App() {
 
   return (
     <div className="app">
-      <aside className="sidebar">
+      <aside className={`sidebar${sidebarCollapsed ? ' sidebar--collapsed' : ''}`}>
         <div className="brand">
-          <SpikeMark className="brand-mark" />
+          <img src={brandLogo} className="brand-mark" alt="Veloct" />
           <span className="brand-word">Veloct</span>
+          <button type="button" className="sidebar-toggle" onClick={toggleSidebar} aria-label={sidebarCollapsed ? '展开侧边栏' : '折叠侧边栏'} title={sidebarCollapsed ? '展开侧边栏' : '折叠侧边栏'}>
+            <Icon name={sidebarCollapsed ? 'expand' : 'collapse'} />
+          </button>
         </div>
 
         {!project ? (
@@ -512,17 +791,29 @@ export default function App() {
             <input
               value={pathInput}
               onChange={(event) => setPathInput(event.target.value)}
+              onKeyDown={(event) => { if (event.key === 'Enter') void openProject(); }}
               placeholder="D:/我的站点"
               spellCheck={false}
             />
             <button type="button" className="primary" onClick={() => void openProject()}>
               打开项目
             </button>
+            {projectHistory.length > 0 && (
+              <div className="recent-projects">
+                <p className="nav-group-label">最近打开</p>
+                {projectHistory.map((item) => (
+                  <button key={item.path} type="button" className="recent-project" title={item.path} onClick={() => void openProject(item.path)}>
+                    <span>{item.name}</span><small>{item.path}</small>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         ) : (
-          <p className="sidebar-project" title={project.name}>
-            {project.name}
-          </p>
+          <div className="project-switcher">
+            <p className="sidebar-project" title={project.path}>{project.name}</p>
+            <button type="button" onClick={() => void openProject('')}>切换项目</button>
+          </div>
         )}
 
         {/* Every top-level view is here, grouped, and reachable whether or not a project is open: a page
@@ -533,105 +824,48 @@ export default function App() {
               <p className="nav-group-label">{group.label}</p>
               <ul className="nav-list">
                 {group.entries.map((entry) => (
-                  <li key={entry.id}>
+                  <li key={`${entry.id}-${entry.label}`}>
                     <button
                       type="button"
-                      className={`nav-item${view === entry.id ? ' is-active' : ''}`}
-                      aria-current={view === entry.id ? 'page' : undefined}
+                      className={`nav-item${activeNavId === entry.id ? ' is-active' : ''}`}
+                      aria-current={activeNavId === entry.id ? 'page' : undefined}
                       title={entry.title}
                       onClick={() => setView(entry.id)}
                     >
                       <Icon name={entry.icon} />
                       <span className="nav-label">{entry.label}</span>
+                      {entry.id === 'attachments' && attachmentIssueCount > 0 && <span className="attachment-message-bubble" aria-label={`${attachmentIssueCount} 个附件需要处理`}>{attachmentIssueCount}</span>}
                     </button>
                   </li>
                 ))}
               </ul>
             </div>
           ))}
-          <div className="nav-group">
-            <p className="nav-group-label">AI</p>
-            <ul className="nav-list">
-              {AI_ENTRIES.map((entry) => (
-                <li key={entry.label}>
-                  <button
-                    type="button"
-                    className="nav-item"
-                    title={entry.title}
-                    onClick={() =>
-                      entry.opens === 'creator' ? setShowPageCreator(true) : setShowAiSettings(true)
-                    }
-                  >
-                    <Icon name={entry.icon} />
-                    <span className="nav-label">{entry.label}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </div>
         </nav>
 
-        {project && (
-          <section className="doc-browser" aria-label="内容">
-            <div className="doc-filter">
-              {(['all', 'article', 'page', 'knowledge'] as const).map((kind) => (
-                <button
-                  type="button"
-                  key={kind}
-                  className={`tab${filter === kind ? ' is-active' : ''}`}
-                  onClick={() => setFilter(kind)}
-                >
-                  {KIND_LABEL[kind]}
-                </button>
-              ))}
-            </div>
-
-            <div className="doc-new">
-              <button type="button" onClick={() => void createDocument('article')}>
-                + 文章
-              </button>
-              <button type="button" onClick={() => void createDocument('page')}>
-                + 页面
-              </button>
-              <button type="button" onClick={() => void createDocument('knowledge')}>
-                + 知识库
-              </button>
-            </div>
-
-            <ul className="doc-list">
-              {visible.map((entry) => (
-                <li key={`${entry.kind}:${entry.id}`}>
-                  <button
-                    type="button"
-                    className={`doc-item${document?.id === entry.id ? ' is-active' : ''}`}
-                    onClick={() => {
-                      // Selecting content means editing it: the click used to load the document behind
-                      // whichever panel was open, so it looked like nothing happened.
-                      setView('editor');
-                      void selectDocument(entry);
-                    }}
-                  >
-                    <span className="doc-title">{entry.title}</span>
-                    <span className="doc-meta">
-                      <span className={`badge ${entry.wip_state}`}>{entry.wip_state}</span>
-                      {!entry.is_buildable && <span className="badge draft-only">不进入构建</span>}
-                    </span>
-                  </button>
-                </li>
-              ))}
-              {visible.length === 0 && <li className="doc-empty muted">还没有内容。</li>}
-            </ul>
-          </section>
-        )}
+        <div className="sidebar-footer">
+          <button
+            type="button"
+            className={`nav-item${view === 'settings' ? ' is-active' : ''}`}
+            aria-current={view === 'settings' ? 'page' : undefined}
+            title="部署、资源与应用设置"
+            onClick={() => setView('settings')}
+          >
+            <Icon name="settings" />
+            <span className="nav-label">设置</span>
+          </button>
+        </div>
       </aside>
 
       <div className="main">
         <header className="topbar">
           <div className="topbar-context">
+            <button type="button" className="history-back" aria-label="返回上一页" title="返回上一页" disabled={!navigation.canGoBack} onClick={() => void navigation.goBack()}><Icon name="collapse" /></button>
             <p className="crumb">
-              <span className="crumb-project">{project ? project.name : '未打开项目'}</span>
+              <button type="button" className="crumb-link crumb-project" onClick={() => setView('dashboard')}>{project ? project.name : '未打开项目'}</button>
               <span className="crumb-sep">/</span>
-              <span className="crumb-page">{currentEntry?.label ?? '编辑器'}</span>
+              <button type="button" className="crumb-link crumb-page" onClick={() => setView(activeNavId)}>{currentEntry?.label ?? '编辑器'}</button>
+              {sectionLabel && <><span className="crumb-sep">/</span><span className="crumb-leaf">{sectionLabel}</span></>}
               {view === 'editor' && document && (
                 <>
                   <span className="crumb-sep">/</span>
@@ -644,20 +878,23 @@ export default function App() {
           <div className="topbar-actions">
             {view === 'editor' &&
               (previewState === 'running' ? (
-                <button type="button" onClick={() => void api.stopPreview().then(setPreview)}>
+                <button type="button" className="site-preview-toggle" title="仅停止独立站点预览，不影响所见即所得编辑" disabled={previewBusy} onClick={() => void changePreview(false)}>
                   停止预览
                 </button>
               ) : (
                 <button
                   type="button"
-                  className="primary"
+                  className="primary site-preview-toggle"
+                  title="启动独立站点预览；所见即所得编辑无需启动站点"
                   onClick={() => void startPreview()}
-                  disabled={!project}
+                  disabled={!project || previewBusy || previewState === 'starting'}
                 >
                   启动预览
                 </button>
               ))}
-            <Chip tone={savedTone}>{savedLabel}</Chip>
+            <span className="save-status" role="status" aria-live="polite" aria-atomic="true">
+              <Chip tone={savedTone} title={savedLabel}>{savedLabel}</Chip>
+            </span>
             {autoBackup && (
               <Chip
                 tone={autoBackup.needs_acknowledgement ? 'warning' : 'neutral'}
@@ -678,56 +915,42 @@ export default function App() {
           </div>
         </header>
 
-        <div className="content">
-          {/* An error appears HERE — at the top of the content column, where the user is looking — rather
-              than only in the status bar or a log. It is the same treatment as every other state. */}
-          {error && (
-            <div className="page">
-              <StateBlock
-                tone="error"
-                title="出错了"
-                description={error}
-                onDismiss={() => setError(null)}
-              />
-            </div>
-          )}
+        <div
+          key={view}
+          className={`content content--rise${view === 'preview' ? ' content--preview' : ''}${showingSiteInfo ? ' content--site-info' : ''}`}
+        >
+          <Feedback message={error} tone="error" title="出错了" />
 
-          {view === 'attachments' ? (
+          {view === 'dashboard' ? (
+            <Dashboard documents={documents} onSelect={(entry) => { void selectDocument(entry); }} />
+          ) : view === 'articles' ? (
+            <ContentManager kind="article" documents={documents} onDelete={deleteDocument} onCreate={() => void createDocument('article')} onSelect={(entry) => { void selectDocument(entry); }} />
+          ) : view === 'pages' ? (
+            <ContentManager kind="page" documents={documents} onDelete={deleteDocument} onCreate={() => void createDocument('page')} onSelect={(entry) => { void selectDocument(entry); }} />
+          ) : view === 'knowledge' ? (
+            <div className="knowledge-workspace">
+              <ContentManager kind="knowledge" documents={documents} onDelete={deleteDocument} onCreate={() => void createDocument('knowledge')} onSelect={(entry) => { void selectDocument(entry); }} />
+              <LinkedKnowledgePanel key={project?.path ?? 'none'} enabled={project !== null} />
+            </div>
+          ) : view === 'attachments' ? (
             <AttachmentPanel
+              key={project?.path ?? "no-project"}
+              onOpenSettings={() => { setSettingsSection("attachments"); setView("settings"); }}
               enabled={project !== null}
               onInsertMarkdown={(markdown) => {
                 // §13.3: the pool never rewrites an article. The Markdown is appended to the buffer here and the
                 // user saves when they choose, so adding a picture cannot edit a document by itself.
-                setView('editor');
                 if (document) {
+                  setView('editor');
                   const next = `${source.trimEnd()}\n\n${markdown}\n`;
                   setSource(next);
                   autosave.onChange(next);
-                  setStatus('已将附件 Markdown 插入编辑器,保存后生效');
+                  reportStatus('已将附件 Markdown 插入编辑器,保存后生效', 'success');
                 } else {
-                  setStatus('请先打开一篇文章,再插入附件 Markdown');
+                  reportStatus('请先打开一篇文章,再插入附件 Markdown', 'warning');
                 }
               }}
             />
-          ) : view === 'network-images' ? (
-            <div className="page page--legacy">
-              <NetworkImagePanel
-                enabled={project !== null}
-                onInsertMarkdown={(markdown) => {
-                  // §13.14: the remote URL goes straight into the Markdown and the image never enters the
-                  // cache pool. The buffer is appended here and the user saves when they choose, so browsing
-                  // cannot edit a document by itself. Unlike the attachment panel this does NOT close: a
-                  // browser is normally used for several picks in a row.
-                  if (document) {
-                    const next = `${source.trimEnd()}\n\n${markdown}\n`;
-                    setSource(next);
-                    autosave.onChange(next);
-                  } else {
-                    setStatus('请先打开一篇文章,再插入网络图片 Markdown');
-                  }
-                }}
-              />
-            </div>
           ) : view === 'works' ? (
             <div className="page page--legacy">
               <WorksPanel enabled={project !== null} />
@@ -736,10 +959,9 @@ export default function App() {
             <div className="page page--legacy">
               <BackupPanel enabled={project !== null} />
             </div>
-          ) : view === 'deploy' ? (
-            <div className="page page--legacy">
-              <DeployPanel enabled={project !== null} />
-            </div>
+
+          ) : view === 'navigation' ? (
+            <NavigationPanel key={project?.path ?? 'no-project'} menus={customMenus} pages={documents} onChange={updateCustomMenus} />
           ) : view === 'publish' ? (
             <div className="page page--legacy">
               {/* `projectPath` is passed so the panel re-reads the install state when a DIFFERENT
@@ -748,20 +970,110 @@ export default function App() {
               <PublishPanel
                 enabled={project !== null}
                 projectPath={project?.path ?? null}
-                onPublished={() => void refresh()}
+                                 onInitializeProject={async () => {
+                   try {
+                     const initialized = await api.initializeCurrentProject();
+                     setProject(initialized);
+                     setStatus('项目站点模板已初始化,正在刷新');
+                     await refresh();
+                   } catch (caught) {
+                     setError(describeError(caught));
+                   }
+                 }}
+                 onPublished={() => {
+                  void refresh();
+                  setPreviewRevision((revision) => revision + 1);
+                  setStatus('发布完成,正在刷新预览');
+                }}
               />
             </div>
+          ) : view === 'appearance' ? (
+            <div className="page page--legacy settings-page">
+              <PageHeader title="外观" description="管理站点信息与站点美化" />
+              <div className="settings-tabs" role="group" aria-label="外观分类">
+                {([
+                  ['info', '站点信息'],
+                  ['beautify', '站点美化'],
+                  ['filing', '备案管理'],
+                ] as const).map(([key, label]) => (
+                  <button key={key} type="button" className={appearanceSection === key ? 'is-active' : ''} aria-pressed={appearanceSection === key} onClick={() => setAppearanceSection(key)}>{label}</button>
+                ))}
+              </div>
+              {appearanceSection === 'info' ? (
+                <div className="site-info-workspace">
+                  <div className="site-info-workspace__settings">
+                  <SiteSettingsPanel
+                    key={project?.path ?? 'no-project'}
+                    enabled={project !== null}
+                    projectPath={project?.path ?? null}
+                    mode="info"
+                    onEditHome={() => {
+                      const home = documents.find((entry) => entry.kind === 'page' && entry.slug === 'home');
+                      if (!home) {
+                        setError('找不到 slug 为 home 的页面');
+                        return;
+                      }
+                       void selectDocument(home);
+                    }}
+                    onDraftChange={setSiteDraft}
+                  />
+                  </div>
+                  <PreviewPanel editorMode enabled={project !== null} preview={preview} busy={previewBusy || !previewReady} error={previewError} draftSettings={siteDraft} revision={previewRevision} onRetry={() => void startPreview()} />
+                </div>
+              ) : (
+                <SiteSettingsPanel
+                  key={`${project?.path ?? 'no-project'}:${appearanceSection}`}
+                  enabled={project !== null}
+                  projectPath={project?.path ?? null}
+                  onlySection={appearanceSection}
+                />
+              )}
+            </div>
+          ) : view === 'settings' ? (
+            <div className="page page--legacy settings-page">
+              <PageHeader title="设置" description="部署、资源与应用配置" />
+              <div className="settings-tabs" role="tablist" aria-label="设置分类">
+                {([
+                   ['site', '站点设置'],
+                   ['deploy', '部署目标'],
+                  ['attachments', '附件存储'],
+                  ['network-images', '网络图片'],
+                   ['backup', '备份设置'],
+
+                ] as const).map(([key, label]) => (
+                  <button key={key} type="button" className={settingsSection === key ? 'is-active' : ''} onClick={() => setSettingsSection(key)}>{label}</button>
+                ))}
+              </div>
+              {settingsSection === 'site' && <SiteSettingsPanel key={project?.path ?? 'no-project'} enabled={project !== null} projectPath={project?.path ?? null} />}
+               {settingsSection === 'deploy' && <DeployPanel enabled={project !== null} />}
+              {settingsSection === 'attachments' && <AttachmentPanel key={project?.path ?? 'no-project'} enabled={project !== null} mode="settings" />}
+              {settingsSection === 'network-images' && <NetworkImagePanel key={project?.path ?? 'no-project'} enabled={project !== null} mode="settings" onInsertMarkdown={(markdown) => {
+                if (!document) { reportStatus('请先打开一篇文章,再插入网络图片 Markdown', 'warning'); return; }
+                const next = `${source.trimEnd()}\n\n${markdown}\n`;
+                setSource(next); autosave.onChange(next); reportStatus('已插入网络图片 Markdown', 'success');
+              }} />}
+               {settingsSection === 'backup' && <BackupPanel enabled={project !== null} mode="settings" />}
+
+              <div className="settings-resource-links">
+                <button type="button" onClick={() => setView('attachments')}><Icon name="clip" /> 打开附件管理</button>
+              </div>
+            </div>
+          ) : view === 'preview' ? (
+            <PreviewPanel
+              enabled={project !== null}
+              preview={preview}
+              busy={previewBusy || !previewReady}
+              error={previewError}
+              revision={previewRevision}
+              onRetry={() => void startPreview()}
+            />
           ) : view === 'logs' ? (
             <div className="page page--legacy">
               <LogView enabled={project !== null} />
             </div>
-          ) : (
+          ) : view === 'editor' ? (
             <div className="page page--workspace">
-              <div
-                className="workspace"
-                ref={splitRef}
-                style={{ '--editor-share': `${splitPercent}%` } as React.CSSProperties}
-              >
+              <div className={`workspace${document?.kind === 'article' && resourceSidebarOpen ? ' workspace--resources' : ''}`}>
                 <section className="pane">
                   {document ? (
                     <>
@@ -777,6 +1089,9 @@ export default function App() {
                         description={document.route}
                         actions={
                           <div className="wip-controls">
+                            <button type="button" onClick={() => setView('preview')}>打开站点预览</button>
+                            {document.kind === 'article' ? <button type="button" aria-controls="document-resources" aria-expanded={resourceSidebarOpen} onClick={() => setResourceSidebarOpen(opened => !opened)}>{resourceSidebarOpen ? '收起资源栏' : '展开资源栏'}</button> : <button type="button" onClick={() => setView('attachments')}>附件管理</button>}
+                            <button type="button" onClick={() => { setSettingsSection('network-images'); setView('settings'); }}>网络图片</button>
                             {document.wip_state === 'draft' && (
                               <button
                                 type="button"
@@ -864,6 +1179,8 @@ export default function App() {
 
                       <div className="pane-body">
                         <Editor
+                          key={`${project?.path}:${document.kind}:${document.id}`}
+                          ref={editorHandle}
                           source={source}
                           editable
                           onChange={(next) => {
@@ -877,7 +1194,7 @@ export default function App() {
                     <>
                       <PageHeader
                         title="编辑"
-                        description="选中左侧的一篇内容后在这里写作;右侧是真实站点的预览。"
+                        description="选择内容后直接在这里所见即所得写作，也可切换 MD 源码；查看网站效果请打开站点预览。"
                       />
                       <div className="pane-body pane-body--center">
                         <StateBlock
@@ -893,71 +1210,20 @@ export default function App() {
                     </>
                   )}
                 </section>
-
-                <div
-                  className="split-handle"
-                  role="separator"
-                  aria-orientation="vertical"
-                  aria-label="拖动以调整编辑器和预览的比例"
-                  aria-valuenow={splitPercent}
-                  aria-valuemin={20}
-                  aria-valuemax={80}
-                  tabIndex={0}
-                  onPointerDown={(event) => {
-                    draggingRef.current = true;
-                    event.currentTarget.setPointerCapture(event.pointerId);
+                {document?.kind === 'article' && <DocumentResourcePanel
+                  key={`${project?.path}:${document.id}`}
+                  documentId={document.id}
+                  source={source}
+                  hidden={!resourceSidebarOpen}
+                  onInsertMarkdown={markdown => {
+                    if (!editorHandle.current) throw new Error('编辑器尚未就绪，请稍后重试。');
+                    editorHandle.current.insertMarkdown(markdown);
                   }}
-                  onPointerMove={(event) => {
-                    if (!draggingRef.current) return;
-                    const container = splitRef.current;
-                    if (!container) return;
-                    const bounds = container.getBoundingClientRect();
-                    // The share is a percentage OF THE WORKSPACE, so the ratio is measured on the workspace.
-                    const ratio = ((event.clientX - bounds.left) / bounds.width) * 100;
-                    setSplitPercent(Math.min(80, Math.max(20, ratio)));
-                  }}
-                  onPointerUp={(event) => {
-                    draggingRef.current = false;
-                    event.currentTarget.releasePointerCapture(event.pointerId);
-                  }}
-                  onKeyDown={(event) => {
-                    // A keyboard path, because a pointer-only resize is unusable without a mouse.
-                    if (event.key === 'ArrowLeft') setSplitPercent((value) => Math.max(20, value - 2));
-                    if (event.key === 'ArrowRight') setSplitPercent((value) => Math.min(80, value + 2));
-                  }}
-                />
-
-                <section className="pane">
-                  <header className="pane-head">
-                    <h2 className="pane-title">站点预览</h2>
-                    <span className="pane-note">{previewLabel}</span>
-                  </header>
-                  <div className="pane-body">
-                    {preview?.site_url ? (
-                      // The REAL Astro dev server, not a second renderer (handoff.md section 5.1).
-                      <iframe
-                        title="站点预览"
-                        src={preview.site_url}
-                        sandbox="allow-same-origin allow-scripts"
-                      />
-                    ) : (
-                      <div className="pane-body--center">
-                        <StateBlock
-                          tone="empty"
-                          title="预览还没有启动"
-                          description={
-                            previewState === 'crashed' && preview?.site.state === 'crashed'
-                              ? preview.site.reason
-                              : '预览使用与最终站点同一套 Astro 工程。启动后会在这里显示。'
-                          }
-                        />
-                      </div>
-                    )}
-                  </div>
-                </section>
+                  onOpenManager={() => setView('attachments')}
+                />}
               </div>
             </div>
-          )}
+          ) : null}
         </div>
 
         <footer className="statusbar">
@@ -968,32 +1234,7 @@ export default function App() {
         </footer>
       </div>
 
-      {showPageCreator && (
-        <PageCreator
-          settings={aiSettings}
-          onClose={() => setShowPageCreator(false)}
-          onOpenSettings={() => {
-            setShowPageCreator(false);
-            setShowAiSettings(true);
-          }}
-          onCreated={(created) => {
-            setShowPageCreator(false);
-            setDocument(created);
-            setSource(created.source);
-            setView('editor');
-            setStatus(`已创建 ${created.title}`);
-            void refresh();
-          }}
-        />
-      )}
 
-      {showAiSettings && (
-        <AiSettingsPanel
-          settings={aiSettings}
-          onReload={reloadAiSettings}
-          onClose={() => setShowAiSettings(false)}
-        />
-      )}
     </div>
   );
 }

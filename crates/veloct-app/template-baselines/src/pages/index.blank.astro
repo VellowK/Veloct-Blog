@@ -1,0 +1,27 @@
+---
+// Intentionally blank home canvas for the next homepage design.
+// Keep the shared navigation/footer and SEO; do not delete the managed home Markdown or settings.
+import BaseLayout from '../layouts/BaseLayout.astro';
+import { readSiteConfig } from '../lib/site-config.mjs';
+
+const site = readSiteConfig();
+const jsonLd = {
+  '@context': 'https://schema.org',
+  '@type': 'WebSite',
+  name: site.name,
+  url: site.url,
+  description: site.description,
+  ...(site.author?.name
+    ? { author: { '@type': 'Person', name: site.author.name } }
+    : {}),
+};
+---
+
+<BaseLayout
+  title={site.name}
+  description={site.description}
+  canonical="/"
+  jsonLd={jsonLd}
+  wide
+  showRightSidebar={false}
+/>

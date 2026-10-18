@@ -8,10 +8,12 @@
 // The inline head script is deliberate: the sidebar's collapsed state must be applied BEFORE the
 // first paint, otherwise every navigation flashes the expanded sidebar at a user who collapsed it.
 
+import { ClientRouter } from 'astro:transitions';
 import Seo from '../components/Seo.astro';
 import LeftSidebar from '../components/LeftSidebar.astro';
 import RightSidebar from '../components/RightSidebar.astro';
 import SiteFooter from '../components/SiteFooter.astro';
+import { readSiteConfig } from '../lib/site-config.mjs';
 import '../styles/global.css';
 
 interface Props {
@@ -32,6 +34,8 @@ interface Props {
   isProduction?: boolean;
   /** Widen the main column for a gallery-style page such as the works index. */
   wide?: boolean;
+  /** A blank home canvas omits the sidebar entirely; every other page keeps the default. */
+  showRightSidebar?: boolean;
 }
 
 const {
@@ -51,12 +55,22 @@ const {
   commentsEnabled = false,
   isProduction = import.meta.env.PROD,
   wide = false,
+  showRightSidebar = true,
 } = Astro.props;
+
+// Read once, here, because the page-transition setting is a property of the DOCUMENT rather than of a
+// component: `global.css` selects the effect off this attribute, and a value read further down the
+// tree could not reach the `::view-transition-*` pseudo-elements, which hang off the root element.
+const site = readSiteConfig();
+// A legacy/custom home may omit the new prop: never attach the old global sidebar to the home route.
+const isHome = canonical === '/' || Astro.url.pathname.replace(/\/+$/, '') === import.meta.env.BASE_URL.replace(/\/+$/, '');
+const renderRightSidebar = showRightSidebar && !isHome;
 ---
 
 <!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-page-transition={site.pageTransition}>
   <head>
+    <ClientRouter fallback="animate" />
     <Seo
       title={title}
       description={description}
@@ -69,7 +83,7 @@ const {
       image={image}
       jsonLd={jsonLd}
     />
-    <script is:inline>
+    <script is:inline data-astro-rerun>
       // Restore the sidebar state before paint. Kept inline and tiny on purpose.
       (function () {
         try {
@@ -81,6 +95,59 @@ const {
         }
       })();
     </script>
+    <script is:inline data-astro-rerun>
+      // The desktop editor opts in with ?veloct_editor=1. Normal published pages stay untouched.
+      (() => {
+        if (new URLSearchParams(window.location.search).get('veloct_editor') !== '1') return;
+        const enableEditor = () => {
+          const style = document.createElement('style');
+          style.textContent = '[data-veloct-editable]{transition:background .15s}[data-veloct-editable]:hover{cursor:text}[data-veloct-editable][contenteditable="true"]{outline:none}';
+          document.head.appendChild(style);
+          let targetOrigin = window.location.origin;
+          window.__veloctEditorCleanup?.();
+          const receive = (event) => {
+            if (event.source !== window.parent || event.data?.type !== 'veloct-site-editor-init') return;
+            if (event.origin !== 'null') targetOrigin = event.origin;
+          };
+          window.addEventListener('message', receive);
+          window.__veloctEditorCleanup = () => window.removeEventListener('message', receive);
+                     const send = (key, value) => window.parent.postMessage({ type: 'veloct-site-edit', key, value }, targetOrigin);
+           window.addEventListener('message', (event) => {
+             if (event.source !== window.parent || event.data?.type !== 'veloct-site-draft') return;
+             const settings = event.data.settings ?? {};
+             const values = { 'hero.title': settings.hero?.title || settings.name || '', 'hero.subtitle': settings.hero?.subtitle || settings.description || '', 'author.name': settings.author?.name || settings.name || '', 'author.bio': settings.author?.bio || '', 'description': settings.description || '', 'filing.icp': settings.filing?.icp || '', 'filing.police': settings.filing?.police || '', 'filing.moe': settings.filing?.moe || '' };
+             document.querySelectorAll('[data-veloct-editable]').forEach((element) => { const key = element.getAttribute('data-veloct-editable'); if (key && key in values && !(element instanceof HTMLImageElement)) element.textContent = values[key]; });
+             document.querySelectorAll('[data-veloct-draft]').forEach((element) => { const key = element.getAttribute('data-veloct-draft'); if (key && key in values) element.textContent = values[key]; });
+             document.querySelectorAll('[data-veloct-draft-href]').forEach((element) => { const key = element.getAttribute('data-veloct-draft-href'); const value = key?.split('.').reduce((current, part) => current?.[part], settings); if (element instanceof HTMLAnchorElement && typeof value === 'string' && value) element.href = value; });
+           });
+          document.querySelectorAll('[data-veloct-editable]').forEach((element) => {
+            const key = element.getAttribute('data-veloct-editable');
+            if (!key) return;
+            if (element instanceof HTMLImageElement) {
+              element.addEventListener('dblclick', (event) => {
+                event.preventDefault();
+                const nextValue = window.prompt(`编辑 ${key}`, element.src);
+                if (nextValue === null) return;
+                element.src = nextValue;
+                send(key, nextValue);
+              });
+              return;
+            }
+            element.setAttribute('contenteditable', 'true');
+            element.setAttribute('role', 'textbox');
+            element.addEventListener('input', () => send(key, element.textContent ?? ''));
+            element.addEventListener('keydown', (event) => {
+              if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault();
+                element.blur();
+              }
+            });
+          });
+        };
+        if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', enableEditor, { once: true });
+        else enableEditor();
+      })();
+    </script>
   </head>
 
   <body class="min-h-screen">
@@ -89,21 +156,23 @@ const {
       class="visually-hidden focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-lg focus:bg-ink-800 focus:px-4 focus:py-2"
     >跳到主要内容</a>
 
-    <div class="mx-auto flex w-full max-w-[100rem] gap-4 px-4 py-4">
+    <div class="mx-auto flex min-h-screen w-full max-w-[100rem] gap-4 px-4 py-4">
       <LeftSidebar />
 
-      <main id="veloct-main" class:list={['min-w-0 flex-1', wide ? '' : 'max-w-4xl']}>
-        <slot />
+      <main id="veloct-main" class:list={['flex min-w-0 flex-1 flex-col', wide ? '' : 'max-w-4xl']}>
+        <div class="min-w-0 flex-1" data-veloct-page-content><slot /></div>
         <SiteFooter />
       </main>
 
-      <RightSidebar
-        headings={headings}
-        tags={wordCloud}
-        heatmap={heatmap}
-        commentsEnabled={commentsEnabled}
-        isProduction={isProduction}
-      />
+      {renderRightSidebar && (
+        <RightSidebar
+          headings={headings}
+          tags={wordCloud}
+          heatmap={heatmap}
+          commentsEnabled={commentsEnabled}
+          isProduction={isProduction}
+        />
+      )}
     </div>
   </body>
 </html>

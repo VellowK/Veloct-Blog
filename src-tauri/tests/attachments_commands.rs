@@ -17,8 +17,8 @@ use std::path::Path;
 
 use tauri::Manager;
 use veloct_desktop_lib::attachments::{
-    delete_remote_object, delete_storage_target, save_storage_target, upload_attachment,
-    SaveStorageTargetRequest, STORAGE_TARGETS_FILE,
+    add_attachment_bytes, delete_remote_object, delete_storage_target, save_storage_target,
+    upload_attachment, SaveStorageTargetRequest, STORAGE_TARGETS_FILE,
 };
 use veloct_desktop_lib::{AppState, OpenProject};
 
@@ -40,6 +40,50 @@ fn mock_app(root: &Path) -> tauri::App<tauri::test::MockRuntime> {
         .unwrap();
     app.manage(state);
     app
+}
+
+#[test]
+fn clipboard_command_rejects_bad_input_then_imports_and_deduplicates_without_upload() {
+    let dir = tempfile::TempDir::new().unwrap();
+    std::fs::create_dir_all(dir.path().join(".veloct")).unwrap();
+    let app = mock_app(dir.path());
+    let call = |name: &str, bytes: &str| {
+        tauri::async_runtime::block_on(add_attachment_bytes(
+            app.state::<AppState>(),
+            name.into(),
+            bytes.into(),
+            "local".into(),
+            "default".into(),
+        ))
+    };
+    assert!(call("photo.png", "%%%not-base64").is_err());
+    assert!(call("../outside.png", "aGVsbG8=").is_err());
+    assert!(app
+        .state::<AppState>()
+        .project()
+        .unwrap()
+        .attachments()
+        .list()
+        .is_empty());
+    let first = call("paste.png", "aGVsbG8=").unwrap();
+    assert_eq!(first.attachment.original_name, "paste.png");
+    assert_eq!(first.attachment.size_bytes, 5);
+    assert_eq!(first.attachment.upload_status, "PENDING");
+    assert!(first.attachment.remote_url.is_none());
+    assert_eq!(
+        call("same.png", "aGVsbG8=").unwrap().attachment.id,
+        first.attachment.id
+    );
+    assert_eq!(
+        app.state::<AppState>()
+            .project()
+            .unwrap()
+            .attachments()
+            .list()
+            .len(),
+        1
+    );
+    assert!(!dir.path().join("content/articles").exists());
 }
 
 /// The stored target list, read the way the storage path writes it.
@@ -85,7 +129,13 @@ fn add_one_attachment(
     let project = app.state::<AppState>().project().unwrap();
     let (attachment, _outcome) = project
         .attachments()
-        .add_file(source, target_id, "default", "2026-01-01T00:00:00Z", &entropy)
+        .add_file(
+            source,
+            target_id,
+            "default",
+            "2026-01-01T00:00:00Z",
+            &entropy,
+        )
         .unwrap();
     attachment.id
 }
@@ -120,6 +170,9 @@ fn the_save_command_writes_an_accepted_target_into_the_open_project() {
         bucket: None,
         access_key: None,
         instance: None,
+        hidden_from_upload: false,
+        upload_priority: 0,
+        s3_policy: None,
         // Submitted ON PURPOSE: the local kind reads no credential, so a value for one must not be stored.
         // Storing a secret nothing references is worse than dropping an input the kind cannot use.
         credential: Some("a-secret-no-local-target-can-use".to_string()),
@@ -173,6 +226,9 @@ fn the_save_command_stores_neither_a_refused_target_nor_its_credential() {
         bucket: None,
         access_key: Some("AKIAIOSFODNN7EXAMPLE".to_string()),
         instance: None,
+        hidden_from_upload: false,
+        upload_priority: 0,
+        s3_policy: None,
         credential: Some(SECRET.to_string()),
     };
 
@@ -340,9 +396,12 @@ fn the_remote_delete_command_removes_the_recorded_object_and_refuses_another_tar
     );
 
     // An id that names no stored target is reported rather than silently ignored.
-    let error =
-        delete_remote_object(app.state::<AppState>(), id.clone(), "no-such-target".to_string())
-            .expect_err("an unknown target id is reported");
+    let error = delete_remote_object(
+        app.state::<AppState>(),
+        id.clone(),
+        "no-such-target".to_string(),
+    )
+    .expect_err("an unknown target id is reported");
     assert!(error.to_string().contains("no storage target"), "{error}");
     assert!(written.is_file(), "and it removed nothing either");
 

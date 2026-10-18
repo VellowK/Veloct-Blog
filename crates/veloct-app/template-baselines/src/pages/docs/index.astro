@@ -1,0 +1,60 @@
+---
+// The knowledge base entry point.
+//
+// handoff.md section 9: the knowledge base is independent of the article module, it does NOT appear
+// in the article navigation or list, and section 9.4 says a knowledge page does NOT show which
+// articles cite it — so no backreference list is rendered here, even though the data would allow it.
+
+import { getCollection } from 'astro:content';
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import { readSiteConfig } from '../../lib/site-config.mjs';
+import { extractParagraphs } from '../../lib/knowledge.ts';
+
+const site = readSiteConfig();
+const entries = await getCollection('knowledge');
+
+const documents = entries
+  .map((entry) => {
+    const paragraphs = extractParagraphs(entry.body);
+    return {
+      entry,
+      paragraphCount: paragraphs.length,
+      // A knowledge document's own first paragraph makes a better summary than nothing.
+      preview: paragraphs[0]?.text?.replace(/<!--.*?-->/g, '').slice(0, 120) ?? '',
+    };
+  })
+  .sort((a, b) => a.entry.data.title.localeCompare(b.entry.data.title));
+
+const totalParagraphs = documents.reduce((total, doc) => total + doc.paragraphCount, 0);
+---
+
+<BaseLayout
+  title={`知识库 · ${site.name}`}
+  description={`${site.name} 的知识库`}
+  canonical="/docs/"
+>
+  <h1 class="font-serif text-2xl">知识库</h1>
+  <p class="mt-2 muted">{documents.length} 个条目 · {totalParagraphs} 个可引用段落</p>
+
+  {documents.length === 0 ? (
+    <p class="card mt-6 p-6 muted">知识库还是空的。</p>
+  ) : (
+    <ul class="mt-6 space-y-3">
+      {documents.map(({ entry, paragraphCount, preview }) => (
+        <li class="card p-4">
+          <a href={`/docs/${entry.data.slug}/`} class="no-underline">
+            <h2 class="font-serif text-base text-ink-100">{entry.data.title}</h2>
+          </a>
+          {entry.data.summary && <p class="mt-1 text-sm text-ink-300">{entry.data.summary}</p>}
+          {!entry.data.summary && preview && (
+            <p class="mt-1 text-sm text-ink-300">{preview}…</p>
+          )}
+          <p class="mt-2 text-xs muted">
+            {entry.data.author && <span>{entry.data.author} · </span>}
+            {paragraphCount} 个段落
+          </p>
+        </li>
+      ))}
+    </ul>
+  )}
+</BaseLayout>

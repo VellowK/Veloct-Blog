@@ -83,7 +83,7 @@ function resolveAll() {
   }
 }
 
-resolveAll();
+document.addEventListener('astro:page-load', resolveAll);
 
 // A click on a card asks the right sidebar to open the knowledge view. The sidebar listens for this
 // event, so the card does not need to know the sidebar exists.

@@ -1,0 +1,18 @@
+---
+interface Node { id: string; title: string; url: string | null; children: Node[] }
+interface Props { nodes: Node[] }
+const { nodes } = Astro.props;
+---
+<ul class="linked-tree">
+  {nodes.map((node) => <li>
+    {node.children.length ? <details open>
+      <summary>{node.url ? <a href={node.url} target="_blank" rel="noopener noreferrer">{node.title || '未命名'} ↗</a> : <span>{node.title || '分组'}</span>}</summary>
+      <Astro.self nodes={node.children} />
+    </details> : node.url ? <a href={node.url} target="_blank" rel="noopener noreferrer">{node.title || '未命名'} ↗</a> : <span>{node.title || '分组'}</span>}
+  </li>)}
+</ul>
+<style>
+  .linked-tree { list-style: none; padding-inline-start: 1.25rem; margin-block: .5rem; }
+  .linked-tree li { margin-block: .45rem; overflow-wrap: anywhere; }
+  .linked-tree summary { cursor: pointer; }
+</style>

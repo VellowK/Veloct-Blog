@@ -37,7 +37,8 @@ export async function getStaticPaths() {
 
   for (const entry of articles) {
     const route = articleRoute(entry, options);
-    if (route.kind === WipRoute.Wip) {
+    // Preview-only drafts must have a dev route, but articleRoute returns None for them in builds.
+    if (route.kind === WipRoute.Wip || route.kind === WipRoute.PreviewOnly) {
       paths.push({ params: { id: route.id }, props: { entry, redirectTo: null } });
     } else if (route.redirectFrom) {
       // `redirectFrom` is `/wip/<id>/`; the route parameter is the bare id.

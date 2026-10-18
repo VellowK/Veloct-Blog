@@ -10,9 +10,8 @@
 //! * **A deploy does not build.** §14.13's re-send re-uses an existing `dist/` when the fingerprint matches, and
 //!   a deploy that rebuilt would move the bytes underneath the fingerprint that authorised it. `deploy_now`
 //!   therefore refuses when there is no build, with a message saying to publish first.
-//! * **A manual target is exported, not faked.** ADR-0012 records that EdgeOne's upload API was never verified,
-//!   and §14.11 says 1Panel is not an automatic adapter. Both report what to upload rather than issuing an
-//!   invented request, and the view says which kinds are manual.
+//! * **Only an explicit deploy uploads.** EdgeOne uses the official Makers direct-upload protocol;
+//!   publishing/building and saving targets do not send deployment requests. 1Panel remains a manual export.
 
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -92,20 +91,30 @@ pub fn save_deploy_target(
     // The handle is derived from the target id, so it is stable across a re-save and the credential is not
     // retyped when nothing changed.
     let handle = crate::credentials::handle_for(&format!("deploy:{id}"));
-    if let Some(secret) = credential.filter(|value| !value.trim().is_empty()) {
-        crate::credentials::set(&handle, secret.trim())?;
-    }
-
-    let mut list = veloct_app::TargetList::read(project_state.root.as_path())?;
-    list.upsert(veloct_app::StoredTarget {
+    let target = veloct_app::StoredTarget {
         id: id.clone(),
         kind: parsed,
         enabled,
-        project: project.filter(|value| !value.trim().is_empty()),
-        works_project: works_project.filter(|value| !value.trim().is_empty()),
-        works_origin: works_origin.filter(|value| !value.trim().is_empty()),
-        credential_ref: Some(handle),
-    });
+        project: project
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty()),
+        works_project: works_project
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty()),
+        works_origin: works_origin
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty()),
+        credential_ref: Some(handle.clone()),
+    };
+    target
+        .validate()
+        .map_err(crate::commands::command_invalid)?;
+    // Validate before changing either the OS credential or the project configuration.
+    let mut list = veloct_app::TargetList::read(project_state.root.as_path())?;
+    if let Some(secret) = credential.filter(|value| !value.trim().is_empty()) {
+        crate::credentials::set(&handle, secret.trim())?;
+    }
+    list.upsert(target);
     list.write(project_state.root.as_path())?;
 
     let _ = project_state.log(
@@ -152,47 +161,60 @@ pub fn set_deploy_enabled(state: State<'_, AppState>, enabled: bool) -> Result<(
 /// A SEPARATE step from publishing, because §14.13's re-send works from an existing `dist/`. The command
 /// refuses when there is no build rather than building one.
 #[tauri::command]
-pub fn deploy_now(
+pub async fn deploy_now(
     state: State<'_, AppState>,
     release_id: Option<String>,
 ) -> Result<DeployOutcomeView, CommandError> {
     let project = state.project()?;
-    let clock = veloct_core::SystemClock;
+    // ZIP creation, upload and status polling must not block the WebView command thread.
+    tauri::async_runtime::spawn_blocking(move || -> Result<DeployOutcomeView, CommandError> {
+        let clock = veloct_core::SystemClock;
 
-    // The release id names the deployment's provenance. Falling back to the most recent release on disk is
-    // better than inventing one, and an empty string would produce deployment rows that reference nothing.
-    let release_id = match release_id.filter(|value| !value.trim().is_empty()) {
-        Some(id) => id,
-        None => {
-            // The release DIRECTORIES are the releases, and the newest name is the most recent because the id
-            // carries its timestamp — so this needs no clock and cannot disagree with the listing.
-            newest_release_id(project.root.as_path()).unwrap_or_else(|| "unreleased".to_string())
-        }
-    };
+        // The release id names the deployment's provenance. Falling back to the most recent release on disk is
+        // better than inventing one, and an empty string would produce deployment rows that reference nothing.
+        let release_id = match release_id.filter(|value| !value.trim().is_empty()) {
+            Some(id) => id,
+            None => {
+                // The release DIRECTORIES are the releases, and the newest name is the most recent because the id
+                // carries its timestamp — so this needs no clock and cannot disagree with the listing.
+                newest_release_id(project.root.as_path())
+                    .unwrap_or_else(|| "unreleased".to_string())
+            }
+        };
 
-    let outcome = veloct_app::deploy(
-        project.root.as_path(),
-        &release_id,
-        &crate::credentials::get_or_none,
-        &clock,
-    )?;
+        let outcome = veloct_app::deploy(
+            project.root.as_path(),
+            &release_id,
+            &crate::credentials::get_or_none,
+            &clock,
+        )?;
 
-    let _ = project.log(
-        if outcome.all_succeeded {
-            veloct_logging::LogEvent::info(veloct_logging::Category::Deploy, "deployment finished")
-        } else {
-            veloct_logging::LogEvent::warning(
-                veloct_logging::Category::Deploy,
-                "deployment finished with targets needing attention",
-            )
-        }
-        .with_field("release_id", &outcome.release_id)
-        .with_field("targets", outcome.targets.len().to_string())
-        .with_field("pushed_files", outcome.pushed_files.to_string())
-        .with_field("needing_attention", outcome.needing_attention.join(",")),
-    );
+        let _ = project.log(
+            if outcome.all_succeeded {
+                veloct_logging::LogEvent::info(
+                    veloct_logging::Category::Deploy,
+                    "deployment finished",
+                )
+            } else {
+                veloct_logging::LogEvent::warning(
+                    veloct_logging::Category::Deploy,
+                    "deployment finished with targets needing attention",
+                )
+            }
+            .with_field("release_id", &outcome.release_id)
+            .with_field("targets", outcome.targets.len().to_string())
+            .with_field("pushed_files", outcome.pushed_files.to_string())
+            .with_field("needing_attention", outcome.needing_attention.join(",")),
+        );
 
-    Ok(outcome)
+        Ok(outcome)
+    })
+    .await
+    .map_err(|_| {
+        crate::commands::command_invalid(
+            "部署后台任务中断，不能确认结果；请先检查控制台，勿盲目重复部署。",
+        )
+    })?
 }
 
 /// The newest release id on disk, by name.

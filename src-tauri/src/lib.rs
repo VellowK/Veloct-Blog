@@ -14,16 +14,25 @@
 //!   `taskkill /T`, and it belongs in `RunEvent::Exit`, never in `on_window_event`, which fires per
 //!   window and would kill the preview while another window is still open.
 
-#![forbid(unsafe_code)]
+#![deny(unsafe_code)]
+
+// Tauri exposes only ICON_SMALL; keep the required Windows ICON_BIG FFI in one audited module.
+#[cfg(windows)]
+#[allow(unsafe_code)]
+mod windows_taskbar;
 
 pub mod attachments;
+pub mod attachment_sync;
 pub mod backup;
 pub mod deploy;
 pub mod commands;
 pub mod credentials;
 pub mod images;
+mod site_images;
+pub mod linked_knowledge;
 pub mod logging;
-pub mod page_creator;
+pub mod project_template;
+pub mod preview_document;
 pub mod publish;
 pub mod state;
 pub mod works;
@@ -57,6 +66,9 @@ pub fn application_state() -> AppState {
 /// Build and run the desktop application.
 pub fn run() {
     let state = application_state();
+    // Decode at compile time instead of depending on a runtime resource readback for the title icon.
+    let mut context = tauri::generate_context!();
+    context.set_default_window_icon(Some(tauri::include_image!("icons-logo/32x32.png")));
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -68,7 +80,18 @@ pub fn run() {
             commands::now_rfc3339,
             commands::open_project,
             commands::create_project,
+            commands::initialize_current_project,
             commands::current_project,
+            commands::site_settings,
+            commands::save_site_settings,
+            commands::save_site_avatar,
+            commands::save_site_cover,
+            commands::sync_github_activity,
+            linked_knowledge::linked_knowledge,
+            linked_knowledge::link_knowledge,
+            linked_knowledge::refresh_linked_knowledge,
+            linked_knowledge::unlink_knowledge,
+            linked_knowledge::open_linked_knowledge,
             commands::list_documents,
             commands::content_index,
             commands::read_document,
@@ -83,24 +106,16 @@ pub fn run() {
             commands::start_preview,
             commands::stop_preview,
             commands::preview_status,
+            preview_document::preview_document_ready,
             commands::read_log,
-            commands::ai_settings,
-            commands::save_ai_provider,
-            commands::delete_ai_provider,
-            commands::set_ai_feature,
-            commands::set_ai_fallback,
-            commands::refresh_ai_models,
-            commands::add_ai_model,
-            commands::delete_ai_model,
-            commands::test_ai_provider,
-            commands::generate_page,
-            commands::create_page_from_draft,
             commands::publish_project,
             commands::list_releases,
             commands::install_site_dependencies,
             commands::site_install_status,
             commands::cancel_site_install,
             attachments::add_attachment,
+            attachments::add_attachment_bytes,
+            attachments::preview_attachment_file,
             attachments::list_attachments,
             attachments::attachment_orphans,
             attachments::remove_attachment,
@@ -112,10 +127,16 @@ pub fn run() {
             attachments::storage_targets,
             attachments::storage_kinds,
             attachments::validate_storage_target,
+            attachments::test_storage_target,
             attachments::save_storage_target,
             attachments::delete_storage_target,
             attachments::upload_eligibility,
             attachments::upload_attachment,
+            attachment_sync::attachment_sync_settings,
+            attachment_sync::save_attachment_sync_settings,
+            attachment_sync::attachment_messages,
+            attachment_sync::sync_upload_attachment,
+            attachment_sync::check_attachment_images,
             attachments::delete_remote_object,
             attachments::attachment_objects,            backup::manual_backup,
             backup::export_backup,
@@ -159,6 +180,11 @@ pub fn run() {
             images::choose_network_image,
         ])
         .setup(|app| {
+            if let (Some(window), Some(icon)) = (app.get_webview_window("main"), app.default_window_icon()) {
+                window.set_icon(icon.clone())?;
+                #[cfg(windows)]
+                windows_taskbar::set_taskbar_icon(&window)?;
+            }
             // The preview supervisor is started lazily, when a project is opened, so a machine with no
             // project does not pay for a Node process.
             //
@@ -168,6 +194,10 @@ pub fn run() {
             let state = app.state::<AppState>();
             match app.path().resource_dir() {
                 Ok(resources) => {
+                    match crate::project_template::resolve(&resources) {
+                        Ok(template) => state.set_project_template(template),
+                        Err(error) => eprintln!("[veloct] {error}"),
+                    }
                     let candidate = resources
                         .join("binaries")
                         .join("veloct-astro-sidecar");
@@ -181,7 +211,7 @@ pub fn run() {
             }
             Ok(())
         })
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("failed to build the Veloct application")
         .run(|app, event| {
             if let tauri::RunEvent::Exit = event {

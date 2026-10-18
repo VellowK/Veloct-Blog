@@ -24,6 +24,8 @@
 //!   Node runtime nor the site's `node_modules`, and requiring them would make a works preview fail on a
 //!   machine that could serve the built files perfectly well.
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 use std::process::{Command, Stdio};
 
 use veloct_sidecar::serve::StaticServer;
@@ -87,9 +89,15 @@ fn run(args: &[String]) -> Result<i32, String> {
         ));
     }
 
+    veloct_sidecar::preview_preferences::disable_dev_toolbar(&site_dir)
+        .map_err(|error| format!("could not disable Astro's preview toolbar: {error}"))?;
     let (program, full_args) = command_line(&node, &astro_entry, args);
 
     let mut command = Command::new(&program);
+    // The launcher's flag does not apply to a new Node process: hide its console as well, while
+    // preserving inherited output handles and the parent/child tree the supervisor terminates.
+    #[cfg(windows)]
+    command.creation_flags(0x08000000); // CREATE_NO_WINDOW
     command
         .args(&full_args)
         .current_dir(&site_dir)

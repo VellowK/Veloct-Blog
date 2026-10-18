@@ -32,8 +32,9 @@ use serde::{Deserialize, Serialize};
 use veloct_core::http::HttpClient;
 use veloct_core::{Clock, Result, VeloctError};
 use veloct_deploy::{
-    CloudflarePagesAdapter, DeployAdapter, DistDecision, FrozenTarget, LogicalStatus, ManualExportAdapter,
-    Orchestrator, PublishPayloads, PublishResult, SubTarget, TargetAdapters, TargetConfig, TargetKind,
+    CloudflarePagesAdapter, DeployAdapter, DistDecision, EdgeOnePagesAdapter, FrozenTarget,
+    LogicalStatus, ManualExportAdapter, Orchestrator, PublishPayloads, PublishResult, SubTarget,
+    TargetAdapters, TargetConfig, TargetKind,
 };
 
 /// Where the target configuration lives inside a project.
@@ -110,12 +111,19 @@ impl TargetList {
         if !self.enabled {
             return Vec::new();
         }
-        self.targets.iter().filter(|target| target.enabled).collect()
+        self.targets
+            .iter()
+            .filter(|target| target.enabled)
+            .collect()
     }
 
     /// Add or replace a target by id.
     pub fn upsert(&mut self, target: StoredTarget) {
-        match self.targets.iter_mut().find(|existing| existing.id == target.id) {
+        match self
+            .targets
+            .iter_mut()
+            .find(|existing| existing.id == target.id)
+        {
             Some(existing) => *existing = target,
             None => self.targets.push(target),
         }
@@ -245,10 +253,7 @@ fn with_adapters<R>(
                 // The account id comes from the configuration and the token from the OS store by handle,
                 // because §12 keeps credentials out of SQLite.
                 let account = config.project.clone().unwrap_or_default();
-                let token = config
-                    .credential_ref
-                    .as_deref()
-                    .and_then(credentials);
+                let token = config.credential_ref.as_deref().and_then(credentials);
                 match (token, shared.clone()) {
                     (Some(token), Some(shared)) => Some(Box::new(CloudflarePagesAdapter::new(
                         target.clone(),
@@ -263,11 +268,20 @@ fn with_adapters<R>(
                     _ => None,
                 }
             }
-            // ADR-0012: EdgeOne's upload API was never verified, so these are manual exports rather than an
-            // invented request. §14.11 says the same about 1Panel.
-            TargetKind::EdgeOneMainland
-            | TargetKind::EdgeOneInternational
-            | TargetKind::OnePanel => Some(Box::new(ManualExportAdapter::new(target.clone()))),
+            TargetKind::EdgeOneMainland | TargetKind::EdgeOneInternational => {
+                match (
+                    config.credential_ref.as_deref().and_then(credentials),
+                    shared.clone(),
+                ) {
+                    (Some(token), Some(shared)) => Some(Box::new(EdgeOnePagesAdapter::new(
+                        target.clone(),
+                        token,
+                        shared,
+                    ))),
+                    _ => None,
+                }
+            }
+            TargetKind::OnePanel => Some(Box::new(ManualExportAdapter::new(target.clone()))),
         };
 
         if let Some(adapter) = adapter {
@@ -292,15 +306,28 @@ fn with_adapters<R>(
                             _ => None,
                         }
                     }
-                    _ => Some(Box::new(ManualExportAdapter::new(target.clone()))
-                        as Box<dyn DeployAdapter>),
+                    TargetKind::EdgeOneMainland | TargetKind::EdgeOneInternational => {
+                        match (
+                            config.credential_ref.as_deref().and_then(credentials),
+                            shared.clone(),
+                        ) {
+                            (Some(token), Some(shared)) => Some(Box::new(EdgeOnePagesAdapter::new(
+                                target.clone(),
+                                token,
+                                shared,
+                            ))
+                                as Box<dyn DeployAdapter>),
+                            _ => None,
+                        }
+                    }
+                    TargetKind::OnePanel => {
+                        Some(Box::new(ManualExportAdapter::new(target.clone()))
+                            as Box<dyn DeployAdapter>)
+                    }
                 },
                 None => None,
             };
-            adapters.insert(
-                config.id.clone(),
-                TargetAdapters::new(adapter, works),
-            );
+            adapters.insert(config.id.clone(), TargetAdapters::new(adapter, works));
         }
     }
 
@@ -316,8 +343,16 @@ pub fn read_payloads(dist: &Path) -> Result<(PublishPayloads, usize)> {
         )));
     }
     let payloads = PublishPayloads::read(dist)?;
-    let files = payloads.main.as_ref().map(|main| main.files.len()).unwrap_or(0)
-        + payloads.works.as_ref().map(|works| works.files.len()).unwrap_or(0);
+    let files = payloads
+        .main
+        .as_ref()
+        .map(|main| main.files.len())
+        .unwrap_or(0)
+        + payloads
+            .works
+            .as_ref()
+            .map(|works| works.files.len())
+            .unwrap_or(0);
     Ok((payloads, files))
 }
 
@@ -332,7 +367,8 @@ pub fn deploy(
     credentials: CredentialLookup<'_>,
     clock: &dyn Clock,
 ) -> Result<DeployOutcomeView> {
-    let client = veloct_core::http::ReqwestHttpClient::with_default_timeout(
+    // Credentials must never follow a vendor redirect to a different host (including COS uploads).
+    let client = veloct_core::http::ReqwestHttpClient::without_redirects(
         std::time::Duration::from_secs(300),
     )?;
     deploy_with_client(project_root, release_id, credentials, &client, clock)
@@ -444,10 +480,9 @@ pub fn kind_label(kind: TargetKind) -> &'static str {
 
 /// Whether a kind is deployed automatically or exported for the user.
 ///
-/// ADR-0012 and §14.11: EdgeOne's API was never verified and 1Panel is explicitly not an automatic adapter, so
-/// the window has to say which is which rather than presenting all four as equivalent.
+/// EdgeOne follows the official Makers SDK protocol. Only 1Panel remains a manual export.
 pub fn is_manual(kind: TargetKind) -> bool {
-    !matches!(kind, TargetKind::CloudflarePages)
+    matches!(kind, TargetKind::OnePanel)
 }
 
 /// The status of a target list, for the window.
@@ -554,6 +589,150 @@ mod tests {
         )
     }
 
+    fn edgeone_success(client: FakeHttpClient, project: &str, deployment: &str) -> FakeHttpClient {
+        use serde_json::json;
+        let response = |data| json!({"Code": 0, "Data": {"Response": data}}).to_string();
+        client.always(200, response(json!({"Projects": [{"ProjectId": project, "Provider": "Upload"}]})))
+            .always(200, response(json!({"Bucket": "fixture-123", "Region": "ap-singapore", "TargetPath": "/upload/",
+                "Credentials": {"TmpSecretId": "temp-id", "TmpSecretKey": "temp-key", "Token": "temp-token"}})))
+            .always(200, "").always(200, response(json!({"DeploymentId": deployment})))
+            .always(200, response(json!({"Deployments": [{"DeploymentId": deployment, "Status": "Success"}]})))
+    }
+
+    #[test]
+    fn explicit_deploy_sends_all_files_to_both_regions_and_separate_works_projects() {
+        let dir = project();
+        std::fs::create_dir_all(dir.path().join("dist/site/assets")).unwrap();
+        std::fs::write(dir.path().join("dist/site/assets/picture.png"), [0, 1, 255]).unwrap();
+        std::fs::write(dir.path().join("dist/works/frame.html"), "<p>frame</p>").unwrap();
+        let mut cn = target("cn", TargetKind::EdgeOneMainland);
+        cn.project = Some("main-cn".into());
+        cn.works_project = Some("works-cn".into());
+        cn.works_origin = Some("https://works-cn.example.com".into());
+        let mut global = target("global", TargetKind::EdgeOneInternational);
+        global.project = Some("main-global".into());
+        global.works_project = Some("works-global".into());
+        global.works_origin = Some("https://works-global.example.com".into());
+        let mut disabled = target("disabled", TargetKind::EdgeOneInternational);
+        disabled.enabled = false;
+        TargetList {
+            targets: vec![cn, global, disabled],
+            enabled: true,
+        }
+        .write(dir.path())
+        .unwrap();
+        let client = FakeHttpClient::new();
+        // Saving a configuration is inert; only the explicit deploy call below makes requests.
+        assert_eq!(client.request_count(), 0);
+        let client = edgeone_success(
+            edgeone_success(
+                edgeone_success(
+                    edgeone_success(client, "main-cn", "deploy-cn"),
+                    "works-cn",
+                    "deploy-works-cn",
+                ),
+                "main-global",
+                "deploy-global",
+            ),
+            "works-global",
+            "deploy-works-global",
+        );
+        let outcome = deploy_with_client(
+            dir.path(),
+            "rel-fixture",
+            &|_| Some("pages-token".into()),
+            &client,
+            &clock(),
+        )
+        .unwrap();
+        assert!(outcome.all_succeeded, "{outcome:?}");
+        assert!(outcome.needing_attention.is_empty());
+        assert_eq!(outcome.targets.len(), 2);
+        assert_eq!(client.request_count(), 20);
+        let requests = client.recorded();
+        for offset in [0, 5, 10, 15] {
+            let expected_host = if offset < 10 {
+                "https://pages-api.cloud.tencent.com/v1"
+            } else {
+                "https://pages-api.edgeone.ai/v1"
+            };
+            assert_eq!(requests[offset].url, expected_host);
+            let veloct_core::http::HttpBody::Bytes(bytes) = &requests[offset + 2].body else {
+                panic!("zip upload")
+            };
+            let is_main = offset == 0 || offset == 10;
+            // ZIP local/central entry names are uncompressed. Verify root isolation here;
+            // the adapter's own tests also decompress and check exact file bytes.
+            let has_name = |name: &str| {
+                bytes
+                    .windows(name.len())
+                    .any(|part| part == name.as_bytes())
+            };
+            assert!(has_name("index.html"));
+            assert_eq!(has_name("assets/picture.png"), is_main);
+            assert_eq!(has_name("frame.html"), !is_main);
+        }
+    }
+
+    #[test]
+    fn edgeone_failure_does_not_erase_main_success_or_block_other_enabled_targets() {
+        let dir = project();
+        let mut edge = target("cn", TargetKind::EdgeOneMainland);
+        edge.project = Some("main-cn".into());
+        edge.works_project = Some("works-cn".into());
+        edge.works_origin = Some("https://works.example.com".into());
+        let other = target("global", TargetKind::EdgeOneInternational);
+        TargetList {
+            targets: vec![edge, other],
+            enabled: true,
+        }
+        .write(dir.path())
+        .unwrap();
+        let client = edgeone_success(FakeHttpClient::new(), "main-cn", "deploy-main")
+            .always(500, "not a success");
+        let client = edgeone_success(client, "proj", "deploy-other");
+        let result = deploy_with_client(
+            dir.path(),
+            "rel-fixture",
+            &|_| Some("pages-token".into()),
+            &client,
+            &clock(),
+        )
+        .unwrap();
+        assert!(!result.all_succeeded);
+        assert_eq!(result.targets[0].main_status, "succeeded");
+        assert_eq!(result.targets[0].works_status.as_deref(), Some("failed"));
+        assert_eq!(result.targets[1].main_status, "succeeded");
+        assert_eq!(client.request_count(), 11);
+    }
+
+    #[test]
+    fn edgeone_missing_credentials_or_deployment_disabled_never_sends_requests() {
+        let dir = project();
+        let mut list = TargetList {
+            targets: vec![target("cn", TargetKind::EdgeOneMainland)],
+            enabled: true,
+        };
+        list.write(dir.path()).unwrap();
+        let client = FakeHttpClient::new();
+        let result =
+            deploy_with_client(dir.path(), "rel-fixture", &|_| None, &client, &clock()).unwrap();
+        assert!(!result.all_succeeded);
+        assert_eq!(client.request_count(), 0);
+        list.enabled = false;
+        list.write(dir.path()).unwrap();
+        let result = deploy_with_client(
+            dir.path(),
+            "rel-fixture",
+            &|_| Some("token".into()),
+            &client,
+            &clock(),
+        )
+        .unwrap();
+        assert!(result.targets.is_empty());
+        assert_eq!(client.request_count(), 0);
+    }
+
     #[test]
     fn a_target_list_round_trips_and_a_missing_file_is_an_empty_list() {
         let dir = project();
@@ -598,7 +777,10 @@ mod tests {
         let mut list = TargetList::default();
         list.upsert(target("cf", TargetKind::CloudflarePages));
         assert!(list.remove("cf"));
-        assert!(!list.remove("cf"), "removing twice reports the second as absent");
+        assert!(
+            !list.remove("cf"),
+            "removing twice reports the second as absent"
+        );
         assert!(list.targets.is_empty());
     }
 
@@ -692,8 +874,7 @@ mod tests {
 
     #[test]
     fn the_manual_kinds_get_a_manual_adapter_rather_than_an_invented_request() {
-        // ADR-0012: EdgeOne's upload API was never verified. Section 14.11 says 1Panel is not an automatic
-        // adapter. Both report what to upload.
+        // Only 1Panel remains a manual export. EdgeOne uses the verified official SDK protocol.
         let client = FakeHttpClient::new();
         for kind in [
             TargetKind::EdgeOneMainland,
@@ -708,7 +889,7 @@ mod tests {
                     assert_eq!(adapters.len(), 1, "{kind:?} gets an adapter");
                 },
             );
-            assert!(is_manual(kind), "{kind:?} is manual");
+            assert_eq!(is_manual(kind), kind == TargetKind::OnePanel);
         }
         assert!(!is_manual(TargetKind::CloudflarePages));
     }
@@ -761,9 +942,14 @@ mod tests {
         list.write(dir.path()).unwrap();
 
         let client = FakeHttpClient::new();
-        let outcome =
-            deploy_with_client(dir.path(), "rel-1", &|_| Some("t".to_string()), &client, &clock())
-                .unwrap();
+        let outcome = deploy_with_client(
+            dir.path(),
+            "rel-1",
+            &|_| Some("t".to_string()),
+            &client,
+            &clock(),
+        )
+        .unwrap();
         assert!(outcome.targets.is_empty());
         assert!(!outcome.all_succeeded);
         assert!(outcome.needing_attention.is_empty());
@@ -773,9 +959,13 @@ mod tests {
     fn deploying_with_no_targets_configured_reports_an_empty_run_rather_than_failing() {
         let dir = project();
         let client = FakeHttpClient::new();
-        let outcome = deploy_with_client(dir.path(), "rel-1", &|_| None, &client, &clock()).unwrap();
+        let outcome =
+            deploy_with_client(dir.path(), "rel-1", &|_| None, &client, &clock()).unwrap();
         assert!(outcome.targets.is_empty());
-        assert!(!outcome.all_succeeded, "nothing succeeded because nothing ran");
+        assert!(
+            !outcome.all_succeeded,
+            "nothing succeeded because nothing ran"
+        );
     }
 
     #[test]
@@ -787,7 +977,8 @@ mod tests {
         list.write(dir.path()).unwrap();
 
         let client = FakeHttpClient::new();
-        let outcome = deploy_with_client(dir.path(), "rel-1", &|_| None, &client, &clock()).unwrap();
+        let outcome =
+            deploy_with_client(dir.path(), "rel-1", &|_| None, &client, &clock()).unwrap();
         assert_eq!(outcome.targets.len(), 1, "a manual target still runs");
         assert_eq!(outcome.targets[0].kind, "onepanel");
         assert!(outcome.pushed_files > 0, "the payload was read");
@@ -843,13 +1034,22 @@ mod tests {
     #[test]
     fn a_target_kind_is_parsed_or_refused_rather_than_defaulted() {
         // A typo that silently became Cloudflare would deploy to the wrong place.
-        assert_eq!(parse_kind("cloudflare_pages").unwrap(), TargetKind::CloudflarePages);
+        assert_eq!(
+            parse_kind("cloudflare_pages").unwrap(),
+            TargetKind::CloudflarePages
+        );
         assert_eq!(parse_kind("cf").unwrap(), TargetKind::CloudflarePages);
-        assert_eq!(parse_kind("edgeone_cn").unwrap(), TargetKind::EdgeOneMainland);
+        assert_eq!(
+            parse_kind("edgeone_cn").unwrap(),
+            TargetKind::EdgeOneMainland
+        );
         assert_eq!(parse_kind("1panel").unwrap(), TargetKind::OnePanel);
         assert_eq!(parse_kind("  ONEPANEL  ").unwrap(), TargetKind::OnePanel);
         let error = parse_kind("netlify").unwrap_err();
-        assert!(error.to_string().contains("unknown deploy target kind"), "{error}");
+        assert!(
+            error.to_string().contains("unknown deploy target kind"),
+            "{error}"
+        );
     }
 
     #[test]

@@ -30,6 +30,7 @@ import { veloctDirectives } from './src/remark/veloct-directives.mjs';
 import { veloctBlockOrdinals } from './src/remark/veloct-block-ordinals.mjs';
 import { splitPublishRoots } from './src/integrations/split-publish-roots.mjs';
 import { readSiteConfig } from './src/lib/site-config.mjs';
+import { linkedKnowledgeReload } from './src/lib/linked-knowledge.mjs';
 import { defaultPaths, writeKnowledgeIndex } from './src/lib/knowledge-scan.mjs';
 
 const siteConfig = readSiteConfig();
@@ -88,6 +89,11 @@ export default defineConfig({
   outDir: './dist/site',
   compressHTML: 'jsx',
   scopedStyleStrategy: 'attribute',
+  // Off, because it exists only in `astro dev` and therefore only in the preview: `handoff.md`
+  // section 5 requires the preview to be the same project as the production build so it PREDICTS it,
+  // and a floating dev overlay that no reader ever sees works against that. It also sits in the
+  // document during a page transition, so the overlay would visibly animate along with the page.
+  devToolbar: { enabled: false },
   build: {
     format: 'directory',
     assets: '_astro',
@@ -107,7 +113,7 @@ export default defineConfig({
     },
   },
   vite: {
-    plugins: [tailwindcss()],
+    plugins: [tailwindcss(), linkedKnowledgeReload()],
   },
   integrations: [
     sitemap({

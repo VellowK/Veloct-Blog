@@ -17,6 +17,7 @@ node_modules/
 # --- Tauri build output ---
 /src-tauri/target/
 /src-tauri/gen/schemas/
+/src-tauri/resources/project-template/
 /src-tauri/binaries/*.exe
 
 # --- Veloct runtime artefacts (belong to a managed project, not to this repository) ---

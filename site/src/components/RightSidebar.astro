@@ -170,7 +170,12 @@ const firstTab = tabs[0]?.id ?? 'outline';
 <script>
   // Tabs are plain buttons with ARIA state. No persistence across pages, by design: the requirement
   // explicitly says tab state does not need to survive navigation.
-  (function () {
+  let controller: AbortController | undefined;
+
+  function initializeSidebar() {
+    controller?.abort();
+    controller = new AbortController();
+    const { signal } = controller;
     const sidebar = document.getElementById('veloct-right-sidebar');
     if (!sidebar) return;
 
@@ -192,7 +197,7 @@ const firstTab = tabs[0]?.id ?? 'outline';
     }
 
     tabs.forEach((tab, index) => {
-      tab.addEventListener('click', () => select(tab.dataset.veloctTab!));
+      tab.addEventListener('click', () => select(tab.dataset.veloctTab!), { signal });
       tab.addEventListener('keydown', (event) => {
         if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') return;
         event.preventDefault();
@@ -200,11 +205,19 @@ const firstTab = tabs[0]?.id ?? 'outline';
         const next = tabs[(index + offset + tabs.length) % tabs.length];
         next.focus();
         select(next.dataset.veloctTab!);
-      });
+      }, { signal });
     });
+
+    const selected = tabs.find((tab) => tab.getAttribute('aria-selected') === 'true') ?? tabs[0];
+    if (selected) select(selected.dataset.veloctTab!);
 
     // A knowledge reference anywhere on the page opens the outline panel, which is where the
     // referenced location is shown. `handoff.md` section 6.5 and 9.1.
-    document.addEventListener('veloct:open-knowledge', () => select('outline'));
-  })();
+    if (tabs.some((tab) => tab.dataset.veloctTab === 'outline')) {
+      document.addEventListener('veloct:open-knowledge', () => select('outline'), { signal });
+    }
+  }
+
+  document.addEventListener('astro:page-load', initializeSidebar);
+  document.addEventListener('astro:before-swap', () => controller?.abort());
 </script>

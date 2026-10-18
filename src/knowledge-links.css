@@ -1,0 +1,25 @@
+/* Reserve both slots so confirmation replaces the delete action without shifting a row. */
+.inline-delete { position: relative; flex: 0 0 auto; align-self: center; }
+.inline-delete__actions { display: flex; align-items: center; gap: 6px; }
+.inline-delete__cancel { width: 64px; display: inline-flex; justify-content: flex-end; }
+.inline-delete__actions button { white-space: nowrap; }
+.inline-delete__button { width: 88px; white-space: nowrap; transition: background-color 160ms, border-color 160ms, color 160ms; animation: inline-delete-switch 160ms ease-out; }
+.inline-delete__button.is-confirming { background: var(--color-error); border-color: var(--color-error); color: var(--color-on-dark); }
+.inline-delete__hint { position: absolute; z-index: 1; right: 0; top: calc(100% + 3px); min-width: max-content; max-width: 240px; font-size: 10px; color: var(--color-error); background: var(--color-canvas); }
+@keyframes inline-delete-switch { from { opacity: .3; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+.knowledge-workspace { display: flex; flex-direction: column; gap: 24px; min-width: 0; }
+.linked-knowledge { border-top: 1px solid var(--color-hairline); padding-top: 20px; }
+.linked-knowledge__heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.linked-knowledge__heading h2, .linked-knowledge__heading h3 { margin: 0; }
+.linked-knowledge__heading p { margin: 6px 0; }
+.linked-knowledge__actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.linked-knowledge__form { display: grid; gap: 12px; max-width: 720px; padding: 20px; border: 1px solid var(--color-hairline); margin: 16px 0; }
+.linked-knowledge__form label { display: grid; gap: 6px; }
+.linked-knowledge__form input, .linked-knowledge__form select { width: 100%; }
+.linked-knowledge__form p { margin: 0; }
+.linked-knowledge__card { margin: 16px 0; border: 1px solid var(--color-hairline); padding: 16px; }
+.linked-outline { list-style: none; padding-left: 18px; margin: 8px 0; }
+.linked-outline li { margin: 6px 0; overflow-wrap: anywhere; }
+.linked-outline button, .linked-knowledge__source { border: 0; background: none; padding: 2px; color: var(--color-primary); text-align: left; }
+.linked-outline summary { cursor: pointer; }
+@media (prefers-reduced-motion: reduce) { .inline-delete__button { animation: none; transition: none; } }

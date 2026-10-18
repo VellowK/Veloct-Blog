@@ -9,12 +9,17 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 import { readSiteConfig } from '../../lib/site-config.mjs';
 import { byNewest, formatDate, readingStats, isProduction, yearOf } from '../../lib/format.ts';
 import { articleRoute, WipRoute } from '../../lib/content.ts';
+import { readManagedPage } from '../../lib/pages.ts';
+
+const { entry, Content, headings } = await readManagedPage('archive');
+
 
 const site = readSiteConfig();
-
-const articles = (await getCollection('articles'))
-  .filter((entry) => articleRoute(entry, { isProduction }).kind === WipRoute.Article)
+const allArticles = (await getCollection('articles'))
+  .filter((entry) => articleRoute(entry, { isProduction: import.meta.env.PROD }).kind === WipRoute.Article)
   .sort(byNewest);
+const articles = allArticles.slice(0, site.archiveDisplayCount);
+const page = { data: articles, total: allArticles.length, url: { current: '/archive/' } };
 
 // year -> month -> entries, so the template can render a nested list without recomputing anything.
 const byYear = new Map();
@@ -29,15 +34,19 @@ for (const entry of articles) {
 }
 
 const years = [...byYear.keys()].sort((a, b) => b.localeCompare(a));
-const total = articles.length;
+const total = page.total;
 ---
 
 <BaseLayout
-  title={`归档 · ${site.name}`}
-  description={`${site.name} 的文章归档`}
-  canonical="/archive/"
+  title={`${entry?.data.title ?? '归档'} · ${site.name}`}
+  description={entry?.data.summary ?? `${site.name} 的文章归档`}
+  updatedAt={entry?.data.updated_at ?? null}
+  headings={headings}
+  canonical={page.url.current}
 >
-  <h1 class="font-serif text-2xl">归档</h1>
+  <h1 class="font-serif text-2xl">{entry?.data.title ?? '归档'}</h1>
+  {entry?.data.summary && <p class="mt-2 muted">{entry.data.summary}</p>}
+  {Content && <div class="prose-veloct mt-6"><Content /></div>}
   <p class="mt-2 muted">{total} 篇文章</p>
 
   {total === 0 && <p class="card mt-6 p-6 muted">还没有已发布的文章。</p>}

@@ -1,0 +1,51 @@
+---
+// The page footer.
+//
+// handoff.md section 6.8: optional ICP, public-security and MOE filing information, configured per
+// site, shown here when filled in. An unfilled field is simply absent — a placeholder like
+// "备案号" would be worse than nothing.
+
+import { readSiteConfig } from '../lib/site-config.mjs';
+
+const site = readSiteConfig();
+const filing = site.filing ?? {};
+
+const entries = [
+  { key: 'icp', label: 'ICP 备案', href: 'https://beian.miit.gov.cn/' },
+  { key: 'police', label: '公安备案', href: 'https://beian.mps.gov.cn/' },
+  { key: 'moe', label: 'MOE 备案', href: null },
+].filter((entry) => filing[entry.key]);
+
+const year = new Date(import.meta.env.VELOCT_BUILD_TIME ?? 0).getUTCFullYear();
+// A frozen build time means the footer year cannot drift between two builds of one release
+// (handoff.md section 14.9). The fallback is the current year only when no build time was injected.
+const displayYear = Number.isNaN(year) || year === 1970 ? new Date().getUTCFullYear() : year;
+---
+
+<footer class="mt-12 border-t border-ink-800 pt-6 text-sm muted">
+  <p>
+    © {displayYear} {site.author?.name ?? site.name}
+  </p>
+
+  {entries.length > 0 && (
+    <ul class="mt-2 flex flex-wrap gap-x-4 gap-y-1">
+      {entries.map((entry) => (
+        <li>
+          {entry.href ? (
+            <a href={entry.href} target="_blank" rel="noopener noreferrer">
+              {entry.label}: {filing[entry.key]}
+            </a>
+          ) : (
+            <span>{entry.label}: {filing[entry.key]}</span>
+          )}
+        </li>
+      ))}
+    </ul>
+  )}
+
+  <p class="mt-2">
+    <a href="/rss.xml">RSS</a>
+    <span class="mx-2">·</span>
+    <a href="/sitemap-index.xml">Sitemap</a>
+  </p>
+</footer>

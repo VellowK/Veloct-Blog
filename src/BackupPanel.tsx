@@ -17,6 +17,7 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
+import { Feedback } from './components/Notifications';
 
 import {
   api,
@@ -90,7 +91,7 @@ const EMPTY_TARGET = {
   region: '',
 };
 
-export default function BackupPanel({ enabled }: { enabled: boolean }) {
+export default function BackupPanel({ enabled, mode: panelMode = 'manage' }: { enabled: boolean; mode?: 'manage' | 'settings' }) {
   const [archives, setArchives] = useState<BackupArchiveView[]>([]);
   const [directory, setDirectory] = useState('');
   const [exportDirectory, setExportDirectory] = useState('');
@@ -101,6 +102,7 @@ export default function BackupPanel({ enabled }: { enabled: boolean }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [expirationDays, setExpirationDays] = useState(7);
 
   // The cloud backup targets (handoff.md section 17.4).
   const [cloudTargets, setCloudTargets] = useState<CloudBackupTargetView[]>([]);
@@ -171,16 +173,14 @@ export default function BackupPanel({ enabled }: { enabled: boolean }) {
         </button>
       </header>
 
-      {error && (
-        <p className="backup-error" role="alert">
-          {error}
-        </p>
-      )}
-      {notice && <p className="backup-notice">{notice}</p>}
+      <Feedback message={error} tone="error" />
+      <Feedback message={notice} tone="success" />
 
+      {panelMode === 'manage' && (
       <section>
         <h3>立即备份</h3>
-        <div className="row">
+        <div className="backup-actions">
+          <div className="backup-action-line">
           <button
             type="button"
             onClick={() =>
@@ -194,7 +194,9 @@ export default function BackupPanel({ enabled }: { enabled: boolean }) {
           >
             手动备份
           </button>
-          <label>
+          </div>
+          <div className="backup-action-line">
+          <label className="backup-path-field">
             <span>导出到</span>
             <input
               value={exportDirectory}
@@ -213,16 +215,23 @@ export default function BackupPanel({ enabled }: { enabled: boolean }) {
           >
             导出
           </button>
+          </div>
+          <div className="backup-action-line">
+          <label className="backup-expiration-field">
+            <span>自动过期(天)</span>
+            <input type="number" min={1} max={3650} value={expirationDays} onChange={(event) => setExpirationDays(Math.max(1, Number(event.target.value) || 1))} />
+          </label>
           <button
             type="button"
             onClick={() => void run(async () => {
-              const removed = await api.pruneBackups();
-              setNotice(`已按保留策略删除 ${removed} 个旧备份。`);
-            }, '保留策略已应用。')}
+              const removed = await api.pruneBackups({ expiresAfterDays: expirationDays });
+              setNotice(`已删除 ${removed} 个超过 ${expirationDays} 天的旧备份。`);
+            }, '自动过期清理已应用。')}
             disabled={busy}
           >
-            应用保留策略
+            清理过期备份
           </button>
+          </div>
         </div>
         <p className="muted hint">
           备份目录:<code>{directory || '(未知)'}</code>
@@ -269,7 +278,9 @@ export default function BackupPanel({ enabled }: { enabled: boolean }) {
           </div>
         )}
       </section>
+      )}
 
+      {panelMode === 'settings' && (
       <section className="cloud-backup">
         <h3>云端备份目标({cloudTargets.length}/3 默认保留)</h3>
         <p className="muted hint">
@@ -522,9 +533,10 @@ export default function BackupPanel({ enabled }: { enabled: boolean }) {
         {cloudResult?.run && <CloudRunReport run={cloudResult.run} />}
         {cloudRun && <CloudRunReport run={cloudRun} />}
       </section>
+      )}
 
-      <section>
-        <h3>历史备份({archives.length})</h3>        {archives.length === 0 && <p className="muted">还没有备份。</p>}
+      {panelMode === 'manage' && (
+      <section>        {archives.length === 0 && <p className="muted">还没有备份。</p>}
         <ul className="archive-list">
           {archives.map((archive) => (
             <li key={archive.path}>
@@ -572,6 +584,7 @@ export default function BackupPanel({ enabled }: { enabled: boolean }) {
           ))}
         </ul>
       </section>
+      )}
 
       {staged && (
         <section className="restore-plan">

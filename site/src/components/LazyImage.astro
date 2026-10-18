@@ -58,42 +58,60 @@ const ratioStyle = ratio ? `aspect-ratio: ${ratio};` : '';
 </div>
 
 <script>
-  // One delegated listener for the whole page, so a page with fifty images still has one handler.
-  // The image element keeps its placeholder as `src` until the real data arrives, which is what
-  // makes the blur-up transition meaningful.
-  function loadImage(image: HTMLImageElement) {
-    const source = image.dataset.src;
-    if (!source) return;
-
-    const preload = new Image();
-    preload.decoding = 'async';
-    preload.onload = () => {
-      image.src = source;
-      image.classList.add('is-loaded');
-      delete image.dataset.src;
-    };
-    preload.onerror = () => {
-      // Leave the placeholder in place rather than showing a broken-image icon. A missing image is
-      // a content problem, and the alt text still describes the intent.
-      image.classList.add('is-loaded');
-    };
-    preload.src = source;
-  }
+  // A processed script survives client navigation; every page owns its observer and preloads.
+  let cleanup: (() => void) | undefined;
 
   function start() {
-    const images = document.querySelectorAll<HTMLImageElement>('img[data-src]');
+    cleanup?.();
+    cleanup = undefined;
+    const images = document.querySelectorAll<HTMLImageElement>('[data-veloct-lazy-image] img[data-src]');
     if (images.length === 0) return;
+
+    const controller = new AbortController();
+    const { signal } = controller;
+    const preloads = new Set<HTMLImageElement>();
+    let observer: IntersectionObserver | undefined;
+
+    cleanup = () => {
+      controller.abort();
+      observer?.disconnect();
+      for (const preload of preloads) preload.removeAttribute('src');
+      preloads.clear();
+    };
+
+    // Keep the placeholder until the real image arrives, making the blur-up meaningful.
+    function loadImage(image: HTMLImageElement) {
+      const source = image.dataset.src;
+      if (!source || signal.aborted) return;
+
+      const preload = new Image();
+      preloads.add(preload);
+      preload.decoding = 'async';
+      preload.addEventListener('load', () => {
+        preloads.delete(preload);
+        image.src = source;
+        image.classList.add('is-loaded');
+        delete image.dataset.src;
+      }, { once: true, signal });
+      preload.addEventListener('error', () => {
+        preloads.delete(preload);
+        // Retain the placeholder instead of a broken icon; alt text still describes the intent.
+        image.classList.add('is-loaded');
+      }, { once: true, signal });
+      preload.src = source;
+    }
 
     if (!('IntersectionObserver' in window)) {
       images.forEach(loadImage);
       return;
     }
 
-    const observer = new IntersectionObserver(
+    observer = new IntersectionObserver(
       (entries) => {
+        if (signal.aborted) return;
         for (const entry of entries) {
           if (!entry.isIntersecting) continue;
-          observer.unobserve(entry.target);
+          observer!.unobserve(entry.target);
           loadImage(entry.target as HTMLImageElement);
         }
       },
@@ -101,13 +119,12 @@ const ratioStyle = ratio ? `aspect-ratio: ${ratio};` : '';
       { rootMargin: '200px 0px' },
     );
 
-    images.forEach((image) => observer.observe(image));
+    images.forEach((image) => observer!.observe(image));
   }
 
-  // The script is injected into the body, so the images above it already exist.
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', start);
-  } else {
-    start();
-  }
+  document.addEventListener('astro:page-load', start);
+  document.addEventListener('astro:before-swap', () => {
+    cleanup?.();
+    cleanup = undefined;
+  });
 </script>

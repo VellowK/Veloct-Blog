@@ -343,7 +343,21 @@ if (shellHtml) {
 console.log('\nSEO (handoff.md 15)');
 
 const homeHtml = routeHtml('/');
+check('the profile home page is emitted', homeHtml !== null);
 if (homeHtml) {
+  // Profile layout supersedes the deliberately blank intermediate homepage.
+  check('the home renders its dedicated profile layout', homeHtml.includes('data-profile-home'));
+  check('the profile keeps cover and avatar slots', homeHtml.includes('class="profile-cover"') && homeHtml.includes('class="profile-avatar"'));
+  check('the profile declares independent personal introduction', homeHtml.includes('data-veloct-editable="author.bio"'));
+  check('the profile renders at most 16 contacts without empty placeholders', (homeHtml.match(/class="profile-contact(?:\s|")/g) || []).length <= 16 && !homeHtml.includes('profile-contact--empty'));
+  check('the profile provides one calendar viewport and a source toggle', homeHtml.includes('profile-calendar-panels') && /<button[^>]*data-activity-toggle/.test(homeHtml));
+  check('calendar charts restore the original 365-day range', (homeHtml.match(/data-date="/g) || []).length === 730 && homeHtml.includes('近 365 天'));
+  check('the profile includes the blog creation calendar', homeHtml.includes('博客创作'));
+  check('the profile includes a GitHub calendar with an honest unsynced state', homeHtml.includes('GitHub 贡献') && homeHtml.includes('同步贡献日历'));
+  check('the home right sidebar is absent, not merely hidden', !homeHtml.includes('id="veloct-right-sidebar"'));
+  check('the home retains shared navigation and footer', homeHtml.includes('id="veloct-left-sidebar"') && /<footer\b/.test(homeHtml));
+  check('article pages keep their right sidebar', articleHtml?.includes('id="veloct-right-sidebar"'));
+
   check('the home page declares a canonical URL', homeHtml.includes('rel="canonical"'));
   check('the home page has Open Graph metadata', homeHtml.includes('property="og:title"'));
   check('the home page emits structured data', homeHtml.includes('application/ld+json'));

@@ -125,6 +125,7 @@ pub struct RibbonEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub summary: Option<String>,
     pub wip_state: WipState,
+    pub created_at: String,
     pub updated_at: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub category: Option<String>,
@@ -563,6 +564,7 @@ impl ContentService {
                 } else {
                     WipState::Finished
                 },
+                created_at: entry.created_at.clone(),
                 updated_at: entry.updated_at.clone(),
                 category: entry.category.clone(),
                 tags: entry.tags.clone(),
@@ -604,6 +606,7 @@ impl ContentService {
                 } else {
                     WipState::Finished
                 },
+                created_at: entry.created_at.clone(),
                 updated_at: entry.updated_at.clone(),
                 category: entry.category.clone(),
                 tags: entry.tags.clone(),
@@ -666,7 +669,7 @@ impl ContentService {
 /// Fill in each row's route from its own state.
 fn set_ribbon_routes(rows: &mut [RibbonEntry]) {
     for row in rows.iter_mut() {
-        row.route = row.wip_state.route(&row.id, &row.slug);
+        row.route = row.kind.route(&row.id, &row.slug, row.wip_state);
     }
     // Sorted by kind, then newest first, then by title so the order is total and a rebuild is
     // comparable (handoff.md section 14.9).

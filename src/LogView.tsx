@@ -16,6 +16,7 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
+import { Feedback } from './components/Notifications';
 
 import { api, describeError, type LogPage } from './lib/api';
 
@@ -115,11 +116,7 @@ export default function LogView({ enabled }: { enabled: boolean }) {
         />
       </div>
 
-      {error && (
-        <p className="log-error" role="alert">
-          {error}
-        </p>
-      )}
+      <Feedback message={error} tone="error" />
 
       <ul className="log-entries">
         {(page?.entries ?? []).map((entry, index) => (

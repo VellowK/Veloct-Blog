@@ -11,25 +11,22 @@ import { readSiteConfig } from '../../lib/site-config.mjs';
 import { byNewest, formatDate, readingStats, wordCloud, isProduction, yearOf } from '../../lib/format.ts';
 import { articleRoute, waterfallWips, WipRoute } from '../../lib/content.ts';
 
+
 const site = readSiteConfig();
-const isProd = isProduction;
-const options = { isProduction: isProd };
-
-const all = await getCollection('articles');
-const articles = all
-  .filter((entry) => articleRoute(entry, options).kind === WipRoute.Article)
+const allArticles = (await getCollection('articles'))
+  .filter((entry) => articleRoute(entry, { isProduction: import.meta.env.PROD }).kind === WipRoute.Article)
   .sort(byNewest);
-
-// Only WIP that is actually in this static output (handoff.md section 7.1).
-const wips = waterfallWips(all, options);
-
-const tags = wordCloud(articles);
-
-const heatmap = {};
-for (const entry of articles) {
+const articles = allArticles.slice(0, site.articleDisplayCount);
+const all = await getCollection('articles');
+const knowledge = await getCollection('knowledge');
+const wips = waterfallWips(all, { isProduction: import.meta.env.PROD });
+const tags = wordCloud(allArticles);
+const heatmap = [...all, ...knowledge].reduce((days, entry) => {
   const day = String(entry.data.published_at ?? entry.data.created_at).slice(0, 10);
-  if (day) heatmap[day] = (heatmap[day] ?? 0) + 1;
-}
+  if (day) days[day] = (days[day] ?? 0) + 1;
+  return days;
+}, {});
+const page = { data: articles, total: allArticles.length, currentPage: 1, url: { current: '/article/' } };
 
 // A year -> articles calendar view.
 const byYear = new Map();
@@ -44,14 +41,14 @@ const years = [...byYear.keys()].sort((a, b) => b.localeCompare(a));
 <BaseLayout
   title={`文章 · ${site.name}`}
   description={`${site.name} 的全部文章`}
-  canonical="/article/"
+  canonical={page.url.current}
   wordCloud={tags}
   heatmap={heatmap}
 >
   <h1 class="font-serif text-2xl">文章</h1>
-  <p class="mt-2 muted">共 {articles.length} 篇</p>
+  <p class="mt-2 muted">共 {page.total} 篇</p>
 
-  {wips.length > 0 && (
+  {page.currentPage === 1 && wips.length > 0 && (
     <section class="mt-8" aria-labelledby="veloct-wip">
       <h2 id="veloct-wip" class="font-serif text-xl">WIP</h2>
       <p class="mt-1 text-sm muted">

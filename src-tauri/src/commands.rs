@@ -16,7 +16,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
-use veloct_app::{CommandError, CreateProjectOptions, ProjectService};
+use veloct_app::{CommandError, CreateProjectOptions, ProjectService, SaveSiteSettingsView, SiteSettings, SiteSettingsView};
 use veloct_content::{
     ConflictKind, ContentKind, CreateOptions, LoadedDocument, ReferenceRepair, RibbonEntry,
     SaveOutcome, SaveStatus, WipState, WipTransition,
@@ -54,6 +54,9 @@ pub struct ProjectView {
     pub is_veloct_project: bool,
     /// Whether it has a Git repository, which publishing requires.
     pub has_git: bool,
+    /// Safe-template upgrade skipped a customised file; the UI may show these alongside project info.
+    #[serde(default)]
+    pub template_warnings: Vec<String>,
 }
 
 /// A document as the editor receives it.
@@ -96,7 +99,7 @@ impl DocumentView {
         let wip_state = WipState::of(&frontmatter);
         let id = loaded.reference.id_text();
         let kind = loaded.reference.kind;
-        let route = wip_state.route(&id, &frontmatter.slug);
+        let route = kind.route(&id, &frontmatter.slug, wip_state);
         let diagnostics: Vec<String> = loaded
             .document
             .diagnostics
@@ -251,6 +254,7 @@ pub fn open_project(state: State<'_, AppState>, path: String) -> Result<ProjectV
 
     let opened_at = state.now();
     let project = crate::state::OpenProject::open(&root, &opened_at)?;
+    state.upgrade_project_template(&project)?;
     let view = project_view(&project);
     // Logged through the PROJECT's sink, because the log lives inside the project.
     let _ = project.log(crate::logging::shell_events::project_opened(
@@ -291,10 +295,26 @@ pub fn create_project(
 
     let opened_at = state.now();
     let project = crate::state::OpenProject::open(&root, &opened_at)?;
+    state.upgrade_project_template(&project)?;
     let view = project_view(&project);
     let _ = project.log(crate::logging::shell_events::project_created(&view.path));
     state.set_project(project)?;
     Ok(view)
+}
+
+/// List the indexed content entries.
+#[tauri::command]
+pub fn list_documents(state: State<'_, AppState>) -> Result<Vec<RibbonEntry>, CommandError> {
+    let project = state.project()?;
+    ProjectService::ensure_base_pages(project.root.as_path(), &state.now())?;
+    Ok(project.content.ribbon()?)
+}
+
+/// Explicitly add the application's bundled scaffold to the current project.
+#[tauri::command(async)]
+pub fn initialize_current_project(state: State<'_, AppState>) -> Result<ProjectView, CommandError> {
+    let project = state.initialize_current_project()?;
+    Ok(project_view(&project))
 }
 
 /// The currently open project, or `None`.
@@ -303,11 +323,50 @@ pub fn current_project(state: State<'_, AppState>) -> Option<ProjectView> {
     state.current().map(|project| project_view(&project))
 }
 
-/// List every document in the open project.
+/// Read editable site settings from data/site.json.
 #[tauri::command]
-pub fn list_documents(state: State<'_, AppState>) -> Result<Vec<RibbonEntry>, CommandError> {
+pub fn site_settings(state: State<'_, AppState>) -> Result<SiteSettingsView, CommandError> {
+    Ok(state.project()?.site_settings().read()?)
+}
+
+/// Save editable site settings, refusing to overwrite an externally changed file.
+#[tauri::command]
+pub async fn save_site_settings(
+    state: State<'_, AppState>,
+    settings: SiteSettings,
+    baseline: Option<FileRevision>,
+) -> Result<SaveSiteSettingsView, CommandError> {
     let project = state.project()?;
-    Ok(project.content.ribbon()?)
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut attachments = project.attachments();
+        let saved = project.site_settings().save(settings, baseline)?;
+        attachments.refresh_site_image_references()?;
+        Ok(saved)
+    }).await.map_err(|_| command_invalid("站点设置保存任务未能完成，请重新读取设置后重试。"))?
+}
+
+/// Cache the cropped PNG in the attachment pool, upload only to the preferred target,
+/// and return its public URL. Saving site settings remains an explicit separate operation.
+#[tauri::command]
+pub async fn save_site_avatar(state: State<'_, AppState>, data_base64: String) -> Result<String, CommandError> {
+    crate::site_images::upload(state, data_base64, veloct_app::site_images::SiteImageKind::Avatar).await
+}
+
+#[tauri::command]
+pub async fn save_site_cover(state: State<'_, AppState>, data_base64: String) -> Result<String, CommandError> {
+    crate::site_images::upload(state, data_base64, veloct_app::site_images::SiteImageKind::Cover).await
+}
+
+#[tauri::command]
+pub async fn sync_github_activity(state: State<'_, AppState>, username: String) -> Result<veloct_app::github_activity::GithubActivity, CommandError> {
+    let project = state.project()?;
+    let now = state.now();
+    tauri::async_runtime::spawn_blocking(move || {
+        let client = veloct_core::http::ReqwestHttpClient::without_redirects(std::time::Duration::from_secs(20))?;
+        let snapshot = veloct_app::github_activity::fetch_calendar(&client, &username, &now)?;
+        veloct_app::github_activity::save_snapshot(project.path(), &snapshot)?;
+        Ok::<_, CommandError>(snapshot)
+    }).await.map_err(|error| CommandError::from(veloct_core::VeloctError::Other(error.to_string())))?
 }
 
 /// The derived index: entries, every issue, and whether a build may proceed.
@@ -552,8 +611,12 @@ pub fn start_preview(
 
 /// Stop every preview. Called on window close and by the UI's own control.
 #[tauri::command]
-pub fn stop_preview(state: State<'_, AppState>) -> Result<PreviewView, CommandError> {
-    state.previews().stop_all()?;
+pub fn stop_preview(state: State<'_, AppState>, role: Option<String>) -> Result<PreviewView, CommandError> {
+    match role.as_deref() {
+        Some("site") => { state.previews().stop(veloct_process::PreviewRole::Site)?; }
+        Some("works") => { state.previews().stop(veloct_process::PreviewRole::Works)?; }
+        _ => { state.previews().stop_all()?; }
+    }
     let status = state.poll_previews();
     Ok(PreviewView::build(&state, status))
 }
@@ -563,409 +626,6 @@ pub fn stop_preview(state: State<'_, AppState>) -> Result<PreviewView, CommandEr
 pub fn preview_status(state: State<'_, AppState>) -> PreviewView {
     let status = state.poll_previews();
     PreviewView::build(&state, status)
-}
-
-// ---------------------------------------------------------------------------------------------
-// The AI subsystem and the page creator (handoff.md sections 8 and 11).
-// ---------------------------------------------------------------------------------------------
-
-/// The AI configuration, for the settings page.
-#[tauri::command]
-pub fn ai_settings(state: State<'_, AppState>) -> Result<crate::page_creator::AiSettingsView, CommandError> {
-    let project = state.project()?;
-    let settings = read_ai_settings(&project)?;
-    // The reader is passed, not an "exists" predicate: the view reports WHETHER a credential is saved
-    // (section 12.1) and must never show the value, which is what this signature makes easy to honour.
-    Ok(crate::page_creator::AiSettingsView::build(
-        &settings,
-        &crate::credentials::get_or_none,
-    ))
-}
-
-/// Read the stored AI settings through the project's database.
-fn read_ai_settings(
-    project: &Arc<crate::state::OpenProject>,
-) -> Result<veloct_storage::AiSettings, CommandError> {
-    let (connection, _) = veloct_storage::open(project.root.as_path(), &veloct_core::SystemClock)?;
-    Ok(veloct_storage::read_settings(&connection)?)
-}
-
-/// Add or update a provider.
-///
-/// The credential is written to the OS store and the row keeps only a HANDLE (sections 12.1, 12.2). The
-/// command takes the secret separately from the row so there is no path that puts it in the database.
-#[tauri::command]
-pub fn save_ai_provider(
-    state: State<'_, AppState>,
-    id: String,
-    name: String,
-    protocol: String,
-    base_url: String,
-    enabled: bool,
-    credential: Option<String>,
-) -> Result<(), CommandError> {
-    let project = state.project()?;
-    let now = state.now();
-
-    if id.trim().is_empty() {
-        return Err(command_invalid("a provider needs an id"));
-    }
-    if veloct_ai::ProviderProtocol::parse(&protocol).is_none() {
-        return Err(command_invalid(format!(
-            "unknown protocol {protocol:?}; expected one of openai, anthropic, ollama"
-        )));
-    }
-
-    // The handle, not the credential, is what the row holds.
-    let handle = crate::credentials::handle_for(&id);
-    let mut credential_ref = None;
-    if veloct_ai::ProviderProtocol::parse(&protocol)
-        .map(|parsed| parsed.requires_credential())
-        .unwrap_or(true)
-    {
-        credential_ref = Some(handle.clone());
-    }
-
-    // A supplied credential goes to the OS store and nowhere else.
-    if let Some(secret) = credential.filter(|value| !value.trim().is_empty()) {
-        crate::credentials::set(&handle, secret.trim())?;
-    }
-
-    let row = veloct_storage::AiProviderRow {
-        id: id.clone(),
-        name,
-        protocol,
-        base_url,
-        credential_ref,
-        enabled,
-        created_at: now,
-    };
-
-    let (connection, _) = veloct_storage::open(project.root.as_path(), &veloct_core::SystemClock)?;
-    veloct_storage::upsert_provider(&connection, &row)?;
-    let _ = project.log(
-        veloct_logging::LogEvent::info(veloct_logging::Category::Ai, "AI provider saved")
-            .with_field("provider_id", &id)
-            .with_field("protocol", &row.protocol)
-            // The HANDLE, never the credential (section 18.1).
-            .with_field("credential_ref", row.credential_ref.clone().unwrap_or_default()),
-    );
-    Ok(())
-}
-
-/// Remove a provider and its stored credential.
-#[tauri::command]
-pub fn delete_ai_provider(state: State<'_, AppState>, id: String) -> Result<(), CommandError> {
-    let project = state.project()?;
-    let (connection, _) = veloct_storage::open(project.root.as_path(), &veloct_core::SystemClock)?;
-    veloct_storage::delete_provider(&connection, &id)?;
-    // The credential goes too, or removing a provider would leave a secret in the OS store that nothing
-    // can reach and the user cannot see.
-    let _ = crate::credentials::remove(&crate::credentials::handle_for(&id));
-    let _ = project.log(
-        veloct_logging::LogEvent::info(veloct_logging::Category::Ai, "AI provider removed")
-            .with_field("provider_id", &id),
-    );
-    Ok(())
-}
-
-/// Map a feature to a model, or clear the mapping (section 11.3).
-#[tauri::command]
-pub fn set_ai_feature(
-    state: State<'_, AppState>,
-    feature_id: String,
-    label: Option<String>,
-    provider_id: Option<String>,
-    model_id: Option<String>,
-) -> Result<(), CommandError> {
-    let project = state.project()?;
-    let (connection, _) = veloct_storage::open(project.root.as_path(), &veloct_core::SystemClock)?;
-    let label = label.unwrap_or_else(|| feature_id.clone());
-    veloct_storage::set_feature(
-        &connection,
-        &feature_id,
-        &label,
-        provider_id.as_deref(),
-        model_id.as_deref(),
-    )?;
-    let _ = project.log(
-        veloct_logging::LogEvent::info(veloct_logging::Category::Ai, "AI feature mapped")
-            .with_field("feature_id", &feature_id)
-            .with_field("provider_id", provider_id.unwrap_or_default())
-            .with_field("model_id", model_id.unwrap_or_default()),
-    );
-    Ok(())
-}
-
-/// Set the single global fallback (section 11.4).
-#[tauri::command]
-pub fn set_ai_fallback(
-    state: State<'_, AppState>,
-    provider_id: Option<String>,
-    model_id: Option<String>,
-) -> Result<(), CommandError> {
-    let project = state.project()?;
-    let (connection, _) = veloct_storage::open(project.root.as_path(), &veloct_core::SystemClock)?;
-    veloct_storage::set_fallback(&connection, provider_id.as_deref(), model_id.as_deref())?;
-    let _ = project.log(
-        veloct_logging::LogEvent::info(veloct_logging::Category::Ai, "AI fallback set")
-            .with_field("provider_id", provider_id.unwrap_or_default())
-            .with_field("model_id", model_id.unwrap_or_default()),
-    );
-    Ok(())
-}
-
-/// Find one provider row, or report that it is not configured.
-fn provider_row(
-    project: &Arc<crate::state::OpenProject>,
-    provider_id: &str,
-) -> Result<veloct_storage::AiProviderRow, CommandError> {
-    let settings = read_ai_settings(project)?;
-    settings
-        .providers
-        .iter()
-        .find(|row| row.id == provider_id)
-        .cloned()
-        .ok_or_else(|| command_invalid(format!("there is no AI provider {provider_id}")))
-}
-
-/// A client for the AI endpoints.
-///
-/// The timeout is generous but finite: a model list is a small response, yet a provider that is merely
-/// unreachable must produce a reported failure rather than a command that never returns.
-fn ai_client() -> Result<Arc<veloct_core::http::ReqwestHttpClient>, CommandError> {
-    Ok(Arc::new(
-        veloct_core::http::ReqwestHttpClient::with_default_timeout(std::time::Duration::from_secs(60))?,
-    ))
-}
-
-/// Fetch a provider's model list and store it, keeping the user's manual entries (§11.2).
-///
-/// The merge rule lives in `veloct_ai::Provider::merge_models`, not here: a refresh that dropped a
-/// hand-added model would silently break whichever feature is assigned to it.
-#[tauri::command]
-pub fn refresh_ai_models(
-    state: State<'_, AppState>,
-    provider_id: String,
-) -> Result<crate::page_creator::ModelRefreshView, CommandError> {
-    let project = state.project()?;
-    let row = provider_row(&project, &provider_id)?;
-    let now = state.now();
-    let client = ai_client()?;
-
-    let (mut connection, _) = veloct_storage::open(project.root.as_path(), &veloct_core::SystemClock)?;
-    let view = crate::page_creator::refresh_models(
-        &row,
-        &crate::credentials::get_or_none,
-        client.as_ref(),
-        &mut connection,
-        &now,
-    )?;
-
-    let _ = project.log(
-        veloct_logging::LogEvent::info(veloct_logging::Category::Ai, "AI models refreshed")
-            .with_field("provider_id", &provider_id)
-            .with_field("fetched", view.fetched.to_string())
-            .with_field("kept_manual", view.kept_manual.to_string()),
-    );
-    Ok(view)
-}
-
-/// Add a model by hand (§11.2), which later refreshes will keep.
-#[tauri::command]
-pub fn add_ai_model(
-    state: State<'_, AppState>,
-    provider_id: String,
-    model_id: String,
-    display_name: Option<String>,
-) -> Result<Vec<crate::page_creator::ModelView>, CommandError> {
-    let project = state.project()?;
-    // The provider has to exist, or the model would be stored against nothing.
-    provider_row(&project, &provider_id)?;
-    let now = state.now();
-
-    let (mut connection, _) = veloct_storage::open(project.root.as_path(), &veloct_core::SystemClock)?;
-    let models = crate::page_creator::add_manual_model(
-        &mut connection,
-        &provider_id,
-        model_id.trim(),
-        display_name.filter(|name| !name.trim().is_empty()),
-        &now,
-    )?;
-
-    let _ = project.log(
-        veloct_logging::LogEvent::info(veloct_logging::Category::Ai, "AI model added by hand")
-            .with_field("provider_id", &provider_id)
-            .with_field("model_id", model_id.trim()),
-    );
-    Ok(models)
-}
-
-/// Remove one stored model.
-///
-/// Without this a hand-added typo would stay selectable forever, because §11.2's refresh only replaces the
-/// FETCHED entries.
-#[tauri::command]
-pub fn delete_ai_model(
-    state: State<'_, AppState>,
-    provider_id: String,
-    model_id: String,
-) -> Result<(), CommandError> {
-    let project = state.project()?;
-    let now = state.now();
-    let (mut connection, _) = veloct_storage::open(project.root.as_path(), &veloct_core::SystemClock)?;
-    if !crate::page_creator::delete_model(&mut connection, &provider_id, &model_id, &now)? {
-        return Err(command_invalid(format!(
-            "provider {provider_id} has no model {model_id} stored"
-        )));
-    }
-    let _ = project.log(
-        veloct_logging::LogEvent::info(veloct_logging::Category::Ai, "AI model removed")
-            .with_field("provider_id", &provider_id)
-            .with_field("model_id", &model_id),
-    );
-    Ok(())
-}
-
-/// Test a provider's connection with its REAL configuration (§11.5).
-///
-/// A test that used a default URL or a placeholder credential would pass while the actual call failed, so
-/// this builds the same provider the page creator builds and exercises the model-list endpoint — which is
-/// also what §11.2 refreshes, so the two cannot disagree about whether a provider works.
-#[tauri::command]
-pub fn test_ai_provider(
-    state: State<'_, AppState>,
-    provider_id: String,
-) -> Result<veloct_ai::ConnectionTest, CommandError> {
-    let project = state.project()?;
-    let row = provider_row(&project, &provider_id)?;
-    let provider = crate::page_creator::provider_from_row(&row, &crate::credentials::get_or_none)?;
-    let client = ai_client()?;
-
-    let result = provider.test_connection(client.as_ref());
-    let _ = project.log(
-        veloct_logging::LogEvent::info(veloct_logging::Category::Ai, "AI provider tested")
-            .with_field("provider_id", &provider_id)
-            .with_field("ok", result.ok.to_string())
-            .with_field("models", result.models.to_string())
-            // The message is already redacted and never carries the credential (§18.1).
-            .with_field("message", &result.message),
-    );
-    Ok(result)
-}
-
-/// Generate a page draft. NOTHING is written (section 8.1).
-#[tauri::command]
-pub fn generate_page(
-    state: State<'_, AppState>,
-    title: String,
-    brief: String,
-    kind: Option<String>,
-    tags: Option<Vec<String>>,
-    category: Option<String>,
-    with_image_placeholders: Option<bool>,
-) -> Result<crate::page_creator::PageDraftView, CommandError> {
-    let project = state.project()?;
-    let request = crate::page_creator::parse_request(
-        &title,
-        &brief,
-        kind.as_deref(),
-        &tags.unwrap_or_default(),
-        category.as_deref(),
-        with_image_placeholders.unwrap_or(true),
-    )?;
-
-    let settings = read_ai_settings(&project)?;
-    let model = crate::page_creator::model_for_page_create(&settings)?;
-    let service = crate::page_creator::build_service(&settings, &crate::credentials::get_or_none)?;
-
-    let now = state.now();
-    let draft = crate::page_creator::generate_page(
-        &service,
-        model,
-        &request,
-        &now,
-        veloct_core::ids::StableId::new(),
-    )?;
-
-    let (connection, _) = veloct_storage::open(project.root.as_path(), &veloct_core::SystemClock)?;
-    let request_id = veloct_core::ids::StableId::new().to_text();
-    let _ = veloct_storage::record_request(
-        &connection,
-        &veloct_storage::AiRequestRecord {
-            id: &request_id,
-            feature_id: crate::page_creator::PAGE_CREATE_FEATURE,
-            provider_id: draft.provider_id.as_deref(),
-            model: draft.model_id.as_deref(),
-            status: if draft.used_fallback {
-                "fallback_succeeded"
-            } else {
-                "succeeded"
-            },
-            used_fallback: draft.used_fallback,
-            created_at: &now,
-        },
-    );
-    let _ = project.log(
-        veloct_logging::LogEvent::info(veloct_logging::Category::Ai, "page draft generated")
-            .with_field("title", &draft.title)
-            .with_field("provider_id", draft.provider_id.clone().unwrap_or_default())
-            .with_field("model_id", draft.model_id.clone().unwrap_or_default())
-            .with_field("used_fallback", draft.used_fallback.to_string())
-            .with_field("placeholders", draft.placeholders.len().to_string()),
-    );
-
-    Ok(crate::page_creator::PageDraftView::new(draft))
-}
-
-/// Create the page from a confirmed draft.
-///
-/// Section 8.1: the page is created only after the user confirms. This command IS the confirmation, and it
-/// re-validates the draft rather than trusting that the UI checked, so the rule cannot be bypassed by a
-/// caller that skipped the dialog.
-#[tauri::command]
-pub fn create_page_from_draft(
-    state: State<'_, AppState>,
-    source: String,
-    kind: String,
-) -> Result<DocumentView, CommandError> {
-    let project = state.project()?;
-
-    // Re-parse what is about to be written, and refuse a document with a structural error. The draft was
-    // validated when it was generated, but a caller could have edited it.
-    let parsed = veloct_markdown::parse::parse(&source)?;
-    if parsed.diagnostics.has_errors() {
-        let errors: Vec<String> = parsed
-            .diagnostics
-            .errors()
-            .map(|diagnostic| format!("{}: {}", diagnostic.code.as_str(), diagnostic.message))
-            .collect();
-        return Err(command_invalid(format!(
-            "the page has {} structural error(s), so it was not created: {}",
-            errors.len(),
-            errors.join("; ")
-        )));
-    }
-
-    let content_kind = parse_kind(&kind)?;
-    let now = state.now();
-
-    // Written through the content service, so the page lands in the collection with the project's own
-    // naming, id assignment and paragraph ids rather than by writing a file directly.
-    let loaded = project.content.create_from_source(
-        content_kind,
-        &source,
-        &now,
-        veloct_core::ids::StableId::new(),
-    )?;
-    let document = DocumentView::of(loaded);
-    let _ = project.log(
-        veloct_logging::LogEvent::info(veloct_logging::Category::Content, "page created from an AI draft")
-            .with_field("kind", document.kind.as_str())
-            .with_field("id", &document.id)
-            .with_field("title", &document.title),
-    );
-    Ok(document)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1480,6 +1140,7 @@ fn project_view(project: &Arc<crate::state::OpenProject>) -> ProjectView {
             .unwrap_or_default(),
         path: path.to_string_lossy().replace('\\', "/"),
         opened_at: project.opened_at.clone(),
+        template_warnings: project.template_warnings.lock().clone(),
     }
 }
 

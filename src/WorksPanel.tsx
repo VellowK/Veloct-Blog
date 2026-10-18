@@ -20,6 +20,7 @@
 // JSX is a rule nothing checks.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Feedback } from './components/Notifications';
 import { open } from '@tauri-apps/plugin-dialog';
 
 import {
@@ -404,12 +405,8 @@ export default function WorksPanel({ enabled }: Props) {
         </button>
       </header>
 
-      {error && (
-        <p className="works-error" role="alert">
-          {error}
-        </p>
-      )}
-      {notice && <p className="works-notice">{notice}</p>}
+      <Feedback message={error} tone="error" />
+      <Feedback message={notice} tone="success" />
 
       <section className="works-import">
         <h3>导入作品(§10.2)</h3>

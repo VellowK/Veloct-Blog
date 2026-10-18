@@ -39,12 +39,17 @@ const DEFAULTS = {
   url: 'https://example.com',
   base: '/',
   language: 'zh-CN',
+  articleDisplayCount: 10,
+  archiveDisplayCount: 10,
+  categoryDisplayCount: 10,
+  tagDisplayCount: 10,
   author: {
-    name: 'Veloct',
+    name: '',
     bio: '',
     avatar: '',
   },
   social: [],
+  homepage: { cover: '', githubUsername: '', showBlogHeatmap: true, showGithubHeatmap: true },
   filing: {},
   comments: {
     enabled: false,
@@ -69,12 +74,20 @@ const DEFAULTS = {
     engines: [],
   },
   hero: {
-    title: 'Veloct',
+    // Empty means Hero follows the site name rather than a hard-coded template brand.
+    title: '',
     subtitle: '',
     ctaLabel: '',
     ctaHref: '',
   },
+  // The effect the site uses between two navigations. This is CONFIGURATION rather than a local
+  // preference: the thing that animates is the reader's browser, so it has to travel with the build.
+  // `rise` settles the new page up into place, `dissolve` cross-fades, `none` switches instantly.
+  pageTransition: 'rise',
 };
+
+/** The three effects the template knows how to draw, in the order the form offers them. */
+export const PAGE_TRANSITIONS = ['rise', 'dissolve', 'none'];
 
 /** Merge `override` onto `base`, one level deep for plain objects. */
 function merge(base, override) {
@@ -89,6 +102,48 @@ function merge(base, override) {
   return out;
 }
 
+/** New snake_case SEO keys win when both old and new names are present. */
+export function normalizeSiteConfig(override = {}) {
+  const config = merge(DEFAULTS, override);
+  const seo = override.seo ?? {};
+  config.seo = {
+    ...config.seo,
+    allowIndexing: seo.allow_indexing ?? seo.allowIndexing ?? true,
+    keywords: seo.keywords ?? '',
+    htmlInjection: seo.html_injection ?? seo.htmlInjection ?? '',
+  };
+  for (const key of ['articleDisplayCount', 'archiveDisplayCount', 'categoryDisplayCount', 'tagDisplayCount']) {
+    const value = config[key];
+    if (!Number.isInteger(value) || value < 1 || value > 100) {
+      throw new Error(`${key} must be an integer between 1 and 100`);
+    }
+  }
+  // Refused rather than defaulted, for the reason the whole file exists: a build that quietly
+  // ignored the setting would publish a site whose behaviour differs from its configuration.
+  if (!PAGE_TRANSITIONS.includes(config.pageTransition)) {
+    throw new Error(`pageTransition must be one of ${PAGE_TRANSITIONS.join(', ')}`);
+  }
+  if (!config.homepage || typeof config.homepage !== 'object' || Array.isArray(config.homepage)) throw new Error('homepage must be an object');
+  for (const key of ['cover', 'githubUsername']) if (typeof config.homepage[key] !== 'string') throw new Error(`homepage.${key} must be a string`);
+  for (const key of ['showBlogHeatmap', 'showGithubHeatmap']) if (typeof config.homepage[key] !== 'boolean') throw new Error(`homepage.${key} must be a boolean`);
+  if (config.homepage.githubUsername && (!/^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?$/i.test(config.homepage.githubUsername) || config.homepage.githubUsername.includes('--'))) throw new Error('homepage.githubUsername must be a GitHub username, not a URL');
+  const filing = config.filing ?? {};
+  config.filing = { ...filing };
+  for (const key of ['icpUrl', 'policeUrl', 'moeUrl']) {
+    const value = filing[key] ?? '';
+    if (typeof value !== 'string') throw new Error(`${key} must be a URL string`);
+    if (value) {
+      let url;
+      try { url = new URL(value); } catch { throw new Error(`${key} must be a valid http or https URL`); }
+      if (!['http:', 'https:'].includes(url.protocol) || !url.hostname || url.username || url.password || /\s/.test(value)) {
+        throw new Error(`${key} must be a valid http or https URL`);
+      }
+    }
+    config.filing[key] = value;
+  }
+  return config;
+}
+
 /** Read `data/site.json` if the app exported one, then fill in the defaults. */
 export function readSiteConfig() {
   const candidates = [
@@ -100,7 +155,7 @@ export function readSiteConfig() {
     try {
       const raw = readFileSync(path, 'utf8');
       if (raw.trim().length === 0) continue;
-      return merge(DEFAULTS, JSON.parse(raw));
+      return normalizeSiteConfig(JSON.parse(raw));
     } catch (error) {
       if (error && error.code === 'ENOENT') continue;
       // A malformed configuration must fail the build loudly rather than fall back to defaults and

@@ -80,6 +80,16 @@ impl ContentKind {
         [Self::Article, Self::Page, Self::Knowledge]
     }
 
+    /// The public route for this kind. Built-in home content owns the site root, not /home/.
+    pub fn route(self, id: &str, slug: &str, state: crate::lifecycle::WipState) -> String {
+        match self {
+            Self::Article => state.route(id, slug),
+            Self::Page if slug == "home" => "/".to_string(),
+            Self::Page => format!("/{slug}/"),
+            Self::Knowledge => format!("/docs/{slug}/"),
+        }
+    }
+
     /// Whether WIP has any meaning. `handoff.md` §3.2: `wip` is only meaningful for an article.
     pub fn supports_wip(self) -> bool {
         matches!(self, Self::Article)

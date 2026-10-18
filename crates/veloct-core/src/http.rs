@@ -360,6 +360,17 @@ impl ReqwestHttpClient {
         Ok(Self { inner })
     }
 
+    /// APIs with custom authentication headers must never forward them through redirects.
+    pub fn without_redirects(timeout: Duration) -> Result<Self> {
+        let inner = reqwest::blocking::Client::builder()
+            .timeout(timeout)
+            .user_agent(format!("Veloct/{}", crate::VERSION))
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .map_err(|_| VeloctError::Other("could not build the HTTP client".into()))?;
+        Ok(Self { inner })
+    }
+
     fn build(&self, request: &HttpRequest) -> Result<reqwest::blocking::RequestBuilder> {
         let method = match request.method {
             HttpMethod::Get => reqwest::Method::GET,

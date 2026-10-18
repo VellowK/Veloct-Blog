@@ -1,0 +1,8 @@
+.s3-config { min-width: 0; margin: 14px 0; padding: 14px; border: 1px solid var(--color-hairline); border-radius: 10px; }
+.s3-config legend { padding: 0 6px; font-weight: 600; }
+.s3-config > .card-note { margin: 0 0 14px; }
+.s3-config__rules { margin: 16px 0; }
+.s3-config__rules h3 { font-size: 14px; margin: 0 0 6px; }
+.s3-config__rule { display: grid; grid-template-columns: minmax(90px, 1fr) minmax(120px, 2fr) auto auto; align-items: end; gap: 8px; margin: 10px 0; }
+.s3-config input[type="checkbox"] { width: auto; }
+@media (max-width: 1100px) { .s3-config__rule { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }

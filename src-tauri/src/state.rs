@@ -12,6 +12,8 @@
 //!   machine with no project open should not be running a Node process for nothing.
 
 use std::io::Read;
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicI32, AtomicU8, Ordering};
@@ -133,6 +135,10 @@ impl ShellSpawner for OsSpawner {
         let program = resolve_launcher(&spec.program)?;
 
         let mut command = Command::new(&program);
+        // CREATE_NO_WINDOW hides the console launcher without detaching it from the supervised
+        // process tree or changing the stdout/stderr pipes used for preview diagnostics.
+        #[cfg(windows)]
+        command.creation_flags(0x08000000);
         command
             .args(&spec.args)
             .current_dir(&spec.working_directory)
@@ -203,6 +209,19 @@ pub fn resolve_launcher(program: &str) -> veloct_core::Result<PathBuf> {
     }
 
     let mut candidates: Vec<PathBuf> = vec![given.to_path_buf()];
+    if cfg!(windows) && given.extension().is_none() {
+        candidates.push(given.with_extension("exe"));
+    }
+    // externalBin is installed beside the application, not under resources/binaries.
+    if let Some(binaries) = given.parent().filter(|path| path.file_name().is_some_and(|name| name == "binaries")) {
+        if let (Some(directory), Some(name)) = (binaries.parent(), given.file_name()) {
+            let sibling = directory.join(name);
+            candidates.push(sibling.clone());
+            if cfg!(windows) && sibling.extension().is_none() {
+                candidates.push(sibling.with_extension("exe"));
+            }
+        }
+    }
     // `veloct_sidecar` owns the triple mapping, so this cannot drift from the runtime's.
     if let Ok(triple) = veloct_sidecar::target_triple() {
         let suffixed = if cfg!(windows) {
@@ -424,6 +443,8 @@ pub struct OpenProject {
     pub content: ContentService,
     /// When the project was opened, so the UI can show it.
     pub opened_at: String,
+    /// Custom-template files that were deliberately not replaced during a safe upgrade.
+    pub template_warnings: Mutex<Vec<String>>,
     /// The project's event log (handoff.md section 18).
     ///
     /// Behind a `Mutex<Box<dyn LogSink>>` rather than a concrete `FileSink` so a test can drive the
@@ -448,6 +469,10 @@ impl std::fmt::Debug for OpenProject {
 }
 
 impl OpenProject {
+    pub fn path(&self) -> &std::path::Path {
+        self.root.as_path()
+    }
+
     /// Open a project directory.
     ///
     /// FALLIBLE because the attachment state can genuinely fail to load, and an earlier version of this
@@ -462,6 +487,7 @@ impl OpenProject {
             content: ContentService::open(root.as_path()),
             root,
             opened_at: now.to_string(),
+            template_warnings: Mutex::new(Vec::new()),
             log: Mutex::new(sink),
             attachments: Mutex::new(attachments),
         }))
@@ -476,6 +502,7 @@ impl OpenProject {
             content: ContentService::open(root.as_path()),
             root,
             opened_at: now.to_string(),
+            template_warnings: Mutex::new(Vec::new()),
             log: Mutex::new(sink),
             attachments: Mutex::new(attachments),
         })
@@ -504,9 +531,10 @@ impl OpenProject {
         self.log.lock().recent(limit)
     }
 
-    pub fn path(&self) -> &Path {
-        self.root.as_path()
+    pub fn site_settings(&self) -> veloct_app::SiteSettingsService {
+        veloct_app::SiteSettingsService::new(self.path())
     }
+
 }
 
 /// The whole application state.
@@ -517,6 +545,8 @@ pub struct AppState {
     previews: PreviewSupervisor,
     /// The configured sidecar program name, from the shell's resource resolution.
     sidecar: Mutex<Option<String>>,
+    /// Resolved by the shell, never supplied by the frontend.
+    project_template: Mutex<Option<PathBuf>>,
     /// The spawner the supervisor was built with.
     ///
     /// Kept as well as moved into the supervisor, because "which spawner is the application wired
@@ -552,6 +582,7 @@ impl AppState {
                 SupervisorConfig::default(),
             ),
             sidecar: Mutex::new(None),
+            project_template: Mutex::new(None),
             spawner,
             install: Mutex::new(None),
         }
@@ -579,6 +610,45 @@ impl AppState {
     /// Record the resolved sidecar path, once Tauri has found it.
     pub fn set_sidecar(&self, program: impl Into<String>) {
         *self.sidecar.lock() = Some(program.into());
+    }
+
+    pub fn set_project_template(&self, template: PathBuf) {
+        *self.project_template.lock() = Some(template);
+    }
+
+    pub fn upgrade_project_template(&self, project: &OpenProject) -> veloct_core::Result<()> {
+        let Some(template) = self.project_template.lock().clone() else { return Ok(()); };
+        let warnings = veloct_app::ProjectService::upgrade_builtin_templates(project.path(), &template)?;
+        for warning in &warnings {
+            let _ = project.log(veloct_logging::LogEvent::warning(veloct_logging::Category::App, warning));
+        }
+        *project.template_warnings.lock() = warnings;
+        Ok(())
+    }
+
+    pub fn initialize_current_project(&self) -> Result<Arc<OpenProject>, veloct_app::CommandError> {
+        let template = self.project_template.lock().clone().ok_or_else(|| {
+            veloct_core::VeloctError::not_configured(
+                "the bundled project template has not been resolved",
+                "repair the Veloct installation or run the development template preparation step",
+            )
+        })?;
+        // Keep the selection stable while writing; a concurrent open cannot redirect this operation.
+        let selected = self.project.lock();
+        let project = selected.as_ref().ok_or_else(|| {
+            veloct_core::VeloctError::not_configured("no project is open", "open a project first")
+        })?;
+        let name = project.path().file_name().and_then(|value| value.to_str())
+            .unwrap_or("My Site").to_string();
+        veloct_app::ProjectService::initialize(
+            project.path(),
+            veloct_app::CreateProjectOptions { name, ..Default::default() },
+            &template,
+            veloct_core::VERSION,
+            &SystemClock,
+        )?;
+        self.upgrade_project_template(project)?;
+        Ok(project.clone())
     }
 
     pub fn sidecar(&self) -> Option<String> {
@@ -882,7 +952,7 @@ pub fn site_preview_spec(project: &Path, program: String, port: u16) -> PreviewS
             "127.0.0.1".to_string(),
         ],
         working_directory: project.join("site"),
-        env: Default::default(),
+        env: [("VELOCT_PROJECT_ROOT".to_string(), project.to_string_lossy().to_string())].into_iter().collect(),
         port,
     }
 }
@@ -1382,6 +1452,7 @@ mod tests {
             vec!["dev", "--port", "4321", "--host", "127.0.0.1"]
         );
         assert_eq!(spec.working_directory, dir.path().join("site"));
+        assert_eq!(spec.env.get("VELOCT_PROJECT_ROOT").map(String::as_str), Some(dir.path().to_string_lossy().as_ref()));
         assert!(veloct_sidecar::is_served_command(&spec.args));
     }
 
@@ -1515,6 +1586,27 @@ mod tests {
         );
         // The triple-suffixed name is what a Cargo build tree holds, and it is the second candidate.
         assert!(hint.contains("veloct-astro-sidecar-"), "{hint}");
+    }
+
+    #[test]
+    fn launcher_is_found_beside_the_application() {
+        let dir = TempDir::new().unwrap();
+        let name = if cfg!(windows) { "veloct-astro-sidecar.exe" } else { "veloct-astro-sidecar" };
+        let launcher = dir.path().join(name);
+        std::fs::write(&launcher, b"pretend launcher").unwrap();
+        let requested = dir.path().join("binaries").join("veloct-astro-sidecar");
+        assert_eq!(resolve_launcher(&requested.to_string_lossy()).unwrap(), launcher);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn launcher_accepts_exe_in_binaries_directory() {
+        let dir = TempDir::new().unwrap();
+        let directory = dir.path().join("binaries");
+        std::fs::create_dir(&directory).unwrap();
+        let launcher = directory.join("veloct-astro-sidecar.exe");
+        std::fs::write(&launcher, b"pretend launcher").unwrap();
+        assert_eq!(resolve_launcher(&directory.join("veloct-astro-sidecar").to_string_lossy()).unwrap(), launcher);
     }
 
     #[test]

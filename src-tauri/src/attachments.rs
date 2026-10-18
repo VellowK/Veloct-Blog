@@ -62,7 +62,14 @@ pub fn add_attachment(
             .with_field("name", &attachment.original_name)
             .with_field("bytes", attachment.size_bytes.to_string())
             .with_field("target", &storage_target_id)
-            .with_field("outcome", if outcome == AddOutcome::Reused { "reused" } else { "added" }),
+            .with_field(
+                "outcome",
+                if outcome == AddOutcome::Reused {
+                    "reused"
+                } else {
+                    "added"
+                },
+            ),
     );
 
     Ok(AddAttachmentView {
@@ -70,6 +77,132 @@ pub fn add_attachment(
         outcome,
         markdown,
     })
+}
+
+/// Clipboard/browser files enter the ordinary attachment transaction only after explicit confirmation.
+#[tauri::command]
+pub async fn add_attachment_bytes(
+    state: State<'_, AppState>,
+    name: String,
+    data_base64: String,
+    storage_target_id: String,
+    namespace: String,
+) -> Result<AddAttachmentView, CommandError> {
+    let project = state.project()?;
+    let now = state.now();
+    tauri::async_runtime::spawn_blocking(move || {
+        use base64::Engine;
+        veloct_attach::validate_original_name(&name)?;
+        let limit = veloct_app::attachments::MAX_ATTACHMENT_BYTES;
+        if data_base64.len() as u64 > limit.div_ceil(3) * 4 {
+            return Err(command_invalid("文件超过单个附件64MiB的限制"));
+        }
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(data_base64)
+            .map_err(|_| command_invalid("文件编码无效，未加入附件池"))?;
+        let mut entropy = [0u8; veloct_attach::SUFFIX_LENGTH];
+        {
+            use rand::RngCore;
+            rand::thread_rng().fill_bytes(&mut entropy);
+        }
+        let (attachment, outcome) = project.attachments().add_bytes(
+            &name,
+            &bytes,
+            &storage_target_id,
+            &namespace,
+            &now,
+            &entropy,
+        )?;
+        let markdown = attachment.markdown();
+        let _ = project.log(
+            veloct_logging::LogEvent::info(
+                veloct_logging::Category::Attachment,
+                "attachment added from file selection",
+            )
+            .with_field("id", &attachment.id)
+            .with_field("name", &attachment.original_name)
+            .with_field("bytes", attachment.size_bytes.to_string()),
+        );
+        Ok(AddAttachmentView {
+            attachment,
+            outcome,
+            markdown,
+        })
+    })
+    .await
+    .map_err(|_| command_invalid("附件导入任务未能完成"))?
+}
+
+#[derive(Debug, Serialize)]
+pub struct FilePreview {
+    pub name: String,
+    pub size: u64,
+    pub data_url: Option<String>,
+}
+
+/// Read-only, bounded raster preview. No file:// permissions, SVG/HTML execution or temporary files.
+pub fn preview_file(source: &std::path::Path) -> Result<FilePreview, CommandError> {
+    use base64::Engine;
+    use std::io::Read;
+    let metadata = std::fs::metadata(source).map_err(|_| command_invalid("无法读取选择的文件"))?;
+    if !metadata.is_file() {
+        return Err(command_invalid("请选择文件，而不是文件夹"));
+    }
+    if metadata.len() > veloct_app::attachments::MAX_ATTACHMENT_BYTES {
+        return Err(command_invalid("文件超过单个附件64MiB的限制"));
+    }
+    let name = source
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| command_invalid("文件名无法识别"))?
+        .to_string();
+    veloct_attach::validate_original_name(&name)?;
+    let mut data_url = None;
+    if metadata.len() <= 8 * 1024 * 1024 {
+        let mut bytes = Vec::new();
+        std::fs::File::open(source)
+            .map_err(|_| command_invalid("无法打开选择的文件"))?
+            .take(8 * 1024 * 1024 + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|_| command_invalid("无法读取文件预览"))?;
+        let mime = if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+            Some("image/png")
+        } else if bytes.starts_with(&[0xff, 0xd8, 0xff]) {
+            Some("image/jpeg")
+        } else if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+            Some("image/gif")
+        } else if bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(b"WEBP") {
+            Some("image/webp")
+        } else if bytes.starts_with(b"BM") {
+            Some("image/bmp")
+        } else {
+            None
+        };
+        if bytes.len() <= 8 * 1024 * 1024 {
+            data_url = mime.map(|mime| {
+                format!(
+                    "data:{mime};base64,{}",
+                    base64::engine::general_purpose::STANDARD.encode(bytes)
+                )
+            });
+        }
+    }
+    Ok(FilePreview {
+        name,
+        size: metadata.len(),
+        data_url,
+    })
+}
+
+#[tauri::command]
+pub async fn preview_attachment_file(
+    state: State<'_, AppState>,
+    source_path: String,
+) -> Result<FilePreview, CommandError> {
+    state.project()?;
+    tauri::async_runtime::spawn_blocking(move || preview_file(std::path::Path::new(&source_path)))
+        .await
+        .map_err(|_| command_invalid("文件预览任务未能完成"))?
 }
 
 /// Every attachment in the pool.
@@ -119,22 +252,22 @@ pub fn remove_attachment(
         attachments.remove(&id)?
     };
     let _ = project.log(
-        veloct_logging::LogEvent::warning(veloct_logging::Category::Attachment, "attachment removed")
-            .with_field("id", &removed.id)
-            .with_field("name", &removed.original_name)
-            // The reference count is recorded because removing a referenced attachment is the case a user may
-            // regret, and the log is where that is visible afterwards.
-            .with_field("references", removed.reference_count.to_string()),
+        veloct_logging::LogEvent::warning(
+            veloct_logging::Category::Attachment,
+            "attachment removed",
+        )
+        .with_field("id", &removed.id)
+        .with_field("name", &removed.original_name)
+        // The reference count is recorded because removing a referenced attachment is the case a user may
+        // regret, and the log is where that is visible afterwards.
+        .with_field("references", removed.reference_count.to_string()),
     );
     Ok(removed)
 }
 
 /// The Markdown for an attachment.
 #[tauri::command]
-pub fn attachment_markdown(
-    state: State<'_, AppState>,
-    id: String,
-) -> Result<String, CommandError> {
+pub fn attachment_markdown(state: State<'_, AppState>, id: String) -> Result<String, CommandError> {
     let project = state.project()?;
     let markdown = project.attachments().markdown_for(&id)?;
     Ok(markdown)
@@ -232,6 +365,9 @@ pub struct StorageTargetView {
     /// The HANDLE, never a value (§12).
     pub credential_ref: Option<String>,
     pub has_credential: bool,
+    pub hidden_from_upload: bool,
+    pub upload_priority: i32,
+    pub s3_policy: Option<veloct_attach::s3_policy::S3Policy>,
 }
 
 impl StorageTargetView {
@@ -254,12 +390,15 @@ impl StorageTargetView {
             instance: config.instance.clone(),
             credential_ref: config.credential_ref.clone(),
             has_credential,
+            hidden_from_upload: config.hidden_from_upload,
+            upload_priority: config.upload_priority,
+            s3_policy: config.s3_policy.clone(),
         }
     }
 }
 
 /// A storage target as the window saves it.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SaveStorageTargetRequest {
     pub id: String,
     pub name: String,
@@ -288,6 +427,12 @@ pub struct SaveStorageTargetRequest {
     /// The credential VALUE, written to the OS store. Never persisted here (§12.2).
     #[serde(default)]
     pub credential: Option<String>,
+    #[serde(default)]
+    pub hidden_from_upload: bool,
+    #[serde(default)]
+    pub upload_priority: i32,
+    #[serde(default)]
+    pub s3_policy: Option<veloct_attach::s3_policy::S3Policy>,
 }
 
 /// The configured storage targets.
@@ -368,14 +513,42 @@ pub fn validate_storage_target(request: SaveStorageTargetRequest) -> Result<(), 
     validate_storage_target_draft(&request)
 }
 
+/// Read-only bucket verification for the current draft. No config or credential is saved.
+#[tauri::command]
+pub async fn test_storage_target(
+    state: State<'_, AppState>,
+    request: SaveStorageTargetRequest,
+) -> Result<String, CommandError> {
+    let project = state.project()?;
+    tauri::async_runtime::spawn_blocking(move || {
+        validate_storage_target_draft(&request)?;
+        let kind = parse_storage_kind(&request.kind)?;
+        if kind != veloct_attach::StorageKind::S3 {
+            return Err(command_invalid("仅 S3 策略支持此对象存储验证。"));
+        }
+        let config = config_from_request(&request, kind);
+        let credential = request
+            .credential
+            .filter(|v| !v.trim().is_empty())
+            .or_else(|| {
+                config
+                    .credential_ref
+                    .as_deref()
+                    .and_then(crate::credentials::get_or_none)
+            });
+        let target = storage_target_for(&config, credential, project.root.as_path())?;
+        target.test_connection().map_err(CommandError::from)
+    })
+    .await
+    .map_err(|_| command_invalid("对象存储验证任务未正常完成。"))?
+}
+
 /// The command's body, so a test can drive it without a command runtime.
 ///
 /// Deliberately NOT a second implementation of anything: it maps the request the window would save with
 /// [`config_from_request`] and asks the crate. If it ever grew a rule of its own, the window would be back to
 /// having a rule the crate does not, which is the defect this command removes.
-fn validate_storage_target_draft(
-    request: &SaveStorageTargetRequest,
-) -> Result<(), CommandError> {
+fn validate_storage_target_draft(request: &SaveStorageTargetRequest) -> Result<(), CommandError> {
     let kind = parse_storage_kind(&request.kind)?;
     config_from_request(request, kind)
         .validate()
@@ -408,10 +581,16 @@ pub fn save_storage_target(
     save_target_config(project.root.as_path(), config, credential)?;
 
     let _ = project.log(
-        veloct_logging::LogEvent::info(veloct_logging::Category::Attachment, "storage target saved")
-            .with_field("target_id", &request.id)
-            .with_field("kind", kind.as_str())
-            .with_field("implemented", veloct_attach::is_implemented(kind).to_string()),
+        veloct_logging::LogEvent::info(
+            veloct_logging::Category::Attachment,
+            "storage target saved",
+        )
+        .with_field("target_id", &request.id)
+        .with_field("kind", kind.as_str())
+        .with_field(
+            "implemented",
+            veloct_attach::is_implemented(kind).to_string(),
+        ),
     );
     Ok(())
 }
@@ -445,6 +624,11 @@ fn config_from_request(
     // enforced on this path now that the kind has an adapter — so a mistake is refused at the save rather than
     // discovered at the first upload.
     config.instance = non_blank(&request.instance);
+    config.hidden_from_upload = request.hidden_from_upload;
+    config.upload_priority = request.upload_priority;
+    if kind == veloct_attach::StorageKind::S3 {
+        config.s3_policy = request.s3_policy.clone();
+    }
     // A kind that needs a credential gets the handle; the local directory kind does not, because a handle to
     // nothing would make the window report a missing credential for a target that needs none.
     config.credential_ref = if kind == veloct_attach::StorageKind::Local {
@@ -520,7 +704,14 @@ fn delete_target_config(project_root: &std::path::Path, id: &str) -> Result<(), 
     if list.len() == before {
         return Err(command_invalid(format!("there is no storage target {id}")));
     }
+    let mut sync = veloct_app::attachment_sync::read_settings(project_root)?;
+    sync.target_ids.retain(|target_id| target_id != id);
     write_storage_targets(project_root, &list)?;
+    let known = list
+        .iter()
+        .map(|c| c.id.as_str().to_owned())
+        .collect::<Vec<_>>();
+    veloct_app::attachment_sync::save_settings(project_root, &sync, &known)?;
     // `delete_storage_target` also removes the credential, which is what the window's confirmation says. §13.8
     // means the remote FILES are untouched by this.
     let _ = crate::credentials::remove(&crate::credentials::handle_for(&format!("storage:{id}")));
@@ -565,9 +756,7 @@ pub fn upload_attachment(
         crate::credentials::get_or_none,
     )?;
 
-    let upload = project
-        .attachments()
-        .upload(&id, &target, &now)?;
+    let upload = project.attachments().upload(&id, &target, &now)?;
 
     let _ = project.log(
         veloct_logging::LogEvent::info(veloct_logging::Category::Attachment, "attachment uploaded")
@@ -654,7 +843,7 @@ pub fn parse_storage_kind(text: &str) -> Result<veloct_attach::StorageKind, Comm
 /// Where the storage targets are stored.
 pub const STORAGE_TARGETS_FILE: &str = ".veloct/storage-targets.json";
 
-fn read_storage_targets(
+pub(crate) fn read_storage_targets(
     project_root: &std::path::Path,
 ) -> Result<Vec<veloct_attach::StorageConfig>, CommandError> {
     let path = project_root.join(STORAGE_TARGETS_FILE);
@@ -662,7 +851,10 @@ fn read_storage_targets(
         return Ok(Vec::new());
     };
     serde_json::from_str(&text).map_err(|error| {
-        command_invalid(format!("{} is not a storage target list: {error}", path.display()))
+        command_invalid(format!(
+            "{} is not a storage target list: {error}",
+            path.display()
+        ))
     })
 }
 
@@ -703,7 +895,7 @@ fn require_id(id: &str) -> Result<(), CommandError> {
 /// without an `AppState` — an id that names no target is an error NAMING that id, and the credential comes
 /// from the OS store by HANDLE rather than from the configuration. `credentials` is a parameter rather than a
 /// call to the real store so a test can supply its own and prove which one was consulted.
-fn resolve_stored_target(
+pub(crate) fn resolve_stored_target(
     list: &[veloct_attach::StorageConfig],
     storage_target_id: &str,
     project_root: &std::path::Path,
@@ -718,10 +910,7 @@ fn resolve_stored_target(
                 "there is no storage target {storage_target_id}; configure one first"
             ))
         })?;
-    let credential = config
-        .credential_ref
-        .as_deref()
-        .and_then(credentials);
+    let credential = config.credential_ref.as_deref().and_then(credentials);
     storage_target_for(&config, credential, project_root)
 }
 
@@ -801,6 +990,37 @@ mod tests {
     }
 
     #[test]
+    fn file_preview_is_bounded_read_only_and_never_embeds_svg_or_html() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let png = dir.path().join("test.png");
+        std::fs::write(&png, b"\x89PNG\r\n\x1a\nfixture").unwrap();
+        let preview = preview_file(&png).unwrap();
+        assert_eq!(preview.name, "test.png");
+        assert_eq!(preview.size, 15);
+        assert!(preview
+            .data_url
+            .unwrap()
+            .starts_with("data:image/png;base64,"));
+        let svg = dir.path().join("image.png");
+        std::fs::write(&svg, b"<svg onload='alert(1)'></svg>").unwrap();
+        assert!(preview_file(&svg).unwrap().data_url.is_none());
+        let large = dir.path().join("large.png");
+        std::fs::File::create(&large)
+            .unwrap()
+            .set_len(9 * 1024 * 1024)
+            .unwrap();
+        assert!(preview_file(&large).unwrap().data_url.is_none());
+        std::fs::File::create(&large)
+            .unwrap()
+            .set_len(veloct_app::attachments::MAX_ATTACHMENT_BYTES + 1)
+            .unwrap();
+        assert!(preview_file(&large).is_err());
+        assert!(preview_file(dir.path()).is_err());
+        assert!(preview_file(&dir.path().join("absent.png")).is_err());
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 3);
+    }
+
+    #[test]
     fn the_orphan_view_separates_safe_from_needs_confirmation() {
         // The distinction IS the information: an attachment that fails section 13.2.4's conditions is not a
         // cleanup candidate but a question for the user.
@@ -865,7 +1085,11 @@ mod tests {
         // a local directory adapter by the upload command, so it uploaded to the machine it was running on and
         // reported a remote URL. It must now reach the store that REPORTS the section 13.10 gap.
         let project = tempfile::TempDir::new().unwrap();
-        let config = veloct_attach::StorageConfig::new("server", "my server", veloct_attach::StorageKind::Sftp);
+        let config = veloct_attach::StorageConfig::new(
+            "server",
+            "my server",
+            veloct_attach::StorageKind::Sftp,
+        );
         let target = storage_target_for(&config, None, project.path()).unwrap();
 
         assert_eq!(target.config().kind, veloct_attach::StorageKind::Sftp);
@@ -893,8 +1117,11 @@ mod tests {
     #[test]
     fn a_local_target_is_built_inside_the_projects_upload_directory_and_needs_no_credential() {
         let project = tempfile::TempDir::new().unwrap();
-        let mut config =
-            veloct_attach::StorageConfig::new("on-this-machine", "Local", veloct_attach::StorageKind::Local);
+        let mut config = veloct_attach::StorageConfig::new(
+            "on-this-machine",
+            "Local",
+            veloct_attach::StorageKind::Local,
+        );
         config.key_prefix = Some("uploads".to_string());
         config.public_url_prefix = "https://example.com/files/".to_string();
         // No credential is passed, which is the point: a local target must not need one.
@@ -958,6 +1185,7 @@ mod tests {
                 "credential_ref",
                 "endpoint",
                 "has_credential",
+                "hidden_from_upload",
                 "id",
                 "implemented",
                 "instance",
@@ -967,7 +1195,9 @@ mod tests {
                 "public_url_prefix",
                 "region",
                 "repository",
+                "s3_policy",
                 "unimplemented_reason",
+                "upload_priority",
             ],
             "the view's fields are configuration and a HANDLE, never a credential value"
         );
@@ -979,8 +1209,11 @@ mod tests {
     fn a_lsky_targets_view_carries_its_instance_so_an_edit_cannot_lose_it() {
         // The §5.5 defect, for §13.12: without this field the form could not see the instance it saved, would
         // submit none on the next save, and a working target would silently stop working.
-        let mut config =
-            veloct_attach::StorageConfig::new("img", "兰空图床", veloct_attach::StorageKind::LskyPro);
+        let mut config = veloct_attach::StorageConfig::new(
+            "img",
+            "兰空图床",
+            veloct_attach::StorageKind::LskyPro,
+        );
         config.instance = Some("https://img.example.com".to_string());
         let view = StorageTargetView::of(&config, true);
 
@@ -1009,6 +1242,7 @@ mod tests {
             access_key: None,
             instance: Some("https://img.example.com".to_string()),
             credential: Some("1|a-secret-token".to_string()),
+            ..Default::default()
         };
         let config = config_from_request(&request, veloct_attach::StorageKind::LskyPro);
 
@@ -1043,8 +1277,11 @@ mod tests {
     fn a_local_targets_view_is_implemented_and_carries_no_credential() {
         // The window must be able to offer the local directory kind instead of an SFTP target that silently
         // became one, and it must not ask for a credential the kind cannot use.
-        let config =
-            veloct_attach::StorageConfig::new("on-this-machine", "Local", veloct_attach::StorageKind::Local);
+        let config = veloct_attach::StorageConfig::new(
+            "on-this-machine",
+            "Local",
+            veloct_attach::StorageKind::Local,
+        );
         let view = StorageTargetView::of(&config, config.has_credential());
 
         assert_eq!(view.kind, "local");
@@ -1237,9 +1474,15 @@ mod tests {
         // longer PRODUCE one, so the only remaining effect of the exemption would be to let a retired target be
         // written — the opposite of what a user needs. Every kind is validated now.
         let project = tempfile::TempDir::new().unwrap();
-        let config =
-            veloct_attach::StorageConfig::new("server", "my server", veloct_attach::StorageKind::Sftp);
-        assert!(!veloct_attach::is_implemented(config.kind), "the retired kind");
+        let config = veloct_attach::StorageConfig::new(
+            "server",
+            "my server",
+            veloct_attach::StorageKind::Sftp,
+        );
+        assert!(
+            !veloct_attach::is_implemented(config.kind),
+            "the retired kind"
+        );
 
         // The arm reports the REMOVAL rather than demanding fields for a protocol nothing speaks.
         let problem = config
@@ -1293,7 +1536,12 @@ mod tests {
         config.bucket = Some("veloct-assets".to_string());
         config.credential_ref = Some(handle.clone());
         // The value goes to the OS store, not to the file (§12.2).
-        save_target_config(project.path(), config.clone(), Some("s3-secret".to_string())).unwrap();
+        save_target_config(
+            project.path(),
+            config.clone(),
+            Some("s3-secret".to_string()),
+        )
+        .unwrap();
         assert_eq!(read_storage_targets(project.path()).unwrap().len(), 1);
 
         // The credential really is in the store — otherwise "it was removed" would be vacuous. A machine
@@ -1304,7 +1552,10 @@ mod tests {
             stored.is_ok(),
             "this test needs a working credential store: {stored:?}"
         );
-        assert!(crate::credentials::exists(&handle), "a value is stored under the handle");
+        assert!(
+            crate::credentials::exists(&handle),
+            "a value is stored under the handle"
+        );
 
         delete_target_config(project.path(), id).unwrap();
 
@@ -1398,15 +1649,21 @@ mod tests {
         let project = tempfile::TempDir::new().unwrap();
         let root = project.path();
 
-        let mut config =
-            veloct_attach::StorageConfig::new("img", "兰空图床", veloct_attach::StorageKind::LskyPro);
+        let mut config = veloct_attach::StorageConfig::new(
+            "img",
+            "兰空图床",
+            veloct_attach::StorageKind::LskyPro,
+        );
         config.instance = Some("https://img.example.com".to_string());
         config.credential_ref = Some("keychain:storage:img".to_string());
         let list = vec![config];
 
         // An id that names no stored target is an error NAMING that id, rather than a silent default.
         let error = refusal(resolve_stored_target(&list, "nope", root, |_| None));
-        assert!(error.to_string().contains("no storage target nope"), "{error}");
+        assert!(
+            error.to_string().contains("no storage target nope"),
+            "{error}"
+        );
 
         // The credential comes from the resolver and NOT from the configuration: with a token the adapter
         // builds and reports itself verified, and with none the build is REFUSED with the token's own hint.
@@ -1446,7 +1703,8 @@ mod tests {
             "my server",
             veloct_attach::StorageKind::Sftp,
         )];
-        let reporting = resolve_stored_target(&retired, "server", root, |_| None).expect("it builds");
+        let reporting =
+            resolve_stored_target(&retired, "server", root, |_| None).expect("it builds");
         assert!(!reporting.capabilities().verified);
         assert!(!reporting.capabilities().can_delete_remotely);
     }
@@ -1477,6 +1735,7 @@ mod tests {
             access_key: None,
             instance: None,
             credential: None,
+            ..Default::default()
         }
     }
 
@@ -1500,8 +1759,8 @@ mod tests {
         let error = validate_storage_target_draft(&draft("local", "   ", "本机目录"))
             .expect_err("请填写目标标识");
         assert!(error.message.contains("标识"), "{}", error.message);
-        let error = validate_storage_target_draft(&draft("local", "local", ""))
-            .expect_err("请填写名称");
+        let error =
+            validate_storage_target_draft(&draft("local", "local", "")).expect_err("请填写名称");
         assert!(error.message.contains("名称"), "{}", error.message);
     }
 
@@ -1524,7 +1783,8 @@ mod tests {
         validate_storage_target_draft(&lsky).expect("the API address is accepted too");
         // A RELATIVE one is refused: the endpoint is this value plus `/api/v1` (D168).
         lsky.instance = Some("img.example.com".to_string());
-        let error = validate_storage_target_draft(&lsky).expect_err("a relative instance cannot resolve");
+        let error =
+            validate_storage_target_draft(&lsky).expect_err("a relative instance cannot resolve");
         assert!(error.message.contains("http"), "{}", error.message);
 
         validate_storage_target_draft(&draft("local", "on-this-machine", "本机目录"))
@@ -1534,7 +1794,11 @@ mod tests {
         // host and a username no adapter reads (ADR-0017).
         let error = validate_storage_target_draft(&draft("sftp", "server", "my server"))
             .expect_err("a retired kind cannot be saved");
-        assert!(error.message.contains("unknown storage kind"), "{}", error.message);
+        assert!(
+            error.message.contains("unknown storage kind"),
+            "{}",
+            error.message
+        );
     }
 
     #[test]
@@ -1552,9 +1816,13 @@ mod tests {
             "https://{bucket}.",
         ] {
             s3.endpoint = Some(refused.to_string());
-            let error = validate_storage_target_draft(&s3)
-                .expect_err("this endpoint must be refused");
-            assert!(error.message.contains("{bucket}"), "{refused}: {}", error.message);
+            let error =
+                validate_storage_target_draft(&s3).expect_err("this endpoint must be refused");
+            assert!(
+                error.message.contains("{bucket}"),
+                "{refused}: {}",
+                error.message
+            );
         }
         for accepted in [
             "",
@@ -1580,10 +1848,15 @@ mod tests {
         for refused in ["D:/images", "\\\\server\\share"] {
             local.path_prefix = Some(refused.to_string());
             let error = validate_storage_target_draft(&local).expect_err("it must be refused");
-            assert!(error.message.contains("相对路径"), "{refused}: {}", error.message);
+            assert!(
+                error.message.contains("相对路径"),
+                "{refused}: {}",
+                error.message
+            );
         }
         local.path_prefix = Some("uploads/2026".to_string());
-        validate_storage_target_draft(&local).expect("a nested relative prefix is what the field is for");
+        validate_storage_target_draft(&local)
+            .expect("a nested relative prefix is what the field is for");
 
         let mut s3 = draft("s3", "assets", "S3 附件");
         s3.bucket = Some("veloct-assets".to_string());
@@ -1595,7 +1868,8 @@ mod tests {
 
         s3.path_prefix = None;
         s3.public_url_prefix = Some("cdn.example.com".to_string());
-        let error = validate_storage_target_draft(&s3).expect_err("a relative public URL cannot resolve");
+        let error =
+            validate_storage_target_draft(&s3).expect_err("a relative public URL cannot resolve");
         assert!(error.message.contains("http://"), "{}", error.message);
         // Empty stays allowed: the crate reads that as "no URL can be derived yet" (§13.6).
         s3.public_url_prefix = None;

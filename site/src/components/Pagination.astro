@@ -1,0 +1,17 @@
+---
+import type { Page } from 'astro';
+
+interface Props {
+  page: Page;
+}
+
+const { page } = Astro.props;
+---
+
+{page.lastPage > 1 && (
+  <nav class="mt-8 flex flex-wrap items-center justify-between gap-4 text-sm" aria-label="分页">
+    {page.url.prev ? <a href={page.url.prev} rel="prev">上一页</a> : <span />}
+    <span class="muted" aria-current="page">第 {page.currentPage} / {page.lastPage} 页</span>
+    {page.url.next ? <a href={page.url.next} rel="next">下一页</a> : <span />}
+  </nav>
+)}

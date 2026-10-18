@@ -25,6 +25,7 @@ pub mod network;
 pub mod pool;
 pub mod reference;
 pub mod s3;
+pub mod s3_policy;
 pub mod state;
 pub mod storage;
 pub mod targets;

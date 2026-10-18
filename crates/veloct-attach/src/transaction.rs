@@ -83,9 +83,8 @@ impl AddRequest {
 /// It is also a `Weak` handle map, so a key that is no longer in use does not accumulate.
 #[derive(Debug, Default)]
 struct KeyLocks {
-    locks: std::sync::Mutex<
-        std::collections::BTreeMap<String, std::sync::Weak<std::sync::Mutex<()>>>,
-    >,
+    locks:
+        std::sync::Mutex<std::collections::BTreeMap<String, std::sync::Weak<std::sync::Mutex<()>>>>,
 }
 
 impl KeyLocks {
@@ -395,6 +394,33 @@ impl AttachmentTransaction {
         random_suffix(&entropy)
     }
 
+    /// Explicitly add a replica, reusing the target/namespace/hash dedup key.
+    /// Once selected, the primary URL and reference state never change during replication.
+    pub fn upload_replica(
+        &mut self,
+        id: &AttachmentId,
+        target: &StorageTarget,
+        now: &str,
+    ) -> Result<UploadOutcome> {
+        let original =
+            self.pool.get(id).cloned().ok_or_else(|| {
+                VeloctError::Invalid(format!("attachment {id} is not in the pool"))
+            })?;
+        if original.state.upload_status == UploadStatus::Uploading {
+            return Err(VeloctError::Invalid(
+                "attachment is already uploading".into(),
+            ));
+        }
+        if original.remote_url.is_none() {
+            return self.upload(id, target, now);
+        }
+        // Only this explicit replica API bypasses the single-upload state guard.
+        self.pool.get_mut(id).expect("present").state.upload_status = UploadStatus::Pending;
+        let result = self.upload(id, target, now);
+        *self.pool.get_mut(id).expect("present") = original;
+        result
+    }
+
     /// Step 2 and 3 of §13.3: upload, then record the remote object.
     ///
     /// The record is inserted BEFORE the function returns, so a failure in the caller's next step
@@ -433,10 +459,7 @@ impl AttachmentTransaction {
         // The dedup key already has a recorded object, so the remote file is reused
         // (handoff.md section 13.4).
         if let Some(recorded) = self.objects.get(&dedup_key).cloned() {
-            let stored = self
-                .pool
-                .get_mut(id)
-                .expect("the attachment was just read");
+            let stored = self.pool.get_mut(id).expect("the attachment was just read");
             stored.remote_url = Some(recorded.public_url.clone());
             stored.remote_key = Some(recorded.key.clone());
             stored.state.upload_status = UploadStatus::Succeeded;
@@ -455,10 +478,7 @@ impl AttachmentTransaction {
 
         // Somebody else may have finished the upload while this call waited for the lock.
         if let Some(recorded) = self.objects.get(&dedup_key).cloned() {
-            let stored = self
-                .pool
-                .get_mut(id)
-                .expect("the attachment was just read");
+            let stored = self.pool.get_mut(id).expect("the attachment was just read");
             stored.remote_url = Some(recorded.public_url.clone());
             stored.remote_key = Some(recorded.key.clone());
             stored.state.upload_status = UploadStatus::Succeeded;
@@ -469,10 +489,25 @@ impl AttachmentTransaction {
             });
         }
 
-        let stored = self
-            .pool
-            .get_mut(id)
-            .expect("the attachment was just read");
+        let policy_key = if target.config().kind == crate::storage::StorageKind::S3
+            && target.config().s3_policy.is_some()
+        {
+            Some(crate::s3_policy::key_for_attachment(
+                target.config(),
+                &attachment.original_name,
+                &attachment.remote_name(),
+                &format!(
+                    "{}:{}:{}",
+                    target.namespace(),
+                    attachment.content_hash,
+                    attachment.remote_suffix
+                ),
+                &attachment.created_at,
+            )?)
+        } else {
+            None
+        };
+        let stored = self.pool.get_mut(id).expect("the attachment was just read");
         stored.state.upload_status = UploadStatus::Uploading;
 
         let remote_name = stored.remote_name();
@@ -518,7 +553,11 @@ impl AttachmentTransaction {
         let object_namespace = target.namespace();
 
         // No `let` binding here: both arms diverge, so the match's value would never be read.
-        match target.store(&remote_name, &bytes) {
+        let put = match policy_key {
+            Some(key) => target.store_key(&key, &bytes),
+            None => target.store(&remote_name, &bytes),
+        };
+        match put {
             Ok(put) => {
                 let object = ObjectRecord {
                     dedup_key: dedup_key.clone(),
@@ -588,11 +627,10 @@ impl AttachmentTransaction {
         id: &AttachmentId,
         target: &StorageTarget,
     ) -> Result<RemoteDeleteOutcome> {
-        let attachment = self
-            .pool
-            .get(id)
-            .cloned()
-            .ok_or_else(|| VeloctError::Invalid(format!("attachment {id} is not in the pool")))?;
+        let attachment =
+            self.pool.get(id).cloned().ok_or_else(|| {
+                VeloctError::Invalid(format!("attachment {id} is not in the pool"))
+            })?;
 
         let named_target = target.config().id.clone();
 
@@ -626,16 +664,20 @@ impl AttachmentTransaction {
         let Some(record) = self
             .objects
             .values()
-            .find(|record| record.key == remote_key && record.storage_target_id == named_target)
+            .find(|record| {
+                record.key == remote_key
+                    && record.storage_target_id == named_target
+                    && Some(&record.public_url) == attachment.remote_url.as_ref()
+                    && record.content_hash == attachment.content_hash
+            })
             .cloned()
         else {
             // A different target holds an object at this key: say WHICH, so the user can ask for the right
             // one instead of being told that nothing exists.
-            if let Some(other) = self
-                .objects
-                .values()
-                .find(|record| record.key == remote_key)
-            {
+            if let Some(other) = self.objects.values().find(|record| {
+                record.key == remote_key
+                    && Some(&record.public_url) == attachment.remote_url.as_ref()
+            }) {
                 return Err(VeloctError::Invalid(format!(
                     "the remote object for attachment {id} is recorded on the storage target {}, not \
                      {named_target}; nothing was removed",
@@ -698,7 +740,8 @@ impl AttachmentTransaction {
                 .get_mut(&request.attachment_id)
                 .expect("read above");
             stored.state.reference_status = ReferenceStatus::Failed;
-            stored.last_error = Some("the document changed while the reference was being applied".into());
+            stored.last_error =
+                Some("the document changed while the reference was being applied".into());
             self.references
                 .entry(&request.attachment_id)
                 .mark_apply_failed();
@@ -731,7 +774,12 @@ impl AttachmentTransaction {
         // placeholder is given the URL is appended as a Markdown image, which is what an image
         // attachment means.
         let new_source = if request.placeholder.is_empty() {
-            format!("{}\n\n![{}]({})\n", request.source.trim_end(), attachment.original_name, url)
+            format!(
+                "{}\n\n![{}]({})\n",
+                request.source.trim_end(),
+                attachment.original_name,
+                url
+            )
         } else {
             if !request.source.contains(&request.placeholder) {
                 self.references
@@ -755,9 +803,7 @@ impl AttachmentTransaction {
                     )),
                 });
             }
-            request
-                .source
-                .replacen(&request.placeholder, &url, 1)
+            request.source.replacen(&request.placeholder, &url, 1)
         };
 
         let set = self.references.entry(&request.attachment_id);
@@ -907,8 +953,9 @@ impl AttachmentTransaction {
 
     /// Restore from a serialized state.
     pub fn from_state(text: &str) -> Result<Self> {
-        let state: PersistedState = serde_json::from_str(text)
-            .map_err(|error| VeloctError::Invalid(format!("the attachment state is unreadable: {error}")))?;
+        let state: PersistedState = serde_json::from_str(text).map_err(|error| {
+            VeloctError::Invalid(format!("the attachment state is unreadable: {error}"))
+        })?;
         let mut transaction = Self::new();
         transaction.pool = state.pool;
         transaction.references = state.references;
@@ -1100,7 +1147,9 @@ mod tests {
 
     fn add(transaction: &mut Fixture) -> AttachmentId {
         let id = AttachmentId::new("att-1");
-        transaction.add(&add_request(&id, "content-hash-1")).unwrap();
+        transaction
+            .add(&add_request(&id, "content-hash-1"))
+            .unwrap();
         fill_cache(transaction, &id);
         id
     }
@@ -1129,6 +1178,64 @@ mod tests {
     }
 
     #[test]
+    fn s3_policy_retries_collisions_records_actual_key_and_reuses_content_before_new_names() {
+        use crate::s3_policy::{AccessStyle, Duplicate, Rename, S3Policy, UrlSuffixRule};
+        use veloct_core::http::{FakeHttpClient, HttpClient};
+        use veloct_core::{Clock, FixedClock};
+        let fake = Arc::new(FakeHttpClient::new().always(412, "").always(200, ""));
+        let mut config = config();
+        config.access_key = Some("fixture-id".into());
+        config.endpoint = Some("https://account.r2.cloudflarestorage.com".into());
+        config.region = Some("auto".into());
+        config.key_prefix = Some("${year}/${month}".into());
+        config.s3_policy = Some(S3Policy {
+            access_style: AccessStyle::Path,
+            rename: Rename::Uuid,
+            duplicate: Duplicate::RandomAlphanumeric,
+            url_suffixes: vec![UrlSuffixRule {
+                extensions: "webp".into(),
+                suffix: "!public".into(),
+            }],
+            thumbnail: "?width={width}".into(),
+            ..S3Policy::default()
+        });
+        let store = crate::s3::S3Store::new(
+            config.clone(),
+            "fixture-secret",
+            fake.clone() as Arc<dyn HttpClient>,
+            Arc::new(FixedClock::from_rfc3339(NOW).unwrap()) as Arc<dyn Clock>,
+        )
+        .unwrap();
+        let target = StorageTarget::new(config, Box::new(store));
+        let mut transaction = transaction();
+        let first = add(&mut transaction);
+        let uploaded = transaction.upload(&first, &target, NOW).unwrap();
+        assert!(!uploaded.reused);
+        assert!(uploaded.object.key.starts_with("2026/01/"));
+        assert!(uploaded.object.key.contains('_'));
+        assert!(uploaded.object.public_url.ends_with(".webp!public"));
+        assert!(!uploaded.object.public_url.contains("width"));
+        let second = AttachmentId::new("same-content-second-article");
+        let mut request = add_request(&second, "content-hash-1");
+        request.storage_namespace = "document-article-second".into();
+        transaction.add(&request).unwrap();
+        fill_cache(&transaction, &second);
+        let reused = transaction.upload(&second, &target, NOW).unwrap();
+        assert!(reused.reused);
+        assert_eq!(reused.object.key, uploaded.object.key);
+        assert_eq!(fake.request_count(), 2);
+        assert_eq!(
+            transaction
+                .pool()
+                .get(&second)
+                .unwrap()
+                .remote_key
+                .as_deref(),
+            Some(uploaded.object.key.as_str())
+        );
+    }
+
+    #[test]
     fn the_whole_sequence_completes_remote_referenced_and_cleaned() {
         // handoff.md section 13.3, the happy path.
         let mut transaction = transaction();
@@ -1142,7 +1249,9 @@ mod tests {
 
         assert!(result.is_complete(), "{result:?}");
         let object = result.object().unwrap();
-        assert!(object.public_url.starts_with("https://cdn.example.com/uploads/photo-"));
+        assert!(object
+            .public_url
+            .starts_with("https://cdn.example.com/uploads/photo-"));
 
         let stored = transaction.pool().get(&id).unwrap();
         assert_eq!(stored.state.upload_status, UploadStatus::Succeeded);
@@ -1162,7 +1271,9 @@ mod tests {
 
         let attachment = transaction.pool().get(&id).unwrap();
         let key = attachment.dedup_key();
-        let recorded = transaction.object_for(&key).expect("the object is recorded");
+        let recorded = transaction
+            .object_for(&key)
+            .expect("the object is recorded");
         assert!(recorded.public_url.starts_with("https://cdn.example.com/"));
         assert_eq!(
             transaction.pool().get(&id).unwrap().remote_url.as_deref(),
@@ -1197,7 +1308,11 @@ mod tests {
         assert_eq!(stored.state.upload_status, UploadStatus::Failed);
         assert_eq!(stored.state.reference_status, ReferenceStatus::NotApplied);
         assert_eq!(stored.state.cache_status, CacheStatus::Present);
-        assert!(!transaction.references().get(&id).map(|s| s.is_applying()).unwrap_or(false));
+        assert!(!transaction
+            .references()
+            .get(&id)
+            .map(|s| s.is_applying())
+            .unwrap_or(false));
 
         // The retry succeeds once the target recovers.
         store.allow_puts();
@@ -1273,7 +1388,10 @@ mod tests {
 
         transaction.upload(&id, &target, NOW).unwrap();
         let error = transaction.upload(&id, &target, NOW).unwrap_err();
-        assert!(error.to_string().contains("must not be uploaded again"), "{error}");
+        assert!(
+            error.to_string().contains("must not be uploaded again"),
+            "{error}"
+        );
     }
 
     #[test]
@@ -1292,16 +1410,27 @@ mod tests {
         let second = transaction
             .add(&add_request(&AttachmentId::new("att-2"), "content-hash-1"))
             .unwrap();
-        assert_eq!(second.id, first, "the existing record is reused, not duplicated");
+        assert_eq!(
+            second.id, first,
+            "the existing record is reused, not duplicated"
+        );
         assert_eq!(transaction.pool().len(), 1);
 
         // A SUCCEEDED attachment must not be uploaded again at all, which is the stronger form of
         // "the object is reused": the second upload attempt is refused outright.
         let error = transaction.upload(&second.id, &target, NOW).unwrap_err();
-        assert!(error.to_string().contains("must not be uploaded again"), "{error}");
+        assert!(
+            error.to_string().contains("must not be uploaded again"),
+            "{error}"
+        );
         assert_eq!(store.put_count(), 1, "no second PUT was attempted");
         assert!(
-            transaction.pool().get(&second.id).unwrap().remote_url.is_some(),
+            transaction
+                .pool()
+                .get(&second.id)
+                .unwrap()
+                .remote_url
+                .is_some(),
             "the existing record already carries its URL, which is what the reuse gives the caller"
         );
 
@@ -1530,7 +1659,10 @@ mod tests {
             .into_iter()
             .map(|handle| handle.join().unwrap())
             .collect();
-        assert!(outcomes.iter().all(|outcome| outcome.is_ok()), "{outcomes:?}");
+        assert!(
+            outcomes.iter().all(|outcome| outcome.is_ok()),
+            "{outcomes:?}"
+        );
         assert_eq!(store.put_count(), 2, "two different files are two objects");
         assert_eq!(store.keys().len(), 2);
     }
@@ -1549,24 +1681,23 @@ mod tests {
         other_config.repository = Some("vellow/assets".to_string());
         // A genuinely different target has its own public URL, which is what makes the assertion
         // meaningful rather than a comparison of two identical strings.
-        other_config.public_url_prefix = "https://raw.githubusercontent.com/vellow/assets".to_string();
+        other_config.public_url_prefix =
+            "https://raw.githubusercontent.com/vellow/assets".to_string();
         let other = StorageTarget::new(
             other_config.clone(),
             Box::new(MemoryStore::new(other_config.clone())),
         );
 
         let added = transaction
-            .add(
-                &AddRequest::new(
-                    AttachmentId::new("att-2"),
-                    "photo.webp",
-                    "content-hash-1",
-                    1024,
-                    StorageTargetId::new("github-main"),
-                    other_config.storage_namespace(),
-                    NOW,
-                ),
-            )
+            .add(&AddRequest::new(
+                AttachmentId::new("att-2"),
+                "photo.webp",
+                "content-hash-1",
+                1024,
+                StorageTargetId::new("github-main"),
+                other_config.storage_namespace(),
+                NOW,
+            ))
             .unwrap();
         assert_ne!(added.id, first, "a different target is a different record");
         assert_eq!(transaction.pool().len(), 2);
@@ -1591,7 +1722,10 @@ mod tests {
         let b = add(&mut second);
         let name_b = second.pool().get(&b).unwrap().remote_name();
 
-        assert_eq!(name_a, name_b, "the same content gives the same remote name");
+        assert_eq!(
+            name_a, name_b,
+            "the same content gives the same remote name"
+        );
         assert!(name_a.starts_with("photo-"), "{name_a}");
         assert!(name_a.ends_with(".webp"), "{name_a}");
     }
@@ -1602,17 +1736,15 @@ mod tests {
         let mut transaction = transaction();
         let first = add(&mut transaction);
         transaction
-            .add(
-                &AddRequest::new(
-                    AttachmentId::new("att-2"),
-                    "photo.webp",
-                    "content-hash-2",
-                    1024,
-                    StorageTargetId::new("s3-main"),
-                    "uploads",
-                    NOW,
-                ),
-            )
+            .add(&AddRequest::new(
+                AttachmentId::new("att-2"),
+                "photo.webp",
+                "content-hash-2",
+                1024,
+                StorageTargetId::new("s3-main"),
+                "uploads",
+                NOW,
+            ))
             .unwrap();
 
         let name_a = transaction.pool().get(&first).unwrap().remote_name();
@@ -1636,7 +1768,10 @@ mod tests {
             .unwrap();
         assert!(!outcome.conflicted);
         let source = outcome.source.unwrap();
-        assert!(source.contains("![photo.webp](https://cdn.example.com/"), "{source}");
+        assert!(
+            source.contains("![photo.webp](https://cdn.example.com/"),
+            "{source}"
+        );
 
         let set = transaction.references().get(&id).unwrap();
         assert_eq!(set.len(), 1);
@@ -1662,7 +1797,10 @@ mod tests {
             1,
             "only the first occurrence is replaced: {new_source}"
         );
-        assert!(new_source.contains("`placeholder://one` as text"), "the second survives");
+        assert!(
+            new_source.contains("`placeholder://one` as text"),
+            "the second survives"
+        );
     }
 
     #[test]
@@ -1773,7 +1911,10 @@ mod tests {
         assert_eq!(transaction.pool().tasks().len(), 1);
         let task = &transaction.pool().tasks()[0];
         assert_eq!(task.content_id, "article-a");
-        assert!(task.remote_url.is_some(), "the URL is kept so the retry can apply it");
+        assert!(
+            task.remote_url.is_some(),
+            "the URL is kept so the retry can apply it"
+        );
     }
 
     #[test]
@@ -1811,8 +1952,14 @@ mod tests {
         let mut restored =
             AttachmentTransaction::from_state(&transaction.to_state().unwrap()).unwrap();
         let outcome = restored.upload(&id, &target, NOW);
-        assert!(outcome.is_err(), "an already-uploaded attachment is not uploaded again");
-        assert!(outcome.unwrap_err().to_string().contains("must not be uploaded again"));
+        assert!(
+            outcome.is_err(),
+            "an already-uploaded attachment is not uploaded again"
+        );
+        assert!(outcome
+            .unwrap_err()
+            .to_string()
+            .contains("must not be uploaded again"));
     }
 
     #[test]
@@ -1904,7 +2051,10 @@ mod tests {
         assert_eq!(outcome.object.storage_target_id.as_str(), "github-main");
         assert_eq!(outcome.object.storage_namespace, other.namespace());
         assert!(
-            outcome.object.public_url.starts_with("https://raw.example.com/"),
+            outcome
+                .object
+                .public_url
+                .starts_with("https://raw.example.com/"),
             "{}",
             outcome.object.public_url
         );
@@ -1945,7 +2095,10 @@ mod tests {
         assert!(transaction.objects().is_empty(), "and its record with it");
 
         let stored = transaction.pool().get(&id).unwrap();
-        assert!(!stored.is_remote(), "the attachment no longer claims to be remote");
+        assert!(
+            !stored.is_remote(),
+            "the attachment no longer claims to be remote"
+        );
         assert!(stored.remote_url.is_none());
         assert!(stored.remote_key.is_none());
         assert_eq!(stored.state.upload_status, UploadStatus::Pending);
@@ -1983,8 +2136,15 @@ mod tests {
             .expect_err("a target that does not hold the object is refused");
         assert!(error.to_string().contains("s3-main"), "{error}");
 
-        assert_eq!(store.keys().len(), 1, "the object on the real target survives");
-        assert!(other_store.keys().is_empty(), "and nothing appeared on the named one");
+        assert_eq!(
+            store.keys().len(),
+            1,
+            "the object on the real target survives"
+        );
+        assert!(
+            other_store.keys().is_empty(),
+            "and nothing appeared on the named one"
+        );
         assert_eq!(transaction.objects().len(), 1, "the record is still there");
         assert!(
             transaction.pool().get(&id).unwrap().is_remote(),

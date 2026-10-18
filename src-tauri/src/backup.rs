@@ -85,12 +85,22 @@ pub fn prune_backups(
     state: State<'_, AppState>,
     directory: Option<String>,
     keep: Option<usize>,
+    expires_after_days: Option<usize>,
 ) -> Result<usize, CommandError> {
     let project = state.project()?;
     let directory = match directory {
         Some(text) if !text.trim().is_empty() => std::path::PathBuf::from(text),
         _ => veloct_app::backup_directory(project.root.as_path())?,
     };
+    if let Some(days) = expires_after_days.filter(|days| *days > 0) {
+        let removed = veloct_app::prune_older_than(&directory, days)?;
+        let _ = project.log(
+            veloct_logging::LogEvent::info(veloct_logging::Category::Backup, "expired backups pruned")
+                .with_field("removed", removed.to_string())
+                .with_field("days", days.to_string()),
+        );
+        return Ok(removed);
+    }
     let keep = match keep {
         // A retention of zero would delete the archive that was just taken, so it falls back to the
         // documented default rather than being honoured.
