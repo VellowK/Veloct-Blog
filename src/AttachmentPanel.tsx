@@ -357,7 +357,8 @@ export default function AttachmentPanel({
     return (
       <div className="page">
         <PageHeader
-          title="附件"
+          level={mode === 'settings' ? 2 : 1}
+          title={mode === 'settings' ? '附件存储设置' : '附件'}
           description="附件池、存储目标与远程对象。加入附件只写入缓存池,不会改动任何文章。"
         />
         <StateBlock
@@ -372,6 +373,7 @@ export default function AttachmentPanel({
   return (
     <div className={`page attachment-panel${mode === 'settings' ? ' attachment-panel--settings' : ''}`}>
       <PageHeader
+        level={mode === 'settings' ? 2 : 1}
         title={mode === 'settings' ? '附件存储设置' : '附件管理'}
         description={mode === 'settings' ? '管理附件存储目标和系统凭据。' : '集中管理已添加的图片与文件。上传不改动文章;备份失效只提示,不自动切换。'}
         actions={

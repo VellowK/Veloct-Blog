@@ -17,6 +17,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { Feedback } from './components/Notifications';
+import { Card, PageHeader, StateBlock } from './components/ui';
 
 import { api, describeError, type LogPage } from './lib/api';
 
@@ -60,16 +61,15 @@ export default function LogView({ enabled }: { enabled: boolean }) {
 
   if (!enabled) {
     return (
-      <div className="log-page">
+      <div className="log-page admin-panel">
         <p className="muted">打开一个项目后可以查看它的日志。</p>
       </div>
     );
   }
 
   return (
-    <div className="log-page">
-      <header className="log-header">
-        <strong>日志</strong>
+    <div className="log-page admin-panel">
+      <PageHeader title="日志" description="查看项目运行记录，按等级、类别或关键词定位问题。日志字段已在后端脱敏。" actions={<>
         {page && (
           <span className="log-counts">
             <span className="level-info">{page.info} 信息</span>
@@ -80,8 +80,9 @@ export default function LogView({ enabled }: { enabled: boolean }) {
         <button type="button" onClick={() => void load()}>
           刷新
         </button>
-      </header>
+      </>} />
 
+      <Card title="筛选记录">
       <div className="log-filters">
         <select
           value={level}
@@ -115,8 +116,10 @@ export default function LogView({ enabled }: { enabled: boolean }) {
           spellCheck={false}
         />
       </div>
+      </Card>
 
       <Feedback message={error} tone="error" />
+      <Card title="运行记录">
 
       <ul className="log-entries">
         {(page?.entries ?? []).map((entry, index) => (
@@ -136,10 +139,9 @@ export default function LogView({ enabled }: { enabled: boolean }) {
             )}
           </li>
         ))}
-        {page && page.entries.length === 0 && (
-          <li className="muted">没有匹配的日志条目。</li>
-        )}
       </ul>
+      {page && page.entries.length === 0 && <StateBlock tone="empty" title="没有匹配的日志条目" description="试试其他筛选条件，或刷新后查看最新记录。" />}
+      </Card>
     </div>
   );
 }

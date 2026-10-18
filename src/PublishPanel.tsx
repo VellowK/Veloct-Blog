@@ -32,7 +32,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import { api, describeError, type PublishView, type ReleaseView, type SiteInstallView } from './lib/api';
-import { StateBlock } from './components/ui';
+import { Card, PageHeader, StateBlock } from './components/ui';
 import {
   describeSiteInstall,
   npmSourceLabel,
@@ -183,7 +183,7 @@ export default function PublishPanel({
 
   if (!enabled) {
     return (
-      <div className="publish-panel">
+      <div className="publish-panel admin-panel">
         <p className="muted">打开一个项目后可以发布。</p>
       </div>
     );
@@ -195,9 +195,8 @@ export default function PublishPanel({
   const blocked = install ? publishBlockedReason(install) : null;
 
   return (
-    <div className="publish-panel">
-      <header className="publish-header">
-        <strong>发布</strong>
+    <div className="publish-panel admin-panel">
+      <PageHeader title="发布" description="检查当前内容，构建站点并保存发布快照。发布不会自动部署到线上。" actions={<>
         <button
           type="button"
           className="primary"
@@ -210,7 +209,7 @@ export default function PublishPanel({
         <button type="button" onClick={() => void reload()} disabled={busy}>
           刷新
         </button>
-      </header>
+      </>} />
 
       {error && (
         <StateBlock
@@ -243,9 +242,9 @@ export default function PublishPanel({
       )}
 
       {install && display && (
-        <>
-          <h3>站点依赖 · {siteInstallStateLabel(install)}</h3>
+        <Card title={`站点依赖 · ${siteInstallStateLabel(install)}`}>
           <StateBlock
+            inline
             tone={display.tone}
             title={display.title}
             description={
@@ -289,7 +288,7 @@ export default function PublishPanel({
               </>
             }
           />
-        </>
+        </Card>
       )}
 
       {result && (
@@ -322,8 +321,8 @@ export default function PublishPanel({
         </div>
       )}
 
-      <h3>历史发布</h3>
-      {releases.length === 0 && <p className="muted">还没有发布过。</p>}
+      <Card title="历史发布" description="查看已保存的发布版本，按需重发或回滚。">
+      {releases.length === 0 && <StateBlock tone="empty" title="还没有发布过" description="完成首次发布后，这里会保存可追溯的版本记录。" />}
       <ul className="release-list">
         {releases.map((release) => (
           <li key={release.release_id}>
@@ -353,6 +352,7 @@ export default function PublishPanel({
           </li>
         ))}
       </ul>
+      </Card>
     </div>
   );
 }

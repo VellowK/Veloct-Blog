@@ -149,16 +149,20 @@ export function PageHeader({
   title,
   description,
   actions,
+  level = 1,
 }: {
   /** Usually a string. The editor passes the read-only title input so its copy behaviour is unchanged. */
   title: ReactNode;
   description?: ReactNode;
   actions?: ReactNode;
+  /** Embedded settings panels are sections of the page, not a second page heading. */
+  level?: 1 | 2;
 }) {
+  const Heading = level === 1 ? 'h1' : 'h2';
   return (
-    <header className="page-header">
+    <header className={`page-header${level === 2 ? ' page-header--section' : ''}`}>
       <div className="page-header-text">
-        <h1 className="page-title">{title}</h1>
+        <Heading className="page-title">{title}</Heading>
         {description !== undefined && <p className="page-lede">{description}</p>}
       </div>
       {actions && <div className="page-header-actions">{actions}</div>}

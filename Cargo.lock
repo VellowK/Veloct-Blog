@@ -5170,7 +5170,7 @@ checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
 
 [[package]]
 name = "veloct-ai"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "regex",
  "serde",
@@ -5185,7 +5185,7 @@ dependencies = [
 
 [[package]]
 name = "veloct-app"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "git2",
  "parking_lot",
@@ -5212,7 +5212,7 @@ dependencies = [
 
 [[package]]
 name = "veloct-attach"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "hex",
  "serde",
@@ -5230,7 +5230,7 @@ dependencies = [
 
 [[package]]
 name = "veloct-backup"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "flate2",
  "hex",
@@ -5252,7 +5252,7 @@ dependencies = [
 
 [[package]]
 name = "veloct-content"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -5268,7 +5268,7 @@ dependencies = [
 
 [[package]]
 name = "veloct-core"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "fs2",
  "hex",
@@ -5290,7 +5290,7 @@ dependencies = [
 
 [[package]]
 name = "veloct-deploy"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "hex",
  "hmac 0.12.1",
@@ -5311,7 +5311,7 @@ dependencies = [
 
 [[package]]
 name = "veloct-desktop"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "base64 0.22.1",
  "git2",
@@ -5344,7 +5344,7 @@ dependencies = [
 
 [[package]]
 name = "veloct-git"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "git2",
  "serde",
@@ -5357,7 +5357,7 @@ dependencies = [
 
 [[package]]
 name = "veloct-github"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -5367,7 +5367,7 @@ dependencies = [
 
 [[package]]
 name = "veloct-logging"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -5378,7 +5378,7 @@ dependencies = [
 
 [[package]]
 name = "veloct-markdown"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "pulldown-cmark",
  "regex",
@@ -5393,7 +5393,7 @@ dependencies = [
 
 [[package]]
 name = "veloct-process"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "parking_lot",
  "serde",
@@ -5406,7 +5406,7 @@ dependencies = [
 
 [[package]]
 name = "veloct-release"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "git2",
  "hex",
@@ -5426,7 +5426,7 @@ dependencies = [
 
 [[package]]
 name = "veloct-s3"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "hmac 0.12.1",
  "quick-xml 0.38.4",
@@ -5439,7 +5439,7 @@ dependencies = [
 
 [[package]]
 name = "veloct-sidecar"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "serde_json",
  "tempfile",
@@ -5448,7 +5448,7 @@ dependencies = [
 
 [[package]]
 name = "veloct-storage"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "rusqlite",
  "rusqlite_migration",

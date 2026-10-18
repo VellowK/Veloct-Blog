@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ChangeEvent } from 'react';
 import AvatarCropDialog from './AvatarCropDialog';
+import { Card, StateBlock } from './components/ui';
 import { Feedback } from './components/Notifications';
 import { api, describeError, type AliasPolicy, type FileRevision, type PageTransition, type SiteSettings } from './lib/api';
 import { SOCIAL_PLATFORMS, findSocialPlatform, type SocialPlatform } from '../site/src/lib/social-platforms';
@@ -278,15 +279,15 @@ export default function SiteSettingsPanel({ enabled, mode = 'settings', projectP
 
   return (
     <>
-    <section className="settings-panel">
-      {mode === 'settings' && !onlySection && <div className="settings-subtabs" role="tablist" aria-label="站点设置分类">
-        <button type="button" className={activeSection === 'article' ? 'is-active' : ''} onClick={() => setSection('article')}>文章设置</button>
-        <button type="button" className={activeSection === 'seo' ? 'is-active' : ''} onClick={() => setSection('seo')}>SEO 设置</button>
-        <button type="button" className={activeSection === 'homepage' ? 'is-active' : ''} onClick={() => setSection('homepage')}>首页与热力图</button>
+    <Card className="settings-panel" title={mode === 'info' ? '个人主页信息' : ({ article: '文章与列表', seo: '搜索引擎优化', homepage: '首页与热力图', beautify: '站点美化', filing: '备案信息' })[activeSection]} description={mode === 'info' ? '修改后保存，再通过右侧真实站点预览检查效果。' : '配置仅在点击保存后应用到当前项目。'}>
+      {mode === 'settings' && !onlySection && <div className="settings-subtabs" role="group" aria-label="站点设置分类">
+        <button type="button" aria-pressed={activeSection === 'article'} className={activeSection === 'article' ? 'is-active' : ''} onClick={() => setSection('article')}>文章设置</button>
+        <button type="button" aria-pressed={activeSection === 'seo'} className={activeSection === 'seo' ? 'is-active' : ''} onClick={() => setSection('seo')}>SEO 设置</button>
+        <button type="button" aria-pressed={activeSection === 'homepage'} className={activeSection === 'homepage' ? 'is-active' : ''} onClick={() => setSection('homepage')}>首页与热力图</button>
       </div>}
       <Feedback message={error} tone="error" />
       <Feedback message={status} tone="success" />
-      {!enabled ? <p className="muted">请先打开项目。</p> : !loaded ? <p className="muted">{error ? '站点信息未能载入，请重新打开项目后重试。' : '正在读取站点信息…'}</p> : (
+      {!enabled ? <StateBlock tone="empty" title="请先打开项目" description="选择项目后即可编辑站点配置。" /> : !loaded ? <StateBlock tone={error ? 'error' : 'loading'} title={error ? '站点信息未能载入' : '正在读取站点信息…'} description={error ? '请重新打开项目后重试。' : undefined} /> : (
         <>
           {mode === 'info' && <div className="settings-form">
             <div className="settings-field settings-field--wide">
@@ -435,7 +436,7 @@ export default function SiteSettingsPanel({ enabled, mode = 'settings', projectP
           <div className="settings-actions"><button type="button" className="primary" disabled={saving || avatarBusy || coverBusy || githubBusy} onClick={() => void save()}>{saving ? '正在保存…' : mode === 'info' ? '保存站点信息' : '保存设置'}</button></div>
         </>
       )}
-    </section>
+    </Card>
       {cropFile && (
         <AvatarCropDialog
           file={cropFile}

@@ -6,6 +6,7 @@ import { chromium } from '../target/browser-validation/node_modules/playwright/i
 const source = `
 import React from 'react'; import { createRoot } from 'react-dom/client';
 import SiteSettingsPanel from './src/SiteSettingsPanel'; import { api } from './src/lib/api';
+import { NotificationHost } from './src/components/Notifications';
 import { normalizeSiteConfig } from './site/src/lib/site-config.mjs';
 `;
 // The browser cannot import the Node config reader. Keep the fixture DTO explicit; production
@@ -18,12 +19,12 @@ api.saveSiteSettings = async s => { window.fixture.saved.push(structuredClone(s)
 api.syncGithubActivity = async username => { window.fixture.sync.push(username); if(window.fixture.fail) throw {message:'HTTP 503',code:'invalid',hint:null}; return {username,days:Array(365).fill({date:'2026-10-15',level:1}),fetchedAt:'2026-10-15'}; };
 api.saveSiteCover = async bytes => { window.fixture.covers.push(bytes); return '/assets/home-cover.png'; };
 const root=createRoot(document.getElementById('root')); let revision=0;
-window.mount = mode => root.render(<div className="app"><div className="main"><div className="content"><SiteSettingsPanel key={++revision} enabled mode={mode} projectPath="fixture-only" /></div></div></div>);
+window.mount = mode => root.render(<><NotificationHost /><div className="app"><div className="main"><div className="content"><SiteSettingsPanel key={++revision} enabled mode={mode} projectPath="fixture-only" /></div></div></div></>);
 window.mount('info');
 `;
-const bundle = await build({ stdin: { contents: fixture, resolveDir: process.cwd(), loader: 'tsx' }, bundle: true, write: false, platform: 'browser', jsx: 'automatic', define: { 'process.env.NODE_ENV': '"production"' } });
-const js = bundle.outputFiles[0].text;
-const css = await readFile('src/styles.css', 'utf8');
+const bundle = await build({ stdin: { contents: fixture, resolveDir: process.cwd(), loader: 'tsx' }, outfile: 'fixture.js', bundle: true, write: false, platform: 'browser', jsx: 'automatic', define: { 'process.env.NODE_ENV': '"production"' } });
+const js = bundle.outputFiles.find(file => file.path.endsWith('.js')).text;
+const css = (await readFile('src/styles.css', 'utf8')) + '\n' + (bundle.outputFiles.find(file => file.path.endsWith('.css'))?.text ?? '');
 const browser = await chromium.launch({ channel: 'msedge', headless: true });
 try {
   for (const width of [1440, 1024]) {

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Feedback } from './components/Notifications';
+import { Card } from './components/ui';
 import { api, type LinkedKnowledge, type LinkedKnowledgeView, type KnowledgeOutlineNode, type KnowledgeProvider } from './lib/api';
 
 const label = (provider: KnowledgeProvider) => provider === 'yuque' ? '语雀' : '飞书';
@@ -44,7 +45,7 @@ export default function LinkedKnowledgePanel({ enabled }: { enabled: boolean }) 
   };
   const open = (id: string, nodeId: string | null = null) => { void api.openLinkedKnowledge(id, nodeId).catch((e) => setError(message(e))); };
   return <section className="linked-knowledge" aria-label="链接知识库">
-    <header className="linked-knowledge__heading"><div><h2>链接知识库</h2><p className="muted">链接语雀或飞书，只同步目录，不复制正文。点击条目会在浏览器打开源文档。</p></div><div className="linked-knowledge__actions"><button type="button" disabled={!enabled || busy} onClick={() => void run(() => api.linkedKnowledge(), '列表已重新读取，可重试操作')}>重新读取列表</button><button type="button" disabled={!enabled || !ready || busy} onClick={() => edit()}>链接知识库</button></div></header>
+    <Card title="链接知识库" description="链接语雀或飞书，只同步目录，不复制正文。点击条目会在浏览器打开源文档。" actions={<div className="linked-knowledge__actions"><button type="button" disabled={!enabled || busy} onClick={() => void run(() => api.linkedKnowledge(), '列表已重新读取，可重试操作')}>重新读取列表</button><button type="button" disabled={!enabled || !ready || busy} onClick={() => edit()}>链接知识库</button></div>}>
     <p className="muted">目录是手动同步的快照；构建发布后，目录标题和源链接会显示在网站「知识库」中。私有文档仍需访问者在源站有权限。</p>
     <Feedback message={error} tone="error" actions={<button type="button" disabled={busy || !enabled} onClick={() => void run(() => api.linkedKnowledge(), '列表已重新读取，可重试操作')}>重新读取列表</button>} />
     <Feedback message={notice} tone="success" />
@@ -69,5 +70,6 @@ export default function LinkedKnowledgePanel({ enabled }: { enabled: boolean }) 
       </header>
       {item.nodes.length ? <Outline nodes={item.nodes} open={(nodeId) => open(item.id, nodeId)} /> : <p className="muted">目录为空；请确认源站内容及应用可见范围，再更新目录。</p>}
     </article>)}
+    </Card>
   </section>;
 }

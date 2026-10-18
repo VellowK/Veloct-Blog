@@ -189,6 +189,9 @@
 }
 
 .content--site-info > .settings-page {
+  /* This is the one settings workspace with independently scrolling form and preview. */
+  flex: 1;
+  min-height: 0;
   max-width: none;
   overflow: hidden;
 }

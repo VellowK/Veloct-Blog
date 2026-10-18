@@ -18,6 +18,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { Feedback } from './components/Notifications';
+import { Card, PageHeader, StateBlock } from './components/ui';
 
 import {
   api,
@@ -158,27 +159,26 @@ export default function BackupPanel({ enabled, mode: panelMode = 'manage' }: { e
 
   if (!enabled) {
     return (
-      <div className="backup-panel">
+      <div className="backup-panel admin-panel">
         <p className="muted">打开一个项目后可以备份。</p>
       </div>
     );
   }
 
   return (
-    <div className="backup-panel">
-      <header className="backup-header">
-        <strong>备份与恢复</strong>
-        <button type="button" onClick={() => void reload()} disabled={busy}>
-          刷新
-        </button>
-      </header>
+    <div className="backup-panel admin-panel">
+      <PageHeader
+        level={panelMode === 'settings' ? 2 : 1}
+        title={panelMode === 'settings' ? '云端备份' : '备份与恢复'}
+        description={panelMode === 'settings' ? '管理私有备份目标与凭据，按需上传已有备份。' : '保存创作的每一步。恢复前先检查计划，确认后才替换文件。'}
+        actions={<button type="button" onClick={() => void reload()} disabled={busy}>刷新</button>}
+      />
 
       <Feedback message={error} tone="error" />
       <Feedback message={notice} tone="success" />
 
       {panelMode === 'manage' && (
-      <section>
-        <h3>立即备份</h3>
+      <Card title="立即备份" description="手动备份、导出或设置自动备份。备份文件只在你选择时上传。">
         <div className="backup-actions">
           <div className="backup-action-line">
           <button
@@ -277,12 +277,11 @@ export default function BackupPanel({ enabled, mode: panelMode = 'manage' }: { e
             )}
           </div>
         )}
-      </section>
+      </Card>
       )}
 
       {panelMode === 'settings' && (
-      <section className="cloud-backup">
-        <h3>云端备份目标({cloudTargets.length}/3 默认保留)</h3>
+      <Card className="cloud-backup" title={`云端备份目标 (${cloudTargets.length}/3 默认保留)`}>
         <p className="muted hint">
           handoff.md §17.4 只支持 GitHub 与 S3/S3-compatible 两种云端目标;§17.2 要求目标必须是<strong>私有</strong>的,
           因为备份包未加密。凭据保存在操作系统凭据库,不进入 SQLite、日志或备份包(§12)。
@@ -532,11 +531,12 @@ export default function BackupPanel({ enabled, mode: panelMode = 'manage' }: { e
 
         {cloudResult?.run && <CloudRunReport run={cloudResult.run} />}
         {cloudRun && <CloudRunReport run={cloudRun} />}
-      </section>
+      </Card>
       )}
 
       {panelMode === 'manage' && (
-      <section>        {archives.length === 0 && <p className="muted">还没有备份。</p>}
+      <Card title="备份历史">
+        {archives.length === 0 && <StateBlock tone="empty" title="还没有备份" description="创建第一份备份后，可在这里查看、重发或暂存恢复。" />}
         <ul className="archive-list">
           {archives.map((archive) => (
             <li key={archive.path}>
@@ -583,12 +583,11 @@ export default function BackupPanel({ enabled, mode: panelMode = 'manage' }: { e
             </li>
           ))}
         </ul>
-      </section>
+      </Card>
       )}
 
       {staged && (
-        <section className="restore-plan">
-          <h3>恢复计划(尚未改动任何文件)</h3>
+        <Card className="restore-plan" title="恢复计划" description="尚未改动任何文件。请检查计划，确认后才替换文件。">
           <label>
             <span>恢复模式</span>
             <select value={mode} onChange={(event) => setMode(event.target.value as Mode)}>
@@ -648,12 +647,11 @@ export default function BackupPanel({ enabled, mode: panelMode = 'manage' }: { e
               确认恢复(会替换文件)
             </button>
           </div>
-        </section>
+        </Card>
       )}
 
       {applied && (
-        <section className="restore-applied">
-          <h3>恢复结果</h3>
+        <Card className="restore-applied" title="恢复结果">
           <p>{applied.summary}</p>
           <p className="muted">
             写入 {applied.files_written} 个文件;保留 {applied.preserved.length} 个。
@@ -664,7 +662,7 @@ export default function BackupPanel({ enabled, mode: panelMode = 'manage' }: { e
           {applied.needs_index_rebuild && (
             <p className="restore-note">内容索引需要重建。</p>
           )}
-        </section>
+        </Card>
       )}
     </div>
   );

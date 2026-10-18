@@ -928,7 +928,7 @@ export default function App() {
           ) : view === 'pages' ? (
             <ContentManager kind="page" documents={documents} onDelete={deleteDocument} onCreate={() => void createDocument('page')} onSelect={(entry) => { void selectDocument(entry); }} />
           ) : view === 'knowledge' ? (
-            <div className="knowledge-workspace">
+            <div className="knowledge-workspace page">
               <ContentManager kind="knowledge" documents={documents} onDelete={deleteDocument} onCreate={() => void createDocument('knowledge')} onSelect={(entry) => { void selectDocument(entry); }} />
               <LinkedKnowledgePanel key={project?.path ?? 'none'} enabled={project !== null} />
             </div>
@@ -952,18 +952,18 @@ export default function App() {
               }}
             />
           ) : view === 'works' ? (
-            <div className="page page--legacy">
+            <div className="page page--panel">
               <WorksPanel enabled={project !== null} />
             </div>
           ) : view === 'backups' ? (
-            <div className="page page--legacy">
+            <div className="page page--panel">
               <BackupPanel enabled={project !== null} />
             </div>
 
           ) : view === 'navigation' ? (
             <NavigationPanel key={project?.path ?? 'no-project'} menus={customMenus} pages={documents} onChange={updateCustomMenus} />
           ) : view === 'publish' ? (
-            <div className="page page--legacy">
+            <div className="page page--panel">
               {/* `projectPath` is passed so the panel re-reads the install state when a DIFFERENT
                   project is opened: the Rust side clears it with the project, and a panel that only
                   watched `enabled` would keep showing the closed project's install. */}
@@ -988,7 +988,7 @@ export default function App() {
               />
             </div>
           ) : view === 'appearance' ? (
-            <div className="page page--legacy settings-page">
+            <div className="page page--panel settings-page">
               <PageHeader title="外观" description="管理站点信息与站点美化" />
               <div className="settings-tabs" role="group" aria-label="外观分类">
                 {([
@@ -1030,9 +1030,9 @@ export default function App() {
               )}
             </div>
           ) : view === 'settings' ? (
-            <div className="page page--legacy settings-page">
+            <div className="page page--panel settings-page">
               <PageHeader title="设置" description="部署、资源与应用配置" />
-              <div className="settings-tabs" role="tablist" aria-label="设置分类">
+              <div className="settings-tabs" role="group" aria-label="设置分类">
                 {([
                    ['site', '站点设置'],
                    ['deploy', '部署目标'],
@@ -1041,7 +1041,7 @@ export default function App() {
                    ['backup', '备份设置'],
 
                 ] as const).map(([key, label]) => (
-                  <button key={key} type="button" className={settingsSection === key ? 'is-active' : ''} onClick={() => setSettingsSection(key)}>{label}</button>
+                  <button key={key} type="button" className={settingsSection === key ? 'is-active' : ''} aria-pressed={settingsSection === key} onClick={() => setSettingsSection(key)}>{label}</button>
                 ))}
               </div>
               {settingsSection === 'site' && <SiteSettingsPanel key={project?.path ?? 'no-project'} enabled={project !== null} projectPath={project?.path ?? null} />}
@@ -1068,7 +1068,7 @@ export default function App() {
               onRetry={() => void startPreview()}
             />
           ) : view === 'logs' ? (
-            <div className="page page--legacy">
+            <div className="page page--panel">
               <LogView enabled={project !== null} />
             </div>
           ) : view === 'editor' ? (

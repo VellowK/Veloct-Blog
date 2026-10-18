@@ -1,13 +1,14 @@
 # 下一位 AI：从这里接手
 
-> 交接更新：2026-10-18。最新为首页头像/头图入附件池并上传首选目标：失败保留旧地址，成功后仍需保存站点信息，已保存图片计入附件引用。UI271/21files、双宽度浏览器、应用204+1ignored/desktop155与clippy通过；完整workspace1575 passed/1 failed/17 ignored，既有安装取消进程测试复现，不能宣称全量通过。**最终EXE/NSIS已重建、独立EXE补签后两项Valid，sidecar一致，第6节为本轮新包。** 没有操作真实博客或云账户，没有待继续的已授权工作。
+> 最新轮次：2026-10-18，用户授权 1.0.1 发布。桌面后台 Claude 暗色统一、版本同步与发布回归已完成；UI274/22files、TS/Vite218modules、九套双宽度浏览器、Astro21页/64项检查及完整Rust1576/0failed/17ignored通过。发布标签 `v1.0.1`，仓库仍私有；未安装、未写用户博客或部署云站点。
 
-**本次交接整理（2026-10-18）只改文档**：精简了当前过程说明并归档原文，澄清了当前问题与历史记录；没有重跑产品测试、重建或安装。下面数字和产物来自已完成的首页图片功能轮次，不是此次整理的新测试结论。
+**本轮为 1.0.1 发版，包含已完成的 UI 重构与此前修复。** 后台标题、卡片、表单、空态、设置导航和滚动层级统一；业务确认、单栏编辑器与真实站点预览保持原语义。桌面/Tauri/Rust/npm根版本同步，第三方依赖保持不变。最新产物信息见第6节，旧轮次数据仅作历史。
 
 **下一个 AI 的第一步**：读本文件与[当前产品要求](<PROCESSING.md>)，检查工作树；向用户确认下一项具体任务。不要继续旧任务、自动修 ISSUE、上传、安装、提交或发布。
 
 ## 1. 现在做到哪里
 
+- **最新后台统一**：作品、备份、部署、发布、日志、网络图片、菜单、站点设置与外链知识库统一共享 PageHeader / Card / StateBlock；设置内嵌标题为h2，统一暖暗卡片/12px圆角/40px控件/间距和分组导航。去掉普通面板嵌套滚动，保留编辑器/预览/站点信息双栏滚动边界。仪表盘同一层级表面；没有改网站前台或领域业务。新增 [全后台生产浏览器检查](<scripts/verify-admin-dark.mjs>)，覆盖12个导航页和4个设置分区；连同既有8套回归两宽度通过，UI271/21files通过。
 - 最新首页图片：头像512px裁切与头图均先入附件池，再上传一个首选云目标；已配置同步时用第一个目标，不可用不回退，未配置时用可见云目标最高上传优先级/保存顺序。S3/R2无有效公开域名时入池后拒绝网络写入。失败不改旧地址，成功只填表单仍须保存，保留上传中编辑的作者字段并忽略导航晚到结果；站点图片引用随保存/重开重建，换图不删文章引用/远程对象，不迁移既有本地文件。入口为[site_images](<crates/veloct-app/src/site_images.rs>)、[桌面图片命令](<src-tauri/src/site_images.rs>)、[设置面板](<src/SiteSettingsPanel.tsx>)和[浏览器回归](<scripts/verify-site-images.mjs>)。代码/回归及签名新包完成，相关job已收集，不重复已完成工作。
 - 前轮五项：附件目标从已配置策略选择；文件点击/原生与浏览器拖放/悬停或聚焦后粘贴，先预览、确认后入池，不自动上传/改正文；右上分类通知五秒进度并可查看完整详情，不清空结构状态；面包屑返回前页保留编辑缓冲；AI建页导航、设置、调用和桌面命令移除，普通页面不受影响。一次20文件、单个64MiB；只内联<=8MiB按文件头识别的位图，其他只显示信息，不放开file://。回归与签名交付均已完成；构建/后验job均已收集，不重复已通过工作。
 - 前轮功能是 S3/R2 Halo 风格策略：端点/CDN 分离协议与主机、Path/Virtual风格、目录模板/命名/同名防覆盖、扩展名首匹配后缀、预览缩略图、上传隐藏/优先级和显式只读验证。新策略默认UUID+随机冲突后缀；旧策略缺省不迁移，普通编辑仍保留旧命名/去重。验证只读ListObjectsV2，不保存或上传，不代表PUT/CDN权限。Secret仍只OS凭据库；未进行真实桶联调或用户博客写入。当前编码与回归完成，最终签名包信息见第6节。
@@ -30,7 +31,7 @@
 
 ## 3. 工作树和用户数据
 
-- 应用仓库：`D:\Veloct-Blog`；分支 `master`，HEAD `c97ad9e`。本次会话没有新提交。大量功能在已修改和未跟踪文件中，**只交 Git HEAD 会丢工作**。
+- 应用仓库：`D:\Veloct-Blog`；分支 `master`，发布标签 `v1.0.1`。重构前完整快照 `3c51661` / `backup/admin-dark-before-20261018` 保留；发布包含后台统一与版本变更，不重写备份/发布标签。仓库仍私有；凭据文件忽略，不进入提交、日志或发布资产。
 - 接手先运行 `git status --short` / `git diff --stat`。禁止 reset/clean/无关回滚，不要 `git add -A`，不要清理未跟踪的新组件、基线和验证脚本。要提交/推送时先得到用户指示并逐路径核对。
 - 应用源码与用户自己的博客项目是两个目录；真实项目绝不是仓库根目录。其本机位置见 [工作树与真实用户项目](<PROCESSING.md#2-工作树与真实用户项目>)；不要把机器私人目录固化进产品逻辑或复制用户内容进模板。
 - **2026-10-16历史证据**：用户实际项目的三份匹配官方模板曾备份升级，实际构建和双尺寸浏览器验证通过，8个内容/配置/资源文件SHA-256不变；当时核验实际项目、staged模板与源码一致。首页图片轮和本次文档整理均未重查真实项目，不能写成当前文件重新核验。
@@ -63,28 +64,28 @@
 
 | 范围 | 真实记录 |
 |---|---|
-| UI（本轮首页图片） | 271 tests / 21files，TS/Vite218modules通过；保留既有大包警告 |
-| 真实浏览器（本轮） | 首页图片、五项界面、资源栏生产bundle均1440/1024通过，无JS错误；IPC/云端/文件为隔离fixture，不是云账户或装机联调 |
-| Rust（本轮） | 完整串行workspace1575 passed / 1 failed / 17 ignored / 47targets；仅安装取消进程测试失败且复核仍失败。最终相关变动后应用204+1ignored、desktop155通过，clippy0仅既有site-settings警告。未修改进程终止代码，不把前轮全量通过沿用到本轮 |
-| 打包（本轮完成） | sidecar→installer退出0，release5分47秒；独立EXE补签后两项Check均Valid，源sidecar与fresh build一致；最终哈希见下表，没有装机或发布 |
+| UI（1.0.1发布复核） | 274 tests / 22files，TS/Vite218modules通过；新版本/依赖锁完整性测试3项，保留既有大包警告 |
+| 真实浏览器（本轮） | 全后台、五项界面、首页图片、本文资源、编辑器、站点设置、菜单选择器、S3、EdgeOne共九套均1440/1024通过，无JS错误；IPC/云端/文件为隔离fixture，不是云账户或装机联调 |
+| Rust（1.0.1发布复核） | 关闭增量缓存完整串行workspace1576 passed / 0 failed / 17 ignored / 47targets；clippy退出0，仅既有site-settings警告。进程树和安装取消本次均通过；前轮1575/1failed及单项失败保留为历史，未改终止代码，不宣称不稳定性已根治 |
+| 打包（1.0.1发布复核） | 修正模板锁文件后重新prepare并重打，最终installer退出0/release1分40秒；独立EXE补签后两项Valid，版本均1.0.1，sidecar与fresh build一致；无安装/卸载验收 |
 | GitHub 真实网络（前一轮） | 同一公开账号的生产 Rust 客户端修复前HTTP500、修复后371天；显式运行ignored测试通过，不写用户项目，不是新安装包UI装机证明 |
-| 模板网站（10-16历史） | 21 页构建，64/64 产物检查；本轮模板未改，未重跑网站/真实项目构建 |
+| 模板网站（1.0.1发布复核） | prepare/test:template通过，Astro21页构建、64/64产物检查；仅模板版本元数据同步，不改网站前台视觉，未构建用户真实项目 |
 | 真实浏览器（10-16历史） | 首页 Edge 1440×900 / 1024×640 / 390×844；设置两种桌面尺寸；实际用户项目 8 页构建及两尺寸检查；本轮不把这些计作新视觉验收 |
 
-边界：本轮文件/通知/导航的隔离浏览器fixture及前轮S3/R2、EdgeOne的官方协议核实与隔离 IPC/HTTP fixture 不等于真实云账号联调；GitHub公开日历真实网络证据属于前轮，语雀/飞书、云存储和 EdgeOne 仍不能宣称真实账户联调。本轮没有安装/卸载、部署或发布。保留 Vite 大包、既有 clippy 字段默认赋值和实际空知识库提示。
+边界：本轮文件/通知/导航的隔离浏览器fixture及前轮S3/R2、EdgeOne的官方协议核实与隔离 IPC/HTTP fixture 不等于真实云账号联调；GitHub公开日历真实网络证据属于前轮，语雀/飞书、云存储和 EdgeOne 仍不能宣称真实账户联调。本轮发布应用安装包，不代表安装/卸载或博客部署验收；没有真实用户项目/云账户操作。保留 Vite 大包、既有 clippy 字段默认赋值和实际空知识库提示。
 
 历史失败不能抹掉：10-16主页轮曾修复隐藏规则导致的窄屏跳高；同轮一条追加无障碍检查在三尺寸后达到120秒上限，不能算其剩余构建通过。同轮打包曾被用户中断并bundle-only续做。这些不是首页图片轮的新失败或当前待办，详细过程保留在[更新记录](<UPDATE.md>)及[归档](<docs/archive/PROCESSING-2026-10-18-before-handover.md>)。
 
-## 6. 最终交付物（不是已发布版本）
+## 6. 最终交付物（1.0.1）
 
-**本表为2026-10-18首页头像/头图附件化的最终新包；五项界面旧包保留在更新历史，不再作为当前交付。**
+**本表为2026-10-18的1.0.1最终签名产物，旧1.0.0测试包哈希仅保留在更新历史。** 发布入口：[Veloct 1.0.1](<https://github.com/VellowK/Veloct-Blog/releases/tag/v1.0.1>)；仓库仍为私有，下载需要权限。
 
 | 文件 | 字节 | SHA-256 |
 |---|---:|---|
-| [测试程序](<target/release/veloct-desktop.exe>) | 17,375,672 | `D50FF290933CED2A767AF98611B65B74B5380AF9D9B3158B79B9D7CD2208746D` |
-| [NSIS 安装包](<target/release/bundle/nsis/Veloct_1.0.0_x64-setup.exe>) | 29,903,808 | `C1FFF69401D33FB952436CBFB01F12E7E04C6CF6D86ABF8855E3FFEB7130EAD6` |
+| [本地测试程序](<target/release/veloct-desktop.exe>) | 17,373,112 | `440884AEB3DE93A1A08FA68E754D08584CFA343527B613906C7AFD99053B20D0` |
+| [NSIS 安装包](<target/release/bundle/nsis/Veloct_1.0.1_x64-setup.exe>) | 29,905,448 | `DE5AB40E2914015F67B29D6DD800ED374E025425E5C66DEA8460E62AA9B3B8B8` |
 
-本轮首页图片2026-10-18最终构建退出0（release5分47秒）；EXE14:09:41、安装器14:09:25（+08:00）。独立EXE打包后NotSigned已补签，`sign-artifacts.ps1 -Installer -Check` 两项均Valid，`build-sidecar.ps1 -Check` 确认bundler还原后的源sidecar与fresh build一致。证书沿用 `117C9922717A3A7D240B9340917781EA5B9F577F`，仅本机自签信任，不保证别的电脑免SmartScreen。版本仍1.0.0，没有安装/发布或真实对象存储测试；本轮首页图片及签名交付已完成。之后若重建，此表就成为历史，须重新核验。
+随包提供[SHA-256校验文件](<target/release/SHA256SUMS-1.0.1.txt>)；仅发布安装包与校验文件，不将依赖资源的独立EXE当便携版发布。最终构建退出0（release1分40秒），EXE18:43:30、安装器18:42:57（+08:00），版本资源均1.0.1。首检独立EXE为NotSigned，补签后 `sign-artifacts.ps1 -Installer -Check` 均Valid；`build-sidecar.ps1 -Check` 确认源sidecar与fresh build一致。证书 `117C9922717A3A7D240B9340917781EA5B9F577F` 仅本机自签信任，不保证其他电脑免SmartScreen。没有本轮安装/卸载或真实云账户测试，发布不代表用户博客部署。之后若重建，此表就成为历史，须重新核验。
 
 ## 7. 下次真正修改后的验证与打包
 
@@ -101,6 +102,7 @@ powershell -ExecutionPolicy Bypass -File scripts/cargo.ps1 test -p veloct-app --
 powershell -ExecutionPolicy Bypass -File scripts/cargo.ps1 clippy -p veloct-app --all-targets
 node scripts/verify-profile-home.mjs
 node scripts/verify-profile-settings.mjs
+node scripts/verify-admin-dark.mjs
 node scripts/verify-document-resources.mjs
 node scripts/verify-editor-preview.mjs
 node scripts/verify-edgeone-deploy.mjs
@@ -111,7 +113,7 @@ node scripts/verify-site-images.mjs
 # node scripts/verify-existing-home.mjs <project-root>
 ```
 
-改到跨crate行为再跑Rust workspace。最近完整检查使用 `$env:CARGO_INCREMENTAL='0'` 和 `-- --test-threads=1`，避免沿用已知旧增量缓存错误，但串行也不能消除当前安装取消测试失败；如再运行应如实记录结果，不自动清理整个target或扩大到进程终止修复。浏览器脚本依赖本机 `target/browser-validation/` 下的 Playwright 与 Edge，不是新增的产品依赖；迁移环境先检查工具是否存在，不擅自改变依赖。
+改到跨crate行为再跑Rust workspace。1.0.1完整检查使用 `$env:CARGO_INCREMENTAL='0'` 和 `-- --test-threads=1`，避免沿用已知旧增量缓存错误；本次全量通过，但串行不能证明历史安装取消测试不稳定性已消除。如再运行应如实记录，不自动清理整个target或扩大到进程终止修复。浏览器脚本依赖本机 `target/browser-validation/` 下的 Playwright 与 Edge，不是新增的产品依赖；迁移环境先检查工具是否存在，不擅自改变依赖。
 
 每轮产品修复按用户既有要求重建测试程序和 NSIS，纯文档整理不重建。构建前确认没有运行的 `veloct-desktop.exe`；遇锁文件请用户关闭，**禁止杀用户应用**。使用 [构建脚本](<scripts/build-installer.ps1>)，最终再用 [签名脚本](<scripts/sign-artifacts.ps1>) 的 `-Installer -Check` 和 [sidecar 检查](<scripts/build-sidecar.ps1>) 的 `-Check`。独立 EXE 若打包后为 NotSigned，补签后再独立复核，不凭先前的日志判断。
 
@@ -121,8 +123,8 @@ node scripts/verify-site-images.mjs
 
 ```text
 项目在 D:\Veloct-Blog。请先读 NEXT_AI.md、PROCESSING.md、ISSUE.md，按需查 UPDATE.md、README.md 和规格。
-先核对当前工作树，保护所有已修改和未跟踪文件；只交Git HEAD会丢失功能。
-上一轮产品需求和签名包交付已完成，这次仅整理文档；不要重复已完成测试/构建，也不要自动修历史ISSUE。
-最新全量Rust结果仍有1项Windows安装取消进程测试失败，不能说全绿；真实云账户和新包装机也未验证。
+先核对当前工作树，保护所有已修改和未跟踪文件。
+上一轮按用户授权发布1.0.1，包含全后台Claude暗色统一；标签v1.0.1，重构前3c51661和回退标签保留。最新产物与验证见第5/6节，不要重复已完成工作或自动修历史ISSUE。
+发布复核完整Rust1576/0failed/17ignored；历史Windows进程终止测试仍有不稳定记录，真实云账户和新包装机也未验证。
 读完简述当前状态与风险，等我给下一项任务。未经明确指示不安装、真实上传、部署、提交、推送或发布。
 ```

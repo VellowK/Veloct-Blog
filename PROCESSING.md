@@ -1,6 +1,6 @@
 # PROCESSING.md — 当前产品边界与工作方式
 
-> 交接整理：2026-10-18。本轮只整理文档，没有修改产品代码、重跑测试或构建。此前功能与签名交付均已完成，当前没有待继续的已授权编码任务；等待用户下一项需求。
+> 最新轮次：2026-10-18，用户授权发布 1.0.1。桌面后台 Claude 暗色统一后，统一桌面/Tauri/Rust/npm 根版本并重建签名安装包；第三方依赖不升级。重构前快照 `3c51661` / `backup/admin-dark-before-20261018` 保留。验证和交付以 [NEXT_AI.md](<NEXT_AI.md>) / [UPDATE.md](<UPDATE.md>) 为准；发布不等于已安装或博客已部署。
 
 ## 1. 文档分工与阅读顺序
 
@@ -16,7 +16,7 @@
 
 ## 2. 工作树与真实用户项目
 
-- 应用仓库：`D:\Veloct-Blog`，分支 `master`，HEAD `c97ad9e`。大量代码和新文件未提交，交接必须保留完整当前工作目录，**只交 Git HEAD 会丢功能**。
+- 应用仓库：`D:\Veloct-Blog`，分支 `master`，1.0.1 发布标签 `v1.0.1`，发布入口见 [GitHub Release](<https://github.com/VellowK/Veloct-Blog/releases/tag/v1.0.1>)。重构前快照 `3c51661` / `backup/admin-dark-before-20261018` 保留；仓库保持私有，不擅自变更可见性或覆盖标签。
 - 开始先看 `git status --short` / `git diff --stat`。禁止 reset、clean、无关回滚、删除未跟踪文件或 `git add -A`；提交、推送、安装、发布和真实部署都需用户另行明确指示。
 - 用户实际博客：`C:\Users\vellow\Desktop\blog`，不是应用仓库；该路径仅是本机交接事实，不是产品默认值。本次文档整理没有读写该项目，也不要在接手时自动检查或上传。
 - 历史上于2026-10-16获授权核验过该项目的官方首页组件/CSS、8个内容/配置/资源文件哈希及网站构建；**不是2026-10-18新包或本次交接的重新验证**。备份位于该项目的 `.veloct/template-backups/<sha256>/site/src/`，另有 `.veloct/template-backups/profile-home-manual-20261016-164136/`。不得自动清理或覆盖。
@@ -24,6 +24,12 @@
 - Secret/Token只存系统凭据库，不进入项目配置、日志、站点或备份；不索取聊天明文密钥。移除功能不意味着自动清理历史用户配置或凭据。
 
 ## 3. 当前有效的产品要求
+
+### 桌面后台风格
+
+- 全后台遵循 [DESIGN.md](<DESIGN.md>) 的 Claude 暗色适配：暖炭灰层级、暖白文字、克制珊瑚色主操作；页面统一使用 PageHeader / Card / Field / StateBlock，不再保留各面板的旧小标题、独立内边距和嵌套滚动。
+- 页面主标题28px衬线；设置内嵌面板用18px无衬线二级标题，避免重复h1；卡片12px圆角，表单控件40px，统一间距和分组导航。编辑器/独立预览/站点信息双栏工作区保留必要的独立滚动，不能套用普通页面文档流。
+- 样式重构不改变业务确认步骤、凭据存储、预览服务与自动保存语义。生产浏览器回归入口为 [全后台检查](<scripts/verify-admin-dark.mjs>)，1440/1024两宽度；网站前台另有主题，不继承后台令牌。
 
 ### 首页与外观
 
@@ -58,7 +64,7 @@
 
 ## 4. 开发、验证和打包纪律
 
-- 源码定位与当前证据见 [NEXT_AI.md](<NEXT_AI.md>)，原始逐轮记录见 [UPDATE.md](<UPDATE.md>)；最新失败为安装取消进程测试，见 [ISSUE.md](<ISSUE.md>)。不要用历史全量通过覆盖当前失败，也不要仅凭旧P0自动扩展任务。
+- 源码定位与当前证据见 [NEXT_AI.md](<NEXT_AI.md>)，原始逐轮记录见 [UPDATE.md](<UPDATE.md>)。1.0.1 全量串行 Rust 为1576 passed/0 failed/17 ignored；安装取消与进程树测试本次通过，但历史不稳定性仍记录在 [ISSUE.md](<ISSUE.md>)，未改终止代码，不宣称已根治；也不据旧P0自动扩展任务。
 - Windows使用 `npm.cmd`；Cargo走[包装脚本](<scripts/cargo.ps1>)的隔离Cargo home和代理环境，不用裸cargo。Rust floor1.90，Astro7模板Node>=22.12.0；具体依赖以各manifest为准。
 - 按改动范围验证；跨crate行为再完整workspace。浏览器脚本读取生产UI产物并使用本地Playwright/Edge，IPC/文件/云端是fixture，不能写成真实账户或真实WebView装机测试。迁移机器先检查验证工具，不擅自装依赖。
 - **产品代码修改后按既有要求重建EXE和NSIS，纯文档整理不重建。** 打包前确认没有运行中的桌面程序；锁文件/Windows错误5请用户关闭，禁止结束用户应用。构建、签名、sidecar及中断续做命令统一见 [NEXT_AI.md验证步骤](<NEXT_AI.md#7-下次真正修改后的验证与打包>)。

@@ -16,6 +16,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { Feedback } from './components/Notifications';
+import { Card, PageHeader, StateBlock } from './components/ui';
 
 import {
   api,
@@ -128,17 +129,16 @@ export default function DeployPanel({ enabled }: { enabled: boolean }) {
 
   if (!enabled) {
     return (
-      <div className="deploy-panel">
+      <div className="deploy-panel admin-panel">
         <p className="muted">打开一个项目后可以配置部署目标。</p>
       </div>
     );
   }
 
   return (
-    <div className="deploy-panel">
-      <header className="deploy-header">
-        <strong>部署</strong>
-        <label className="inline">
+    <div className="deploy-panel admin-panel">
+      <PageHeader level={2} title="部署" description="将已构建的发布推送到启用的目标。保存配置、发布和构建均不会自动上传。" actions={<>
+        <label className="check-field">
           <input
             type="checkbox"
             checked={targets?.enabled ?? true}
@@ -172,16 +172,13 @@ export default function DeployPanel({ enabled }: { enabled: boolean }) {
         <button type="button" onClick={() => void reload()} disabled={busy}>
           刷新
         </button>
-      </header>
+      </>} />
 
       <Feedback message={error} tone="error" />
       <Feedback message={notice} tone="success" />
 
       {outcome && (
-        <section className="deploy-result">
-          <h3>
-            部署结果 · {outcome.release_id} · 推送 {outcome.pushed_files} 个文件
-          </h3>
+        <Card className="deploy-result" title={`部署结果 · ${outcome.release_id}`} description={`推送 ${outcome.pushed_files} 个文件。各目标结果独立保留，便于检查与重试。`}>
           {!outcome.all_succeeded && outcome.needing_attention.length === 0 && (
             <p className="muted">
               没有任何目标被推送(可能未配置目标或已关闭部署)。
@@ -201,13 +198,12 @@ export default function DeployPanel({ enabled }: { enabled: boolean }) {
             {/* Section 15.2: the SEO push is a separate task and its state is its own. */}
             SEO 推送:{outcome.seo_state === 'not_requested' ? '未请求' : outcome.seo_state}
           </p>
-        </section>
+        </Card>
       )}
 
-      <section>
-        <h3>已配置的目标({targets?.targets.length ?? 0})</h3>
+      <Card title={`已配置的目标 (${targets?.targets.length ?? 0})`} description="每个目标独立记录凭据与推送结果。">
         {(targets?.targets.length ?? 0) === 0 && (
-          <p className="muted">还没有配置任何部署目标。</p>
+          <StateBlock tone="empty" title="还没有配置任何部署目标" description="添加目标后，仍需点击“部署当前构建”才会上传。" />
         )}
         <ul className="target-list">
           {targets?.targets.map((target) => (
@@ -246,10 +242,9 @@ export default function DeployPanel({ enabled }: { enabled: boolean }) {
           仅点击「部署当前构建」才上传：覆盖当前发布构建的全部主站文件、独立作品站文件，以及全部已启用目标。
           不上传源码、密钥或本地缓存。发布、构建和保存目标不会自动部署。1Panel 仍为手动导出。
         </p>
-      </section>
+      </Card>
 
-      <section>
-        <h3>添加 / 更新目标</h3>
+      <Card title="添加 / 更新目标" description="凭据仅保存到操作系统凭据库，留空保留已有凭据。">
         <div className="row">
           <label>
             <span>id</span>
@@ -332,7 +327,7 @@ export default function DeployPanel({ enabled }: { enabled: boolean }) {
         >
           保存目标
         </button>
-      </section>
+      </Card>
     </div>
   );
 }

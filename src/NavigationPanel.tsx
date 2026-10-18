@@ -1,3 +1,4 @@
+import { Card, PageHeader } from './components/ui';
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { RibbonEntry } from './lib/api';
@@ -74,15 +75,10 @@ export default function NavigationPanel({ menus, pages, onChange }: { menus: Cus
   };
 
   return (
-    <section className="navigation-panel settings-panel page" aria-labelledby="navigation-title">
-      <header className="navigation-header">
-        <div>
-          <h1 id="navigation-title">菜单管理</h1>
-          <p>管理网站左侧菜单。预置菜单可隐藏，自定义菜单可删除。</p>
-        </div>
-        <span className="navigation-count">{menus.filter((menu) => menu.visible).length} / {menus.length} 项显示</span>
-      </header>
+    <section className="navigation-panel page" aria-labelledby="navigation-title">
+      <PageHeader title={<span id="navigation-title">菜单管理</span>} description="管理网站左侧菜单。预置菜单可隐藏，自定义菜单可删除。" actions={<span className="chip chip--neutral">{menus.filter((menu) => menu.visible).length} / {menus.length} 项显示</span>} />
 
+      <Card title="网站菜单" description="隐藏菜单不会删除内容，预置菜单始终保留。">
       <div className="navigation-list">
         <div className="navigation-columns" aria-hidden="true"><span>菜单 / 链接</span><span>显示</span><span>操作</span></div>
         <ul aria-label="网站菜单">
@@ -105,8 +101,9 @@ export default function NavigationPanel({ menus, pages, onChange }: { menus: Cus
         {menus.length === 0 && <p className="navigation-empty">暂无菜单，可在下方新增。</p>}
       </div>
 
+      </Card>
+      <Card title="新增菜单" description="选择已有页面，或填写站内路径与外部链接。">
       <form className="navigation-add" onSubmit={(event) => { event.preventDefault(); add(); }}>
-        <h2>新增菜单</h2>
         <div className="navigation-add-fields">
           <div className="settings-field"><label htmlFor="navigation-label">菜单名称</label><input id="navigation-label" value={label} placeholder="例如：关于" onChange={(event) => setLabel(event.target.value)} /></div>
           <div className="settings-field"><label htmlFor="navigation-url">链接地址/页面</label><div className="navigation-link-input"><input id="navigation-url" value={url} placeholder="/about/ 或 https://…" onChange={(event) => setUrl(event.target.value)} /><button type="button" aria-haspopup="dialog" onClick={() => setChoosingPage(true)}>选择页面</button></div></div>
@@ -114,6 +111,7 @@ export default function NavigationPanel({ menus, pages, onChange }: { menus: Cus
         </div>
         <p className="navigation-hint">支持站内路径或外部链接，留空使用 /。</p>
       </form>
+      </Card>
       {choosingPage && <PageLinkDialog pages={pages} onClose={() => setChoosingPage(false)} onSelect={(page) => {
         setUrl(page.route);
         if (!label.trim()) setLabel(page.title);

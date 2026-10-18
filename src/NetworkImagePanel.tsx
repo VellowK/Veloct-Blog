@@ -18,6 +18,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Feedback } from './components/Notifications';
+import { Card, PageHeader, StateBlock } from './components/ui';
 
 import {
   api,
@@ -266,7 +267,7 @@ export default function NetworkImagePanel({ enabled, mode = 'manage', onInsertMa
 
   if (!enabled) {
     return (
-      <div className="network-image-panel">
+      <div className="network-image-panel admin-panel">
         <p className="muted">打开一个项目后可以浏览网络图片。</p>
       </div>
     );
@@ -274,14 +275,13 @@ export default function NetworkImagePanel({ enabled, mode = 'manage', onInsertMa
 
 
   return (
-    <div className="network-image-panel">
-      <header className="network-image-header">
-        <strong>{mode === 'settings' ? '网络图片设置与浏览' : '网络图片浏览'}</strong>
-        <span className="muted">§13.14:只写入远程地址,不下载、不进缓存池</span>
-        <button type="button" onClick={() => void reload()} disabled={busy}>
-          刷新来源
-        </button>
-      </header>
+    <div className="network-image-panel admin-panel">
+      <PageHeader
+        level={mode === 'settings' ? 2 : 1}
+        title={mode === 'settings' ? '网络图片设置与浏览' : '网络图片浏览'}
+        description="寻找适合内容的图片。仅插入远程地址，不下载文件，也不加入本地附件池。"
+        actions={<button type="button" onClick={() => void reload()} disabled={busy}>刷新来源</button>}
+      />
 
       <Feedback message={error} tone="error" />
       <Feedback message={notice} tone="success" />
@@ -289,8 +289,7 @@ export default function NetworkImagePanel({ enabled, mode = 'manage', onInsertMa
       {/* A source the contract names but this build does not offer is a sentence, not a silence. */}
       {refusal && <p className="network-image-warning">{refusal}</p>}
 
-      <section>
-        <h3>来源</h3>
+      <Card title="图片来源" description="选择图片服务，并在需要时配置访问密钥。">
         {options.offered.length === 0 && <p className="muted">当前构建没有可用的图片来源。</p>}
         <div className="row">
           {options.offered.map((entry) => (
@@ -352,10 +351,9 @@ export default function NetworkImagePanel({ enabled, mode = 'manage', onInsertMa
             )}
           </>
         )}
-      </section>
+      </Card>
 
-      <section>
-        <h3>搜索</h3>
+      <Card title="搜索图片" description="按关键词寻找图片，插入前可调整替代文字与署名。">
         <div className="row">
           <label className="grow">
             <span>关键词</span>
@@ -395,14 +393,13 @@ export default function NetworkImagePanel({ enabled, mode = 'manage', onInsertMa
         </div>
         {/* A disabled button with no explanation is what §13.2.2's reason exists to prevent. */}
         {searchAction.reason && <p className="muted hint">{searchAction.reason}</p>}
-      </section>
+      </Card>
 
       {/* Topic browsing, ADDED BESIDE the keyword search rather than instead of it: the clause
           §13.14 states is met by the search above, and this is the browse mode the owner asked for.
           A keyword in the box wins over the selected topic, which is the reference implementation's
           own precedence. */}
-      <section>
-        <h3>主题</h3>
+      <Card title="主题" description="浏览来源维护的主题；关键词搜索优先于已选主题。">
         <div className="row">
           <button
             type="button"
@@ -449,16 +446,12 @@ export default function NetworkImagePanel({ enabled, mode = 'manage', onInsertMa
             搜索会按关键词走(与参考实现一致)。
           </p>
         )}
-      </section>
+      </Card>
 
       {found && (
-        <section>
-          {/* ONE decision about which mode the results came from, from the pure module, so the header
-              and the empty-state message cannot disagree. A keyword in the box wins over the selected
-              topic, which is the rule `browseIntent` applies to the request too. */}
-          <h3>{resultsHeading(found, { topic: selectedTopic, topicTitle, query })}</h3>
+        <Card title={resultsHeading(found, { topic: selectedTopic, topicTitle, query })}>
           {found.results.length === 0 && (
-            <p className="muted">{resultsEmptyText({ topic: selectedTopic, query })}</p>
+            <StateBlock tone="empty" title="没有找到图片" description={resultsEmptyText({ topic: selectedTopic, query })} />
           )}
 
           <div className="row">
@@ -525,12 +518,11 @@ export default function NetworkImagePanel({ enabled, mode = 'manage', onInsertMa
               {moreLabel(found, page)}
             </button>
           )}
-        </section>
+        </Card>
       )}
 
       {lastChoice && (
-        <section className="network-image-last">
-          <h3>最近插入</h3>
+        <Card className="network-image-last" title="最近插入">
           {lastChoice.download_note && (
             <p className="network-image-warning">{lastChoice.download_note}</p>
           )}
@@ -539,7 +531,7 @@ export default function NetworkImagePanel({ enabled, mode = 'manage', onInsertMa
             <p className="muted hint">署名:{lastChoice.attribution}</p>
           )}
           {!insertState.ready && <p className="muted hint">{insertState.reason}</p>}
-        </section>
+        </Card>
       )}
     </div>
   );

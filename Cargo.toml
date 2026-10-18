@@ -21,7 +21,7 @@ members = [
 ]
 
 [workspace.package]
-version = "1.0.0"
+version = "1.0.1"
 edition = "2021"
 # Tauri 2.12's plugins declare rust_version = 1.90, so that is the floor for the workspace.
 rust-version = "1.90"

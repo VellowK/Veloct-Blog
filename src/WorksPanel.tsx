@@ -21,6 +21,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Feedback } from './components/Notifications';
+import { Card, PageHeader, StateBlock } from './components/ui';
 import { open } from '@tauri-apps/plugin-dialog';
 
 import {
@@ -387,29 +388,24 @@ export default function WorksPanel({ enabled }: Props) {
 
   if (!enabled) {
     return (
-      <div className="works-panel">
+      <div className="works-panel admin-panel">
         <p className="muted">打开一个项目后可以管理作品。</p>
       </div>
     );
   }
 
   return (
-    <div className="works-panel">
-      <header className="works-header">
-        <strong>作品</strong>
-        <span className="muted">
-          共 {works.length} 个,其中 {servable} 个会进入构建
-        </span>
-        <button type="button" onClick={() => void reload()} disabled={busy}>
-          刷新
-        </button>
-      </header>
+    <div className="works-panel admin-panel">
+      <PageHeader
+        title="作品管理"
+        description={`收集与展示你的作品。共 ${works.length} 个，其中 ${servable} 个会进入构建。`}
+        actions={<button type="button" onClick={() => void reload()} disabled={busy}>刷新</button>}
+      />
 
       <Feedback message={error} tone="error" />
       <Feedback message={notice} tone="success" />
 
-      <section className="works-import">
-        <h3>导入作品(§10.2)</h3>
+      <Card className="works-import" title="导入作品" description="从文件夹或 ZIP 导入。先预览待导入的内容，再确认写入。">
         <div className="row">
           <label>
             <span>作品名称</span>
@@ -509,11 +505,10 @@ export default function WorksPanel({ enabled }: Props) {
             {lastImport.warning && <span className="works-warning"> {lastImport.warning.message}</span>}
           </p>
         )}
-      </section>
+      </Card>
 
-      <section>
-        <h3>作品列表</h3>
-        {works.length === 0 && <p className="muted">还没有导入作品。</p>}
+      <Card title="作品列表" description="管理作品信息、封面与发布状态。">
+        {works.length === 0 && <StateBlock tone="empty" title="还没有导入作品" description="从文件夹或 ZIP 导入第一个作品，预览后再确认。" />}
         <ul className="works-list">
           {works.map((work) => {
             const blocked = servableReason(work);
@@ -767,7 +762,7 @@ export default function WorksPanel({ enabled }: Props) {
             );
           })}
         </ul>
-      </section>
+      </Card>
     </div>
   );
 }
