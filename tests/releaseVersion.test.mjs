@@ -16,6 +16,17 @@ test('desktop, template and npm lockfile root versions agree', () => {
   }
 });
 
+test('published source declares GPL-3.0-only consistently', () => {
+  assert.match(read('LICENSE'), /GNU GENERAL PUBLIC LICENSE[\s\S]*Version 3, 29 June 2007/);
+  assert.match(read('LICENSE'), /END OF TERMS AND CONDITIONS/);
+  assert.match(read('README.md'), /GPL-3\.0-only/);
+  assert.match(read('Cargo.toml'), /^license = "GPL-3\.0-only"$/m);
+  for (const prefix of ['', 'site/']) {
+    assert.equal(JSON.parse(read(prefix + 'package.json')).license, 'GPL-3.0-only');
+    assert.equal(JSON.parse(read(prefix + 'package-lock.json')).packages[''].license, 'GPL-3.0-only');
+  }
+});
+
 test('npm dependency versions continue to match their resolved registry tarballs', () => {
   for (const prefix of ['', 'site/']) {
     const lock = JSON.parse(read(prefix + 'package-lock.json'));

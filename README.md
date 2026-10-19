@@ -1,158 +1,161 @@
 # Veloct
 
-A local-first, single-user, single-site desktop workbench for building and publishing one static
-personal website.
+**把写作、个人主页和静态网站发布，放进一个本地优先的桌面工作台。**
 
-**Next AI: start with [NEXT_AI.md](<NEXT_AI.md>)**, then [PROCESSING.md](<PROCESSING.md>) for current requirements and [UPDATE.md](<UPDATE.md>) for the final tested artifacts. The application repository contains substantial uncommitted/untracked work; the Git HEAD alone is not the handover.
+Veloct 面向个人站长：在本地管理 Markdown、知识库与作品，预览真实 Astro 网站，再按需发布、部署和备份。桌面使用 Tauri 2、Rust 与 React，网站模板使用 Astro。
 
-[handoff.md](<handoff.md>) is the locked product contract; explicit later owner requirements take precedence without silently rewriting it. Older [process archives](<docs/archive/>) and earlier verification sections are historical evidence, not current status. This README explains the repository structure and build commands; it does not claim the latest test package was installed or published.
+[下载 Windows 版](<https://github.com/VellowK/Veloct-Blog/releases/latest>) · [浏览源码](<https://github.com/VellowK/Veloct-Blog/tree/master>) · [下载最新源码 ZIP](<https://github.com/VellowK/Veloct-Blog/archive/refs/heads/master.zip>) · [提交问题](<https://github.com/VellowK/Veloct-Blog/issues>) · [GPL-3.0 许可证](<LICENSE>)
 
-**2026-10-18 handover:** all requested product work is complete; wait for the owner's next task rather than automatically fixing old issues. This handover round edits documentation only, with no new product test/build. The latest functional round is homepage avatar/cover → attachment pool → preferred cloud target. Full-workspace verification has one known Windows install-cancellation test failure; it is not all green. Exact results, boundaries and signed local test packages are recorded in [NEXT_AI.md](<NEXT_AI.md>).
+## 功能
 
-## Two directories, not one
+- **本地内容管理**：文章、普通页面与知识库以 Markdown 为正文真源；SQLite 仅作可重建索引。
+- **一份编辑内容**：所见即所得 / Markdown 切换，保留未保存缓冲；文章配有可收起的「本文资源」栏。
+- **个人主页**：头像裁切、头图、个人介绍、联系方式及近 365 天活动热力图；GitHub 活动使用显式同步的离线快照。
+- **附件与图片**：本地附件池、明确确认后入池、引用追踪及多存储目标；支持 S3 兼容存储等可配置服务。
+- **作品与链接知识库**：导入独立静态作品；语雀 / 飞书知识库仅关联目录和原始链接，不复制私有正文。
+- **真实网站预览**：桌面预览与正式构建共用 Astro 模板，不使用另一套近似渲染器。
+- **发布与部署分离**：发布冻结构建输入；只有明确点击部署才上传。支持 EdgeOne 直接上传，1Panel 为手动导出流程。
+- **备份与恢复**：本地及可配置云备份，恢复先生成计划，再确认执行；凭据保留在操作系统凭据库。
+- **统一暗色后台**：暖炭灰层级、统一标题、卡片和表单，以及可查看完整详情的操作通知。
 
-The single most important structural idea (see `docs/spec/00-architecture.md` ADR-0001):
+Veloct 当前以 **单用户、单站点** 为边界，不是多人协作 CMS，也不包含已经移除的 AI 建页功能。
 
-| | Where | What it is |
-|---|---|---|
-| **The Veloct application** | this repository | Tauri app, Rust domain crates, the Astro site template, the Node sidecar. Application code. |
-| **A Veloct project** | any directory the user picks | Markdown content, `works/`, the SQLite database, the git repository, `.veloct/releases/`, `dist/`. Exactly one site. |
+## 下载与使用
 
-Creating a project materialises the scaffold and copies the bundled Astro template into it, so the
-project is self-contained and its releases stay reproducible.
+当前稳定版：**[1.0.1](<https://github.com/VellowK/Veloct-Blog/releases/tag/v1.0.1>)**，提供 Windows x64 NSIS 安装包。
 
-## Truth sources (never ambiguous)
+1. 在 [Release 页面](<https://github.com/VellowK/Veloct-Blog/releases/tag/v1.0.1>) 下载 `Veloct_1.0.1_x64-setup.exe` 和 `SHA256SUMS-1.0.1.txt`。
+2. 用 PowerShell 校验安装包 SHA-256，并与校验文件比对：
 
-| Data | Truth source |
-|---|---|
-| Article / page / knowledge body | Markdown files under `content/` and `knowledge/` |
-| Work metadata and body | `works/<stable-id>/work.json` and `works/<stable-id>/site/` |
-| Site appearance / profile-home settings | The user's project `data/site.json`; managed by `SiteSettingsService`, preserving unknown keys |
-| GitHub activity | Explicitly synced `data/github-activity.json` snapshot; static builds do not fetch it |
-| Deployment targets | User project `.veloct/deploy-targets.json`; credentials are OS-store handles, not secrets |
-| Attachment storage targets / sync | User project `.veloct/storage-targets.json` / `.veloct/attachment-sync.json`; credentials stay in the OS store |
-| Removed AI page creation | No desktop UI/API/commands remain; the shared crate and historical data are retained, not an active feature |
-| A release | `.veloct/releases/<id>/release.json` + the git tag `release/<id>` + its commit |
-| Attachment identity / references | Pool/object records, Markdown AST references and saved homepage avatar/cover references; changing a site image must not erase article references |
-| Credentials | the operating system credential store — never SQLite, config, logs or backups |
+   ```powershell
+   Get-FileHash .\Veloct_1.0.1_x64-setup.exe -Algorithm SHA256
+   ```
 
-SQLite's content tables are a **derived index**. Dropping them and rebuilding from Markdown must
-produce identical rows, and a test enforces that.
+3. 安装后新建项目，或打开已有的 Veloct 项目；随后在工作台编辑内容、配置外观并预览。
+4. 云存储、备份与部署是可选操作，需要自行配置对应服务。发布或保存设置不会自动部署。
 
-## Repository layout
+**签名说明**：1.0.1 发布文件的 Authenticode 校验通过，但使用的是维护者本机自签证书，并非公共受信代码签名。其他电脑可能出现未知发布者或 SmartScreen 提示；请核验下载来源和哈希后自行判断，不必为运行软件盲目信任证书或关闭系统防护。
 
-```text
-crates/
-  veloct-core        ids, errors, project-relative paths, secret redaction, project locks,
-                     time abstraction, and the single HTTP seam
-  veloct-markdown    frontmatter contract, mdast, directives, stable paragraph ids, references
-  veloct-storage     SQLite migrations, schema, repositories, rebuildable index
-  veloct-content     content model, truth-source I/O, WIP rules, work import
-  veloct-git         change detection, publish commits, release tags, conflict detection
-  veloct-process     sidecar supervision (ports, pids, restart, tree-kill), child liveness and exit codes
-  veloct-sidecar     the Astro launcher the app spawns: `dev` / `preview` hand over to Node,
-                     `serve <dir>` serves a built directory itself (the works preview)
-  veloct-logging     structured events, redaction at the source, rotation, the log page's backend
-  veloct-release     release manifest, build inputs, target snapshot, fingerprint, publish
-  veloct-deploy      logical targets with main/works sub-targets and adapters
-  veloct-ai          retained shared/legacy library; AI page-creation desktop feature was removed
-  veloct-attach      cache pool, reference set, dedup, storage adapters
-  veloct-github      the GitHub Contents API, once: §13.13's attachment target and §17.4's backup
-                     target are one protocol in two contracts (ADR-0015)
-  veloct-s3          S3 / S3-compatible over AWS Signature Version 4, once, for the same two
-                     contracts (ADR-0016). Pure Rust: no OpenSSL and no vendor SDK.
-  veloct-backup      consistent snapshots, secret scan, archive, cloud targets, restore
-  veloct-app         orchestration services, DTOs, Tauri commands
-src-tauri/           thin Tauri 2 shell (windows, capabilities, command registry)
-src/                 React workbench UI (added by the ui-editor workstream)
-site/                the Astro project template (added by the site-astro workstream)
-docs/spec/           the engineering contracts this repository is built against
-scripts/cargo.ps1    the required way to run Cargo on this machine
-handoff.md           the locked product contract
-```
+**验证边界**：1.0.1 发布前通过了 UI 274 项、串行 Rust 1576 项及九套生产浏览器回归（1440 / 1024 两种宽度）；Rust 另有 17 项忽略。浏览器使用隔离 fixture，不代表真实云账户、安装后 WebView 或此次安装 / 卸载均已验证。Windows 进程树取消测试有历史波动，详见 [已知问题](<ISSUE.md>)。目前没有提供 macOS / Linux 的已验证安装包。
 
-## Building and testing on this machine
+## 源码与项目目录
 
-Three environment quirks are handled by `scripts/cargo.ps1`. Use it; a bare `cargo` will fail.
+**默认开发分支是 `master`**。旧 `main` 是只有初始说明和许可文件的独立历史分支，不是当前产品源码。发布版本使用 `v1.0.1` 等标签；[最新源码 ZIP](<https://github.com/VellowK/Veloct-Blog/archive/refs/heads/master.zip>) 与 Release 自动生成的标签源码用途不同，不要混用来核对二进制版本。
 
 ```powershell
-# Rust — run the full workspace checks when Rust code changes. This handover does not claim a fresh result.
-powershell -ExecutionPolicy Bypass -File scripts/cargo.ps1 test --workspace --no-fail-fast
-powershell -ExecutionPolicy Bypass -File scripts/cargo.ps1 clippy --workspace --all-targets
+git clone https://github.com/VellowK/Veloct-Blog.git
+cd Veloct-Blog
+# 如需查看原始 1.0.1 发布快照：git switch --detach v1.0.1
+```
 
-# Frontend and site (npm.ps1 is blocked here, so use npm.cmd).
-# The root package builds the desktop workbench with `build:ui`; the Astro template builds in site/.
-npm.cmd install
+应用源码仓库与用户的网站项目是两个目录。新建网站项目时，Veloct 将模板复制进去；用户的文章、凭据和站点配置不应被提交到应用仓库。
+
+| 目录 | 用途 |
+|---|---|
+| [src](<src/>) | React / TypeScript 桌面工作台 |
+| [src-tauri](<src-tauri/>) | Tauri 薄适配层、系统凭据与桌面集成 |
+| [crates](<crates/>) | 内容、附件、发布、部署、备份等 Rust 领域逻辑 |
+| [site](<site/>) | Astro 网站模板，供预览和正式构建共用 |
+| [scripts](<scripts/>) | 模板准备、测试、Node 获取、构建与签名脚本 |
+| [tests](<tests/>) | 前端逻辑及源码约束回归 |
+| [docs/spec](<docs/spec/>) | 架构、数据模型、测试矩阵与上游事实 |
+
+## 本地开发（Windows）
+
+### 环境
+
+- Windows x64、Git。
+- Node.js **22.12.0 或以上**和 npm。
+- Rust **1.90 或以上**，使用 MSVC 工具链；安装 Visual Studio C++ Build Tools / Windows SDK。
+- Microsoft Edge WebView2 Runtime；系统依赖详见 [Tauri 官方环境准备](<https://v2.tauri.app/start/prerequisites/>)。
+
+安装开发依赖：
+
+```powershell
+npm.cmd ci
+npm.cmd --prefix site ci
+```
+
+构建脚本使用仓库隔离的 Cargo home，避免继承维护机器的全局镜像设置。首次克隆时创建其本地配置（目录不入 Git；已有文件请保留）：
+
+```powershell
+if (!(Test-Path .cargo-home/config.toml)) {
+    New-Item -ItemType Directory -Force .cargo-home | Out-Null
+    @'
+[source.crates-io]
+registry = "sparse+https://index.crates.io/"
+
+[http]
+multiplexing = false
+
+[net]
+retry = 5
+'@ | Set-Content -Encoding ascii .cargo-home/config.toml
+}
+```
+
+[Cargo 包装脚本](<scripts/cargo.ps1>) 从 Windows 配置读取代理；必要时可通过环境变量 `VELOCT_CARGO_PROXY` 显式指定自己的代理，不要照搬其他机器的端口。
+
+准备模板和随包运行时，再启动完整桌面工作台：
+
+```powershell
+npm.cmd run prepare:template
+powershell -ExecutionPolicy Bypass -File scripts/fetch-node.ps1
+powershell -ExecutionPolicy Bypass -File scripts/build-sidecar.ps1
+
+# npm 提供 Tauri CLI；使用与 Cargo 包装脚本相同的隔离环境。
+$env:CARGO_HOME = Join-Path $PWD '.cargo-home'
+$env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"
+if ($env:VELOCT_CARGO_PROXY) { $env:CARGO_HTTP_PROXY = $env:VELOCT_CARGO_PROXY }
+npx.cmd tauri dev
+```
+
+只看桌面 UI 可运行 `npm.cmd run dev:ui`，但普通浏览器没有 Tauri IPC，不能据此验证项目读写、凭据、预览服务或云操作。网站模板依赖用户项目结构，不能把应用仓库与真实博客目录混作一个项目。
+
+### 测试
+
+```powershell
 npm.cmd run test:ui -- --run
 npm.cmd run build:ui
-cd site; npm.cmd install; npm.cmd run build
+npm.cmd run test:template
+
+# 跨 crate 全量回归按串行执行，以降低 Windows 进程测试相互影响。
+$env:CARGO_INCREMENTAL = '0'
+powershell -ExecutionPolicy Bypass -File scripts/cargo.ps1 test --workspace --no-fail-fast -- --test-threads=1
+powershell -ExecutionPolicy Bypass -File scripts/cargo.ps1 clippy --workspace --all-targets
+
+npm.cmd --prefix site run build
+npm.cmd --prefix site run verify
 ```
 
-The desktop package, in the order that matters:
+生产 UI 的浏览器脚本使用本机 Playwright 与 Edge 验证环境，不是产品依赖；所需工具准备及确切验证范围见 [接手与验证说明](<NEXT_AI.md>)。不要将隔离 IPC / 云服务 fixture 的通过等同于真实账户上线。
+
+### 打包
 
 ```powershell
-# A green build is not installation evidence: report install/run results only for the exact tested package.
-powershell -ExecutionPolicy Bypass -File scripts/build-sidecar.ps1 -Check   # the committed launcher is current
-powershell -ExecutionPolicy Bypass -File scripts/build-installer.ps1        # builds, packages, and lets the BUNDLER sign
-# The standalone EXE can be NotSigned after bundling: if so, sign it, then independently check both final files.
-# powershell -ExecutionPolicy Bypass -File scripts/sign-artifacts.ps1
-powershell -ExecutionPolicy Bypass -File scripts/sign-artifacts.ps1 -Installer -Check
-# A signed nst*.tmp is NOT the final installer: require bundler exit 0 and the final file's timestamp/hash.
+# 自行构建未签名安装包，不需要维护者的证书或私钥。
+powershell -ExecutionPolicy Bypass -File scripts/build-installer.ps1 -NoSign
 ```
 
-**What the signature does and does not buy** (see PROCESSING.md): the certificate is LOCAL and
-SELF-SIGNED, so it proves integrity and gives a publisher name once `src-tauri/signing/veloct-codesign.cer` is
-installed into a machine's Trusted Publishers — and it does **not** remove SmartScreen's warning on a machine
-that has not done that. That is what a purchased certificate is for, not code.
+安装包输出至 `target/release/bundle/nsis/`。模板、Node 运行时及 sidecar 必须先按上文准备。自行签名需自有证书，参考 [构建脚本](<scripts/build-installer.ps1>) 和 [签名检查脚本](<scripts/sign-artifacts.ps1>)；不要在仓库提交私钥、访问令牌或真实用户数据。当前签名校验不表示自行构建可以与官方包逐字节一致。
 
-**The package is signed, and so is what is inside it.** This used to read "it currently covers the SETUP
-only": signing `target/release/veloct-desktop.exe` on its own did not survive packaging, so the app inside
-came out `NotSigned`. The supported fix is now IN PLACE rather than merely named —
-`scripts/build-installer.ps1` discovers the certificate (its `-SignThumbprint`, then `VELOCT_SIGN_THUMBPRINT`,
-then the store by subject) and passes Tauri's own `bundle.windows.certificateThumbprint` (plus
-`digestAlgorithm` and a timestamp server) to the BUNDLER, so the signature is applied during the build.
-Historical installation checks found `veloct-desktop.exe`, `veloct-astro-sidecar.exe` and `uninstall.exe`
-`Valid` under `CN=VellowChire Code Signing, O=Veloct`; `veloct-node.exe` keeps its vendor signature
-`CN=OpenJS Foundation`. Those are NOT installation results for every newer package: the latest handover
-only records final-file signature checks, not a new install/uninstall. The COMMITTED launcher stays
-unsigned on purpose because `build-sidecar.ps1 -Check` compares it byte for byte against a fresh unsigned
-build. Do not kill a running user application to release locked build files; ask the user to close it.
+## 反馈与贡献
 
-Why the wrapper exists:
+欢迎通过 [Issues](<https://github.com/VellowK/Veloct-Blog/issues>) 提交问题。请注明版本、操作系统、复现步骤和期望结果；日志与截图先删除 Token、密码、私人文章和账号信息。发现可能的密钥泄露时，不要直接把凭据贴进公开 Issue。
 
-1. `%USERPROFILE%\.cargo\config.toml` replaces crates.io with a mirror that is unreachable from
-   this environment. The wrapper uses an isolated `CARGO_HOME` (`.cargo-home/`) pinned to the
-   canonical sparse registry. A project-local `replace-with` cannot fix this, because Cargo
-   rejects a replacement source that also defines the registry name `crates-io`.
-2. Windows has a system HTTP proxy (an xray client) that Cargo's libcurl picks up. The wrapper
-   reads it from the registry and passes it explicitly.
-3. `cargo` and `rustup` are installed under `%USERPROFILE%\.cargo\bin` and are **not** on `PATH`.
+提交修改前请运行相关测试。涉及用户内容的变更应保持 Markdown 真源、恢复前确认和凭据隔离；不得为了通过测试删除数据或绕过权限。贡献者提交的原创修改按本项目的 GPL-3.0-only 条款提供；第三方内容需保留其原有许可和声明。
 
-`.ps1` execution is disabled on this machine, hence `-ExecutionPolicy Bypass`.
+## 文档
 
-## Documentation map
+- [1.0.1 发布说明](<RELEASE-1.0.1.md>)：此次版本改动及分发边界。
+- [更新记录](<UPDATE.md>) / [已知问题](<ISSUE.md>)：历史证据、当前限制与待验证项。
+- [架构](<docs/spec/00-architecture.md>) / [数据模型](<docs/spec/01-data-model.md>) / [测试矩阵](<docs/spec/02-test-matrix.md>)：实现约束与验证记录。
+- [开发交接](<NEXT_AI.md>) / [当前产品规则](<PROCESSING.md>) / [产品契约](<handoff.md>)：维护工作入口；历史条款以明确的后续需求修订为准。
 
-| File | Purpose |
-|---|---|
-| [NEXT_AI.md](<NEXT_AI.md>) | Read first: current completed state, source map, safety boundaries, exact final artifacts, and next-agent steps. |
-| [handoff.md](<handoff.md>) | Locked product contract; explicit later owner requirements take precedence. |
-| [PROCESSING.md](<PROCESSING.md>) | Current product rules, data-safety boundaries and working discipline; old process details are archived. |
-| [ISSUE.md](<ISSUE.md>) | Confirmed failures and evidence gaps first; historical priorities are not an automatic backlog. |
-| [UPDATE.md](<UPDATE.md>) | Per-round changes, failed runs and tested artifacts; not every historical count describes the current tree. |
-| [Architecture](<docs/spec/00-architecture.md>) | ADRs: technology/layout decisions and later requirement amendments. |
-| [Data model](<docs/spec/01-data-model.md>) | On-disk layout, frontmatter contract, SQLite schema, status machines. |
-| [Test matrix](<docs/spec/02-test-matrix.md>) | Behaviour-to-evidence map; latest homepage-image rows are D246–D250. |
-| [Upstream facts](<docs/spec/03-upstream-facts.md>) | Versioned library/API evidence and explicit integration limits. |
-| [Archives](<docs/archive/>) | Historical process snapshots; never treat them as current state or open instructions. |
+## 许可证
 
-`docs/spec/02-test-matrix.md` is the completion checklist. A clause stays `P` (planned) until a
-test exists **and** passes in a recorded command; it is never marked done from intention alone.
+Copyright (C) 2026 Vellow and Veloct contributors.
 
-## Honesty rules this project holds itself to
+Veloct 自本次开源许可整理起采用 **GNU General Public License v3.0 only（SPDX：`GPL-3.0-only`）**。完整条款见 [LICENSE](<LICENSE>)。允许使用、修改与商业用途；向他人分发程序或衍生版本时，须遵守 GPL-3.0 的许可证、对应源码和声明要求。本程序不提供任何担保。
 
-* No silent failure. A condition the app cannot satisfy becomes an explicit, explained error.
-* No invented vendor APIs. An integration that could not be verified is a manual/export target
-  labelled as such in the UI, not a fake success.
-* No secret in SQLite, a config file, a log, or a backup.
-* Removed AI page-creation functionality stays removed; a retained shared crate or historical contract is not permission to restore desktop entry points.
-* A release is rebuilt from its own frozen inputs, never from the current working tree.
+第三方依赖保留各自许可证；本许可不改变用户自行撰写的文章、上传的图片或其他个人内容的权利归属。历史分支 / 标签保留当时的许可记录，本次不会重写已发布标签或替换 1.0.1 安装包。

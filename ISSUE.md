@@ -15,7 +15,7 @@
 |---|---|
 | 历史不稳定，本次通过 | 1.0.1完整workspace为1576 passed / 0 failed / 17 ignored；安装取消/进程树测试本次通过。首页图片轮1575/1failed及[安装取消断言:263](<src-tauri/tests/site_install.rs#L263>)单项复核失败保留，未改终止代码，不声称历史问题已根治或擅自扩展修复 |
 | 未验证，不等于已坏 | 浏览器文件/剪贴板/原生拖放及云服务使用fixture；没有本轮真实R2/CDN、语雀/飞书、部署账户或最新包安装/卸载证明。真实联调须另获用户授权，不在聊天索取密钥 |
-| 交付限制 | 1.0.1本机自签安装包；本机Valid不代表公共信任或装机验收。最新签名/哈希见[NEXT_AI交付表](<NEXT_AI.md#6-最终交付物101>)；发布入口见[GitHub](<https://github.com/VellowK/Veloct-Blog/releases/tag/v1.0.1>)，仓库仍私有 |
+| 交付限制 | 1.0.1本机自签安装包；本机Valid不代表公共信任或装机验收。最新签名/哈希见[NEXT_AI交付表](<NEXT_AI.md#6-最终交付物101>)；发布入口见[GitHub](<https://github.com/VellowK/Veloct-Blog/releases/tag/v1.0.1>)；仓库由用户授权公开，默认源码分支为master，当前许可GPL-3.0-only |
 | 仓库保护 | 发布标签v1.0.1包含后台统一；重构前完整快照3c51661与backup/admin-dark-before-20261018保留。不清理工作树、不覆盖标签、不擅自变更可见性 |
 
 ### 已完成的各轮记录（不是当前待办）

@@ -1,6 +1,6 @@
 # PROCESSING.md — 当前产品边界与工作方式
 
-> 最新轮次：2026-10-18，用户授权发布 1.0.1。桌面后台 Claude 暗色统一后，统一桌面/Tauri/Rust/npm 根版本并重建签名安装包；第三方依赖不升级。重构前快照 `3c51661` / `backup/admin-dark-before-20261018` 保留。验证和交付以 [NEXT_AI.md](<NEXT_AI.md>) / [UPDATE.md](<UPDATE.md>) 为准；发布不等于已安装或博客已部署。
+> 最新轮次：2026-10-19，用户授权公开源码并选择 GPL-3.0；默认源码分支为 master，README 与许可声明已整理。前次 1.0.1 安装包/标签和重构前快照 `3c51661` / `backup/admin-dark-before-20261018` 保留，本轮不改产品逻辑、不替换已发布二进制。验证和交付以 [NEXT_AI.md](<NEXT_AI.md>) / [UPDATE.md](<UPDATE.md>) 为准；源码公开/发布不等于已安装或博客已部署。
 
 ## 1. 文档分工与阅读顺序
 
@@ -16,7 +16,7 @@
 
 ## 2. 工作树与真实用户项目
 
-- 应用仓库：`D:\Veloct-Blog`，分支 `master`，1.0.1 发布标签 `v1.0.1`，发布入口见 [GitHub Release](<https://github.com/VellowK/Veloct-Blog/releases/tag/v1.0.1>)。重构前快照 `3c51661` / `backup/admin-dark-before-20261018` 保留；仓库保持私有，不擅自变更可见性或覆盖标签。
+- 应用仓库：`D:\Veloct-Blog`，分支 `master`，1.0.1 发布标签 `v1.0.1`，发布入口见 [GitHub Release](<https://github.com/VellowK/Veloct-Blog/releases/tag/v1.0.1>)。重构前快照 `3c51661` / `backup/admin-dark-before-20261018` 保留。用户随后明确授权公开仓库，当前源码与默认分支使用 `master`；旧 `main` 只保留初始历史，不删除或强行合并。当前许可为 [GPL-3.0-only](<LICENSE>)，不得无授权改许可、重写历史或覆盖发布标签。
 - 开始先看 `git status --short` / `git diff --stat`。禁止 reset、clean、无关回滚、删除未跟踪文件或 `git add -A`；提交、推送、安装、发布和真实部署都需用户另行明确指示。
 - 用户实际博客：`C:\Users\vellow\Desktop\blog`，不是应用仓库；该路径仅是本机交接事实，不是产品默认值。本次文档整理没有读写该项目，也不要在接手时自动检查或上传。
 - 历史上于2026-10-16获授权核验过该项目的官方首页组件/CSS、8个内容/配置/资源文件哈希及网站构建；**不是2026-10-18新包或本次交接的重新验证**。备份位于该项目的 `.veloct/template-backups/<sha256>/site/src/`，另有 `.veloct/template-backups/profile-home-manual-20261016-164136/`。不得自动清理或覆盖。
