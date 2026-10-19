@@ -1,123 +1,160 @@
 # 把 Veloct 网站部署到 Cloudflare Pages
 
-这份文档面向第一次配置部署的人：不解释 Cloudflare 的全部功能，只走通「Veloct 生成网站 → Cloudflare 托管 → 绑定自己的域名」这一条路。
+面向第一次配置的人：从零开始，一步一步点，不需要懂 Cloudflare 的其他功能。
 
-先明确分工：
+先记住分工：
 
-- **Veloct 负责生成文件**。点「发布」后，网站产物是本地两个文件夹：项目目录下的 `dist/site`（主站）和 `dist/works`（作品站）。
-- **Cloudflare 负责托管文件**。你把上面两个文件夹传上去，它就提供免费 HTTPS 网址。
+- **Veloct 生成文件**。点「发布」后，网站产物在你项目目录下的 `dist\site`（主站）和 `dist\works`（作品站）。
+- **Cloudflare 托管文件**。你把文件夹传上去，它给你一个免费 HTTPS 网址。
 
-Veloct 不会自动上传，Cloudflare 也不会来读你的电脑。下面两条上传路线选一条即可。
-
----
-
-## 一、先做好发布前的两件事
-
-### 1. 填对「站点 URL」
-
-打开 Veloct → 左侧「外观」→「站点信息」→「信息」分区，把 **站点 URL** 改成你最终要用的地址，例如 `https://blog.example.com`。
-
-这个值会写进页面的 canonical、分享卡片和 sitemap。先写 `example.com` 再上线，搜索引擎拿到的就是示例域名，后面还得重发一次。
-
-### 2. 点「发布」并确认产物
-
-左侧「发布」→ 点 **发布**。发布成功后会生成：
-
-```text
-<你的项目目录>\dist\site\      ← 主站，部署用这个
-<你的项目目录>\dist\site\index.html
-<你的项目目录>\dist\works\     ← 作品站，只有导入过作品才存在
-```
-
-只要 `dist\site\index.html` 存在，就可以上传了。**不要上传整个 `dist` 目录**，那样会把作品站也塞进主站项目。
+下面走的是「网页拖拽上传」路线，全程不需要命令行。文末附命令行方式和常见故障。
 
 ---
 
-## 二、路线 A：网页拖拽上传（不需要命令行）
+## 第 0 步：准备账号
 
-适合偶尔更新、不想装工具的人。
+1. 打开 <https://dash.cloudflare.com/sign-up> 注册（免费，只需邮箱并完成验证）。
+2. 登录后进入控制台。**这一步不需要买域名**，先用 Cloudflare 送的 `*.pages.dev` 网址即可。
 
-1. 登录 [Cloudflare 控制台](https://dash.cloudflare.com/)，左侧选 **Workers & Pages**。
-2. 点 **Create application**（创建应用），切到 **Pages** 标签页，选择 **Drag and drop your files**（拖拽上传资产）。
-3. 填一个项目名，例如 `veloct-blog`。它决定你的默认网址：`https://veloct-blog.pages.dev`。项目名一旦创建，后期改名会换网址。
-4. 把 `dist\site` 文件夹**里面的内容**拖进上传框（进入该文件夹后全选，或直接拖文件夹）。确认页面列表里第一层是 `index.html`、`assets`、`about` 等，而不是一个叫 `site` 的文件夹。
-5. 点 **Deploy site**，等一两分钟，打开 `https://<项目名>.pages.dev` 检查首页、文章页和图片。
+## 第 1 步：在 Veloct 里发布一次
 
-以后再更新：进入这个 Pages 项目 → **Create a new deployment** → 重新拖一次新的 `dist\site`。
+1. 打开 Veloct，左侧点「发布」。
+2. 点「发布」按钮，等提示成功。
+3. 去文件资源管理器，打开你的项目目录，确认存在：
 
-> 拖拽方式一次最多 1000 个文件、单文件 25 MiB（[官方限制](https://developers.cloudflare.com/pages/platform/limits/)）。个人博客通常远低于这个量；超了就用路线 B。
+   ```text
+   <项目目录>\dist\site\index.html
+   ```
 
-## 三、路线 B：wrangler 命令行（适合经常更新）
+   如果项目有作品，还会看到 `dist\works\`。
 
-Veloct 本身就要求 Node.js 22 以上，所以这台机器已经具备条件。
+没有 `dist\site` 就说明发布没成功，先解决发布，不要往下走。
 
-```powershell
-# 首次：登录（会打开浏览器授权）
-npx.cmd wrangler login
+## 第 2 步：进入 Pages
 
-# 首次：创建 Pages 项目
-npx.cmd wrangler pages project create veloct-blog
+1. 在 Cloudflare 控制台左侧菜单点 **Workers & Pages**。
+2. 点页面上的 **Create application**（创建应用）。
+3. 在弹出页里切到 **Pages** 标签，选择 **Drag and drop your files**（拖拽上传资产）。
 
-# 每次更新：上传主站（把路径换成你的项目目录）
-npx.cmd wrangler pages deploy "D:\path\to\your-project\dist\site" --project-name veloct-blog
-```
+> 控制台改版时按钮文字会变。认两个关键词即可：**Pages** 和 **Drag and drop / Upload assets**。
 
-命令结束会打印一个 `https://<哈希>.veloct-blog.pages.dev` 的预览地址，你的正式地址始终是 `https://veloct-blog.pages.dev`。
+## 第 3 步：起项目名
 
-wrangler 方式上限是 20000 个文件、单文件 25 MiB，并且**只接受文件夹，不接受 zip**。
+1. 在 **Project name** 里填一个全小写、用连字符的名字，例如 `veloct-blog`。
+2. 它会决定你的默认网址：`https://veloct-blog.pages.dev`。
+3. 点 **Create project**（或「继续」）进入上传页。
+
+项目名以后不建议改，改了会换网址。
+
+## 第 4 步：上传主站文件
+
+1. 在文件资源管理器里打开 `<项目目录>\dist\site`。
+2. **进入这个文件夹内部**，按 `Ctrl+A` 全选里面的内容。
+3. 把这些内容拖进浏览器里的上传框，等进度条走完。
+
+**关键检查点**：上传列表的第一层必须是 `index.html`、`assets`、`about` 这样的条目。如果看到一个叫 `site` 的文件夹，说明多套了一层，删掉重传。
+
+| 拖错了什么 | 结果 |
+|---|---|
+| 拖了整个 `dist` | 网址根目录是 `site/`，打开是 404 |
+| 拖了 `dist\site` 文件夹本身 | 同上，多一层 |
+| 只拖了 `index.html` | 页面能开，样式和图片全丢 |
+
+## 第 5 步：部署并验证
+
+1. 点 **Deploy site**（部署站点），等 1–2 分钟。
+2. 打开它给的地址 `https://<项目名>.pages.dev`。
+3. 逐项确认：首页能开、点进一篇文章、图片正常、手机上也能看。
+
+有问题先看文末「常见问题」，不要急着绑域名。
+
+## 第 6 步（可选）：绑定自己的域名
+
+已经有域名才需要这一步。**注意：域名最省事的情况是它本身就托管在 Cloudflare。**
+
+1. 打开这个 Pages 项目，点 **Custom domains**（自定义域）。
+2. 点 **Set up a custom domain**，输入 `blog.example.com`，确认。
+3. 按域名位置二选一：
+   - **域名已在同一个 Cloudflare 账号**：DNS 记录会自动加好，等状态变 **Active**。
+   - **域名在别家**（阿里云、DNSPod 等）：去那家 DNS 后台添加记录 —— 类型 `CNAME`，名称 `blog`，目标 `<项目名>.pages.dev`，然后回来等状态变 Active。
+4. 状态 Active 前访问报证书错误是正常的，通常几分钟内签发完成。
+
+**绑定成功后必须回 Veloct**：左侧「外观」→「站点信息」→「信息」→ 把「站点 URL」改成 `https://blog.example.com` → 重新「发布」→ 再按第 4、5 步上传一次。
+
+不改这一步，页面里的 canonical、分享卡片和 sitemap 还是 `pages.dev` 地址。
+
+## 第 7 步：以后怎么更新
+
+1. Veloct 里改完内容，重新「发布」。
+2. Cloudflare 里打开这个 Pages 项目，点 **Create a new deployment**。
+3. 重新拖一次新的 `dist\site` 内容。
+
+没有「自动同步」，每次都是这两步。嫌麻烦就用下面的命令行方式。
 
 ---
 
-## 四、绑定自己的域名
+## 作品站（只有用了作品功能才需要）
 
-1. 打开该 Pages 项目 → **Custom domains**（自定义域）→ **Set up a custom domain**。
-2. 输入域名，例如 `blog.example.com`，按提示确认。
-3. 如果这个域名已经托管在同一个 Cloudflare 账号下，DNS 记录会自动加好；如果域名在别处，需要到你的 DNS 服务商添加一条 **CNAME**，指向 `<项目名>.pages.dev`。
-4. 等状态变成 **Active**（证书签发通常几分钟）。期间访问可能报证书错误，属正常。
+作品是第三方代码，必须跑在和主站不同的域名下，这是 Veloct 的安全边界。
 
-**绑定成功后回到 Veloct**：把「站点 URL」改成 `https://blog.example.com`，重新发布，再上传一次。否则 sitemap 和分享卡片仍指向 `pages.dev` 地址。
-
-## 五、作品站（用了作品功能才需要）
-
-作品是第三方静态站点，必须和主站分开在不同域名下运行，这是 Veloct 的安全边界，不是可选项。
-
-1. 用路线 A 或 B **再建一个 Pages 项目**，例如 `veloct-works`，上传的是 `dist\works`。
-2. 给它绑定一个子域名，例如 `works.example.com`，等状态 Active。
-3. 打开项目目录下的 `data\site.json`，把这一行改成你的作品域名：
+1. 重复第 2–5 步，**再建一个 Pages 项目**（例如 `veloct-works`），上传的是 `dist\works`。
+2. 按第 6 步给它绑一个子域名，例如 `works.example.com`，等 Active。
+3. 打开项目目录下的 `data\site.json`，把作品域名写进去：
 
    ```json
    "worksOrigin": "https://works.example.com",
    ```
 
-4. 回到 Veloct 重新「发布」并上传主站。作品页里的链接才会指向真实地址；不填的话页面会显示 `works.example.com` 这类示例值。
+4. 回 Veloct 重新「发布」，再把主站上传一次。
 
-> 部署设置里的「作品源（独立 origin）」只用于记录和结果展示，不改变构建产物；真正决定作品链接的是 `data/site.json` 的 `worksOrigin`。
+不填 `worksOrigin`，作品页里会出现 `works.example.com` 这类示例地址。
+
+> 部署设置里的「作品源（独立 origin）」只用于记录和结果展示，不影响构建产物；真正生效的是 `data\site.json` 的 `worksOrigin`。
 
 ---
 
-## 六、常见问题
+## 命令行方式（可选）
+
+机器上已有 Node 22（Veloct 本身要求），直接可用：
+
+```powershell
+# 首次：登录，会打开浏览器授权
+npx.cmd wrangler login
+
+# 首次：创建项目（名字要和网页里一致）
+npx.cmd wrangler pages project create veloct-blog
+
+# 每次更新：上传主站
+npx.cmd wrangler pages deploy "D:\你的项目目录\dist\site" --project-name veloct-blog
+```
+
+wrangler 上限是 20000 个文件、单文件 25 MiB；网页拖拽是 1000 个文件、单文件 25 MiB。
+
+---
+
+## 常见问题
 
 | 现象 | 原因与处理 |
 |---|---|
-| 打开是 404 或 "Nothing is here yet" | 上传的层级错了：应该是 `dist\site` 的内容，而不是 `dist` 或 `dist\site` 这一层文件夹本身 |
-| 页面能开但没有样式 | 只传了 HTML，`assets` 目录没上传；重新完整上传 |
-| 图片、文章链接失效 | 站点用的是绝对地址，站点 URL 与实际域名不一致；改站点 URL 后重新发布上传 |
-| 更新后仍是旧内容 | Cloudflare 有缓存；刷新时用 `Ctrl+F5`，或在项目里确认新部署已经 Ready |
-| 想自动化、不想手动传 | 用路线 B 的 wrangler 命令，或把它放进自己的 CI；Veloct 的发布与部署本来就是分开的两步 |
-| 担心传了不该传的东西 | Veloct 只复制站点构建产物，不含 `.veloct`、附件池、凭据或源码；上传前仍建议打开 `dist\site` 扫一眼 |
+| 打开是 404 / "Nothing is here yet" | 上传层级错了：要的是 `dist\site` 的内容，不是 `dist`，也不是 `dist\site` 这一层文件夹 |
+| 页面能开但没样式 | 只传了 HTML，`assets` 没上传；重新完整上传 |
+| 图片、文章链接失效 | 站点 URL 与实际域名不一致；改完站点 URL 要重新发布再上传 |
+| 更新后还是旧内容 | 浏览器缓存，`Ctrl+F5`；或确认新部署状态已是 Ready |
+| 想自动化 | 用上面的 wrangler 命令，或接进自己的 CI；Veloct 的「发布」和「上传」本来就是两步 |
+| 担心传了不该传的 | Veloct 只复制站点构建产物，不含 `.veloct`、附件池、凭据或源码；上传前可打开 `dist\site` 扫一眼 |
 
-## 七、关于应用内的「Cloudflare Pages（自动）」目标
+## 关于应用内的「Cloudflare Pages（自动）」
 
-Veloct 的部署面板里有这一项，但**目前不要用它对接真实 Cloudflare 账号**：
+不要用它对接真实账号，目前有两个实现问题：
 
-- 表单只有一个「主站项目 / 账号」输入框，而代码把这个值同时当作账号 ID 和项目名，真实项目无法被定位；
-- 作品子目标的上传地址也仍然指回主站项目名，一旦启用会覆盖主站。
+- 表单只有一个「主站项目 / 账号」输入框，而代码把这个值同时当作账号 ID 和项目名，真实项目无法定位；
+- 作品子目标的上传地址仍指回主站项目名，启用后有覆盖主站的风险。
 
-这两点属于尚未与真实账号联调的部分（见 [已知问题](../../ISSUE.md) 第 10 项）。在修好之前，请用上面的路线 A 或 B 上传；应用内的「1Panel（手动上传）」同样只是导出提示，不代替上传。
+见 [已知问题](../../ISSUE.md) 第 10 项。修好之前请用上面的网页或命令行方式；「1Panel（手动上传）」也只是导出提示，不代替上传。
 
-## 八、官方参考
+## 官方参考
 
-- [Direct Upload](https://developers.cloudflare.com/pages/get-started/direct-upload/)：拖拽与 wrangler 两条上传路线。
-- [Pages 限制](https://developers.cloudflare.com/pages/platform/limits/)：文件数、单文件大小。
+- [Direct Upload](https://developers.cloudflare.com/pages/get-started/direct-upload/)：拖拽与 wrangler 两条路线。
+- [Pages 限制](https://developers.cloudflare.com/pages/platform/limits/)：文件数与单文件大小。
 - [自定义域](https://developers.cloudflare.com/pages/configuration/custom-domains/)：域名绑定与 CNAME。
-- [wrangler pages 命令](https://developers.cloudflare.com/workers/wrangler/commands/#pages)：所有 `pages` 子命令。
+- [wrangler pages 命令](https://developers.cloudflare.com/workers/wrangler/commands/#pages)：全部 `pages` 子命令。
