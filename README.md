@@ -152,6 +152,7 @@ powershell -ExecutionPolicy Bypass -File scripts/build-installer.ps1 -NoSign
 - [架构](<docs/spec/00-architecture.md>) / [数据模型](<docs/spec/01-data-model.md>) / [测试矩阵](<docs/spec/02-test-matrix.md>)：实现约束与验证记录。
 - [开发交接](<NEXT_AI.md>) / [当前产品规则](<PROCESSING.md>) / [产品契约](<handoff.md>)：维护工作入口；历史条款以明确的后续需求修订为准。
 - [部署到 Cloudflare Pages](<docs/guides/cloudflare-pages.md>)：从点击发布到绑定域名的完整步骤，含拖拽上传、wrangler 命令与常见故障。
+- [部署到 GitHub Pages](<docs/guides/github-pages.md>)：创建网站仓库、上传静态产物、设置 `.nojekyll` 与开启 Pages。当前 1.0.1 主站输出在 `<网站项目目录>/site/dist/site`，不是根目录的 `dist`。
 
 ## 许可证
 

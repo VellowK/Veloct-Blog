@@ -4,7 +4,7 @@
 
 先记住分工：
 
-- **Veloct 生成文件**。点「发布」后，网站产物在你项目目录下的 `dist\site`（主站）和 `dist\works`（作品站）。
+- **Veloct 生成文件**。点「发布」后，网站产物在你项目目录下的 `site\dist\site`（主站）和 `site\dist\works`（作品站）。
 - **Cloudflare 托管文件**。你把文件夹传上去，它给你一个免费 HTTPS 网址。
 
 下面走的是「网页拖拽上传」路线，全程不需要命令行。文末附命令行方式和常见故障。
@@ -23,12 +23,14 @@
 3. 去文件资源管理器，打开你的项目目录，确认存在：
 
    ```text
-   <项目目录>\dist\site\index.html
+   <项目目录>\site\dist\site\index.html
    ```
 
-   如果项目有作品，还会看到 `dist\works\`。
+   如果项目有作品，还会看到 `site\dist\works\`。
 
-没有 `dist\site` 就说明发布没成功，先解决发布，不要往下走。
+**注意：当前 1.0.1 的实际目录是 `site\dist\site`，不是项目根目录的 `dist\site`。** 发布流程会先创建根目录 `dist`，但 Astro 把页面写到 `site\dist`，因此根目录 `dist` 为空不代表发布失败。`.veloct/releases/` 保存的是发布清单和记录，不是可直接上传的网站。
+
+如果 `site\dist\site\index.html` 也不存在，先看 Veloct「发布」页的「发布没有完成」错误或「查看构建输出」，不要继续上传；把错误和最后几行日志提供出来排查。
 
 ## 第 2 步：进入 Pages
 
@@ -48,16 +50,16 @@
 
 ## 第 4 步：上传主站文件
 
-1. 在文件资源管理器里打开 `<项目目录>\dist\site`。
+1. 在文件资源管理器里打开 `<项目目录>\site\dist\site`。
 2. **进入这个文件夹内部**，按 `Ctrl+A` 全选里面的内容。
 3. 把这些内容拖进浏览器里的上传框，等进度条走完。
 
-**关键检查点**：上传列表的第一层必须是 `index.html`、`assets`、`about` 这样的条目。如果看到一个叫 `site` 的文件夹，说明多套了一层，删掉重传。
+**关键检查点**：部署根目录必须直接包含 `index.html`、`_astro`、`about` 等。Cloudflare 也支持直接拖入构建文件夹；能否打开首页取决于最终根目录，而不是是否拖了文件夹。不要把包含主站和作品两套输出的上一级 `site\dist` 当作网站根目录。
 
 | 拖错了什么 | 结果 |
 |---|---|
-| 拖了整个 `dist` | 网址根目录是 `site/`，打开是 404 |
-| 拖了 `dist\site` 文件夹本身 | 同上，多一层 |
+| 拖了根目录 `dist` | 当前版本这里可能为空，没有网站可上传 |
+| 拖了整个 `site\dist` | 网站外面多了 `site/` 层级，首页可能 404 |
 | 只拖了 `index.html` | 页面能开，样式和图片全丢 |
 
 ## 第 5 步：部署并验证
@@ -87,7 +89,7 @@
 
 1. Veloct 里改完内容，重新「发布」。
 2. Cloudflare 里打开这个 Pages 项目，点 **Create a new deployment**。
-3. 重新拖一次新的 `dist\site` 内容。
+3. 重新拖一次新的 `site\dist\site` 内容。
 
 没有「自动同步」，每次都是这两步。嫌麻烦就用下面的命令行方式。
 
@@ -97,7 +99,7 @@
 
 作品是第三方代码，必须跑在和主站不同的域名下，这是 Veloct 的安全边界。
 
-1. 重复第 2–5 步，**再建一个 Pages 项目**（例如 `veloct-works`），上传的是 `dist\works`。
+1. 重复第 2–5 步，**再建一个 Pages 项目**（例如 `veloct-works`），上传的是 `site\dist\works`。
 2. 按第 6 步给它绑一个子域名，例如 `works.example.com`，等 Active。
 3. 打开项目目录下的 `data\site.json`，把作品域名写进去：
 
@@ -125,7 +127,7 @@ npx.cmd wrangler login
 npx.cmd wrangler pages project create veloct-blog
 
 # 每次更新：上传主站
-npx.cmd wrangler pages deploy "D:\你的项目目录\dist\site" --project-name veloct-blog
+npx.cmd wrangler pages deploy "D:\你的项目目录\site\dist\site" --project-name veloct-blog
 ```
 
 wrangler 上限是 20000 个文件、单文件 25 MiB；网页拖拽是 1000 个文件、单文件 25 MiB。
@@ -136,12 +138,13 @@ wrangler 上限是 20000 个文件、单文件 25 MiB；网页拖拽是 1000 个
 
 | 现象 | 原因与处理 |
 |---|---|
-| 打开是 404 / "Nothing is here yet" | 上传层级错了：要的是 `dist\site` 的内容，不是 `dist`，也不是 `dist\site` 这一层文件夹 |
-| 页面能开但没样式 | 只传了 HTML，`assets` 没上传；重新完整上传 |
+| 根目录 `dist` 为空 | 先找 `site\dist\site\index.html`；这是当前版本实际的主站输出位置 |
+| 打开是 404 / "Nothing is here yet" | 确认上传的是 `site\dist\site` 构建目录，部署根目录直接包含 `index.html` |
+| 页面能开但没样式 | 检查 `_astro` 等资源目录是否一起上传；不能只上传 HTML |
 | 图片、文章链接失效 | 站点 URL 与实际域名不一致；改完站点 URL 要重新发布再上传 |
 | 更新后还是旧内容 | 浏览器缓存，`Ctrl+F5`；或确认新部署状态已是 Ready |
 | 想自动化 | 用上面的 wrangler 命令，或接进自己的 CI；Veloct 的「发布」和「上传」本来就是两步 |
-| 担心传了不该传的 | Veloct 只复制站点构建产物，不含 `.veloct`、附件池、凭据或源码；上传前可打开 `dist\site` 扫一眼 |
+| 担心传了不该传的 | Veloct 只复制站点构建产物，不含 `.veloct`、附件池、凭据或源码；上传前可打开 `site\dist\site` 扫一眼 |
 
 ## 关于应用内的「Cloudflare Pages（自动）」
 
